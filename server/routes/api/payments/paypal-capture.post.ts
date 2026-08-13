@@ -14,6 +14,7 @@ import { getOrganizationSecrets } from "../../../../src/lib/org-secrets";
 import { parseOrgMetadata } from "../../../../src/lib/org-metadata";
 import { moneyToCents } from "../../../../src/lib/money";
 import { createLogger } from "../../../../src/lib/logger";
+import { validatePayPalCaptureInput } from "../../../../src/lib/paypal-capture-policy";
 
 const logger = createLogger("api.payments.paypal-capture");
 
@@ -25,8 +26,6 @@ const logger = createLogger("api.payments.paypal-capture");
  * or an escape — those let a caller steer the request at another PayPal
  * endpoint (e.g. a refund) with the merchant's credentials.
  */
-const PAYPAL_ORDER_ID_PATTERN = /^[A-Za-z0-9]{1,36}$/;
-
 async function getPayPalToken(
   clientId: string,
   clientSecret: string,
@@ -54,13 +53,15 @@ async function getPayPalToken(
 export default defineEventHandler(async (event) => {
   const body = await readBody<{ orderID: string; invoiceId: string }>(event);
   const { orderID, invoiceId } = body ?? {};
-  if (!orderID || !invoiceId)
-    throw createError({ statusCode: 400, message: "orderID and invoiceId are required" });
-  if (typeof orderID !== "string" || !PAYPAL_ORDER_ID_PATTERN.test(orderID))
-    throw createError({ statusCode: 400, message: "orderID is not a valid PayPal order id" });
+  const captureInput = validatePayPalCaptureInput({ orderId: orderID, invoiceId });
+  if (!captureInput.ok) {
+    throw createError({ statusCode: 400, message: captureInput.message });
+  }
+  const validatedOrderId = captureInput.orderId;
+  const validatedInvoiceId = captureInput.invoiceId;
   enforceRateLimit({
     routeKey: "payments:paypal-capture",
-    orgId: invoiceId,
+    orgId: validatedInvoiceId,
     userId: getRequestIP(event, { xForwardedFor: true }) ?? "unknown",
     limit: 10,
     windowMs: 60_000,
@@ -76,7 +77,7 @@ export default defineEventHandler(async (event) => {
       organizationId: invoices.organizationId,
     })
     .from(invoices)
-    .where(eq(invoices.id, invoiceId))
+    .where(eq(invoices.id, validatedInvoiceId))
     .limit(1);
 
   if (!invoice) throw createError({ statusCode: 404, message: "Invoice not found" });
@@ -99,19 +100,22 @@ export default defineEventHandler(async (event) => {
   const accessToken = await getPayPalToken(meta.paypalClientId, secrets.paypalClientSecret, mode);
   const base = mode === "live" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com";
 
-  const res = await fetch(`${base}/v2/checkout/orders/${encodeURIComponent(orderID)}/capture`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
+  const res = await fetch(
+    `${base}/v2/checkout/orders/${encodeURIComponent(validatedOrderId)}/capture`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
     },
-  });
+  );
 
   if (!res.ok) {
     // Log the upstream detail server-side only; echoing it back would turn this
     // route into an oracle over the merchant's PayPal account.
     logger.error("PayPal capture failed", {
-      invoiceId,
+      invoiceId: validatedInvoiceId,
       status: res.status,
       error: await res.text(),
     });
@@ -161,10 +165,10 @@ export default defineEventHandler(async (event) => {
     // Post the payment to the general ledger (DR deposit, CR A/R) and update the invoice's
     // paid/balance/status. Idempotent on captureID so webhook/retry double-fires are safe.
     await recordCardInvoicePayment({
-      invoiceId,
+      invoiceId: validatedInvoiceId,
       amount: capturedAmount,
       paidVia: "paypal",
-      externalRef: captureID || orderID,
+      externalRef: captureID || validatedOrderId,
       currency,
     });
   }

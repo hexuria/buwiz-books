@@ -1,62 +1,10 @@
-// ============================================================================
-// POST /api/payments/paypal-capture — orderID may not steer the outbound call
-//
-// `orderID` arrives on an unauthenticated request body and used to be
-// interpolated raw into the path of a fetch carrying the merchant's PayPal
-// Bearer token. WHATWG URL parsing collapses "../" and "?" truncates the
-// trailing "/capture", so the caller chose which PayPal endpoint ran as that
-// merchant — including /v2/payments/captures/{id}/refund.
-//
-// The rule these tests pin down: a malformed orderID is rejected with a 400
-// before ANY database read, rate-limit bucket, or outbound request happens.
-// ============================================================================
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { validatePayPalCaptureInput } from "../../../src/lib/paypal-capture-policy";
+import { isValidPayPalOrderId } from "../../../src/lib/paypal-order-id";
 
-const { readBodyMock, getRequestIPMock, selectMock, enforceRateLimitMock } = vi.hoisted(() => ({
-  readBodyMock: vi.fn(),
-  getRequestIPMock: vi.fn(() => "203.0.113.1"),
-  selectMock: vi.fn(() => {
-    throw new Error("the invoice lookup must not run for a malformed orderID");
-  }),
-  enforceRateLimitMock: vi.fn(),
-}));
-
-// h3 keeps its real defineEventHandler/createError — the thrown H3Error's
-// statusCode is exactly what is under test — while the two request accessors
-// are stubbed, since there is no live request here.
-vi.mock("h3", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("h3")>();
-  return { ...actual, readBody: readBodyMock, getRequestIP: getRequestIPMock };
-});
-
-vi.mock("../../../src/db", () => ({ db: { select: selectMock } }));
-vi.mock("../../../src/lib/request-guards", () => ({ enforceRateLimit: enforceRateLimitMock }));
-
-import handler from "../../../server/routes/api/payments/paypal-capture.post";
-
-const INVOICE_ID = "11111111-2222-3333-4444-555555555555";
-
-/** Invoke the route with the given body; the event object is never read. */
-async function post(body: unknown) {
-  readBodyMock.mockResolvedValue(body);
-  return (handler as unknown as (event: unknown) => Promise<unknown>)({} as never);
-}
-
-describe("paypal-capture orderID validation", () => {
-  const fetchSpy = vi.fn();
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    getRequestIPMock.mockReturnValue("203.0.113.1");
-    fetchSpy.mockReset();
-    fetchSpy.mockRejectedValue(new Error("no outbound request may be made"));
-    vi.stubGlobal("fetch", fetchSpy);
-  });
-
-  // Each of these resolves, under WHATWG URL rules, to a PayPal path other than
-  // the intended /v2/checkout/orders/<id>/capture.
-  const escapes: Array<[string, string]> = [
-    ["parent-segment pivot to a refund", "../../payments/captures/8AB12345CD/refund?"],
+describe("isValidPayPalOrderId", () => {
+  const escapes: Array<[string, unknown]> = [
+    ["parent-segment pivot", "../../payments/captures/8AB12345CD/refund?"],
     ["encoded traversal", "%2e%2e%2fpayments%2fcaptures%2fX%2frefund"],
     ["query truncation", "5O190127TN364715T?ignored="],
     ["fragment truncation", "5O190127TN364715T#"],
@@ -64,33 +12,94 @@ describe("paypal-capture orderID validation", () => {
     ["path separator", "orders/X/refund"],
     ["trailing newline", "5O190127TN364715T\n"],
     ["over the documented maximum", "A".repeat(37)],
-    ["empty after the required-fields check", " "],
+    ["whitespace", " "],
+    ["non-string", { toString: () => "5O190127TN364715T" }],
   ];
 
-  for (const [name, orderID] of escapes) {
-    it(`rejects ${name} with a 400 and never calls out`, async () => {
-      await expect(post({ orderID, invoiceId: INVOICE_ID })).rejects.toMatchObject({
-        statusCode: 400,
-      });
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(selectMock).not.toHaveBeenCalled();
-      expect(enforceRateLimitMock).not.toHaveBeenCalled();
+  for (const [name, value] of escapes) {
+    it(`rejects ${name}`, () => {
+      expect(isValidPayPalOrderId(value)).toBe(false);
     });
   }
 
-  it("rejects a non-string orderID without coercing it", async () => {
+  it("accepts a well-formed opaque order id", () => {
+    expect(isValidPayPalOrderId("5O190127TN364715T")).toBe(true);
+  });
+
+  it("validates both identifiers before the handler can perform a privileged side effect", () => {
+    expect(
+      validatePayPalCaptureInput({
+        orderId: "../../payments/captures/8AB12345CD/refund?",
+        invoiceId: "11111111-2222-3333-4444-555555555555",
+      }),
+    ).toEqual({ ok: false, message: "orderID is not a valid PayPal order id" });
+    expect(
+      validatePayPalCaptureInput({
+        orderId: "5O190127TN364715T",
+        invoiceId: "11111111-2222-3333-4444-555555555555",
+      }),
+    ).toEqual({
+      ok: true,
+      orderId: "5O190127TN364715T",
+      invoiceId: "11111111-2222-3333-4444-555555555555",
+    });
+  });
+});
+
+const { readBodyMock, getRequestIPMock, selectMock, enforceRateLimitMock } = vi.hoisted(() => ({
+  readBodyMock: vi.fn(),
+  getRequestIPMock: vi.fn(() => "203.0.113.1"),
+  selectMock: vi.fn(() => {
+    throw new Error("the invoice lookup must not run for malformed input");
+  }),
+  enforceRateLimitMock: vi.fn(),
+}));
+
+vi.mock("h3", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("h3")>();
+  return { ...actual, readBody: readBodyMock, getRequestIP: getRequestIPMock };
+});
+vi.mock("../../../src/db", () => ({ db: { select: selectMock } }));
+vi.mock("../../../src/lib/request-guards", () => ({ enforceRateLimit: enforceRateLimitMock }));
+
+import handler from "../../../server/routes/api/payments/paypal-capture.post";
+
+const INVOICE_ID = "11111111-2222-3333-4444-555555555555";
+
+async function post(body: unknown) {
+  readBodyMock.mockResolvedValue(body);
+  return (handler as unknown as (event: unknown) => Promise<unknown>)({} as never);
+}
+
+describe("PayPal capture route adapter", () => {
+  const fetchSpy = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetchSpy.mockRejectedValue(new Error("no outbound request may be made"));
+    vi.stubGlobal("fetch", fetchSpy);
+  });
+
+  it("rejects malformed input before rate limiting, database access, or provider calls", async () => {
     await expect(
-      post({ orderID: { toString: () => "5O190127TN364715T" }, invoiceId: INVOICE_ID }),
+      post({
+        orderID: "../../payments/captures/8AB12345CD/refund?",
+        invoiceId: INVOICE_ID,
+      }),
     ).rejects.toMatchObject({ statusCode: 400 });
+
+    expect(enforceRateLimitMock).not.toHaveBeenCalled();
+    expect(selectMock).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("accepts a well-formed PayPal order id and proceeds past validation", async () => {
-    // Reaching the invoice lookup is the proof it passed the gate — that lookup
-    // is mocked to throw, so nothing further runs.
+  it("allows a valid request to reach the rate limit and invoice lookup", async () => {
     await expect(post({ orderID: "5O190127TN364715T", invoiceId: INVOICE_ID })).rejects.toThrow(
       /invoice lookup must not run/,
     );
+
     expect(enforceRateLimitMock).toHaveBeenCalledOnce();
+    expect(selectMock).toHaveBeenCalledOnce();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
