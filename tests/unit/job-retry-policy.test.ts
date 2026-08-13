@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import { INTERACTIVE_JOB_TYPES, retryPolicyFor, timeToTerminalMs } from "@/lib/jobs/retry-policy";
 // Imported, not copied: the server's retry budget and the client's patience
 // are the two halves of this invariant, so the test must fail if either moves.
-import { PIPELINE_POLL_TIMEOUT_MS } from "@/lib/reconciliation-ocr-store";
+import { PIPELINE_POLL_TIMEOUT_MS } from "@/lib/jobs/polling-policy";
 
 const BACKGROUND_JOB_TYPES = [
   "process_inbound_email",

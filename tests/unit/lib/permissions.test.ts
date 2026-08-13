@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { statement, member, roles } from "../../../src/lib/permissions";
 import type { Resource } from "../../../src/lib/permissions";
-import { roleHasPermission } from "../../../src/lib/auth-middleware";
+import { roleHasPermission } from "../../../src/lib/permission-policy";
 
 /**
  * ABAC Permission System — Structural Integrity Tests

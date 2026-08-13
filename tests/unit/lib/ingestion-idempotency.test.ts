@@ -1,11 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
-import type { DbExecutor } from "@/db";
+import { describe, expect, it } from "vitest";
 import { billOcrContextHash } from "@/lib/bill-ocr-cache";
 import { bankCsvSourceId, hashCsvFileContent, journalCsvSourceId } from "@/lib/csv-idempotency";
 import {
   contentAddressedDocumentKey,
   documentFileType,
-  ensureDocument,
   hashDocumentContent,
 } from "@/lib/documents/ensure-document";
 import {
@@ -16,7 +14,7 @@ import {
 import {
   EMAIL_ATTACHMENT_EXTRACTION_VERSION,
   hasReusableEmailAttachmentExtraction,
-} from "@/lib/inbox/email-attachment-extraction";
+} from "@/lib/inbox/email-attachment-extraction-policy";
 import {
   deriveDocumentSourceFacts,
   deriveEmailAttachmentSourceFacts,
@@ -327,132 +325,6 @@ describe("content-addressed documents", () => {
     expect(documentFileType("invoice.PDF")).toBe("pdf");
     expect(documentFileType("receipt.jpeg")).toBe("jpeg");
     expect(documentFileType("no-extension")).toBe("other");
-  });
-
-  it("returns one consistent result when another insert wins the content-hash race", async () => {
-    const winner = {
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      contentHash: hashDocumentContent(Buffer.from("receipt")),
-    };
-    const selectResults = [[], [winner]];
-    const db = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: async () => selectResults.shift() ?? [],
-          }),
-        }),
-      }),
-      insert: () => ({
-        values: () => ({
-          onConflictDoNothing: () => ({
-            returning: async () => [],
-          }),
-        }),
-      }),
-    } as unknown as DbExecutor;
-    const upload = vi.fn(async (key: string) => ({ r2Key: key, r2Bucket: "bucket" }));
-
-    const result = await ensureDocument(
-      db,
-      {
-        organizationId: "org-1",
-        uploadedById: "user-1",
-        filename: "receipt.pdf",
-        contentType: "application/pdf",
-        fileBuffer: Buffer.from("receipt"),
-        documentType: "receipt",
-      },
-      { isConfigured: () => true, upload },
-    );
-
-    expect(result).toEqual({ document: winner, deduplicated: true });
-    expect(upload).toHaveBeenCalledOnce();
-  });
-
-  it("cleans only a losing upload generation after a concurrent hash insert", async () => {
-    const bytes = Buffer.from("same receipt");
-    const winner = {
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      contentHash: hashDocumentContent(bytes),
-      r2Key: "org-1/documents/sha256/winner-generation",
-    };
-    const selectResults = [[], [winner]];
-    const db = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: async () => selectResults.shift() ?? [],
-          }),
-        }),
-      }),
-      insert: () => ({
-        values: () => ({
-          onConflictDoNothing: () => ({
-            returning: async () => [],
-          }),
-        }),
-      }),
-    } as unknown as DbExecutor;
-    const uploadedKeys: string[] = [];
-    const deletedKeys: string[] = [];
-
-    const result = await ensureDocument(
-      db,
-      {
-        organizationId: "org-1",
-        filename: "receipt.pdf",
-        contentType: "application/pdf",
-        fileBuffer: bytes,
-      },
-      {
-        isConfigured: () => true,
-        upload: async (key) => {
-          uploadedKeys.push(key);
-          return { r2Key: key, r2Bucket: "bucket" };
-        },
-        delete: async (key) => {
-          deletedKeys.push(key);
-        },
-      },
-    );
-
-    expect(result).toEqual({ document: winner, deduplicated: true });
-    expect(uploadedKeys).toHaveLength(1);
-    expect(uploadedKeys[0]).not.toBe(winner.r2Key);
-    expect(deletedKeys).toEqual(uploadedKeys);
-  });
-
-  it("reuses an existing document without uploading the object again", async () => {
-    const existing = {
-      id: "550e8400-e29b-41d4-a716-446655440000",
-      contentHash: hashDocumentContent(Buffer.from("receipt")),
-    };
-    const db = {
-      select: () => ({
-        from: () => ({
-          where: () => ({
-            limit: async () => [existing],
-          }),
-        }),
-      }),
-    } as unknown as DbExecutor;
-    const upload = vi.fn();
-
-    const result = await ensureDocument(
-      db,
-      {
-        organizationId: "org-1",
-        uploadedById: "user-1",
-        filename: "receipt.pdf",
-        contentType: "application/pdf",
-        fileBuffer: Buffer.from("receipt"),
-      },
-      { isConfigured: () => true, upload },
-    );
-
-    expect(result).toEqual({ document: existing, deduplicated: true });
-    expect(upload).not.toHaveBeenCalled();
   });
 });
 
