@@ -5,7 +5,7 @@ import {
   snapshotEnterpriseStripeSubscription,
   type EnterpriseStripePriorEntitlement,
   type EnterpriseStripeSubscriptionSnapshot,
-} from "../../src/lib/enterprise/stripe-entitlements";
+} from "../../src/lib/enterprise/stripe-entitlement-policy";
 import { resolveEntitlementState } from "../../src/lib/enterprise/entitlement-state";
 
 const periodStart = new Date("2026-08-01T00:00:00.000Z");
