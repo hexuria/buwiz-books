@@ -3,21 +3,12 @@ import { withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { organizationReportingProjectionState } from "@/db/schema/reporting-projections";
 import { retryPolicyFor } from "@/lib/jobs/retry-policy";
+import type { ProjectionStateView } from "./projection-types";
+
+export type { ProjectionStateView } from "./projection-types";
 
 export const BUSINESS_GROUP_PROJECTION_JOB_TYPE = "business_group_projection_refresh";
 export const BUSINESS_GROUP_PROJECTION_DEDUPE_KEY = "business_group_projection_refresh";
-
-export interface ProjectionStateView {
-  organizationId: string;
-  status: "missing" | "pending" | "building" | "ready" | "failed";
-  requestedVersion: number;
-  appliedVersion: number;
-  lastLedgerEventAt: Date | null;
-  lastProjectedAt: Date | null;
-  initialBackfillCompletedAt: Date | null;
-  lastError: string | null;
-  updatedAt: Date;
-}
 
 /**
  * Request a projection pass from inside the target organization's RLS

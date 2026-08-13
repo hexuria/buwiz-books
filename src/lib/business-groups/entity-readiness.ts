@@ -1,5 +1,9 @@
-import type { ProjectionStateView } from "../reporting/projection";
-import type { EntityReadiness, EntityReadinessStatus, EntityReadinessSummary } from "./performance";
+import type { ProjectionStateView } from "../reporting/projection-types";
+import type {
+  EntityReadiness,
+  EntityReadinessStatus,
+  EntityReadinessSummary,
+} from "./performance-model";
 
 const PROJECTION_STALE_AFTER_SECONDS = 300;
 export const MAX_ENTITY_READINESS_PAGE_SIZE = 25;

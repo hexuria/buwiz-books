@@ -3,9 +3,9 @@ import {
   attachUnpaginatedPerformanceEntities,
   type BusinessGroupsPerformanceResult,
   type PortfolioEntityPerformanceMetric,
-} from "../../src/lib/business-groups/performance";
-import { findProjectionMismatches } from "../../src/lib/business-groups/projection-reconciliation";
-import type { ProjectionStateView } from "../../src/lib/reporting/projection";
+} from "../../src/lib/business-groups/performance-model";
+import { findProjectionMismatches } from "../../src/lib/business-groups/projection-reconciliation-policy";
+import type { ProjectionStateView } from "../../src/lib/reporting/projection-types";
 
 function entity(
   organizationId: string,

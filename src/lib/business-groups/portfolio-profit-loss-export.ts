@@ -1,4 +1,4 @@
-import type { PortfolioProfitLossResult } from "./portfolio-profit-loss";
+import type { PortfolioProfitLossResult } from "./portfolio-profit-loss-model";
 
 function protectSpreadsheetFormula(value: string): string {
   return /^\s*[=+\-@]/.test(value) || /^[\t\r]/.test(value) ? `'${value}` : value;

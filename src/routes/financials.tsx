@@ -20,7 +20,7 @@ import type { ReportTab, ComparisonMode, AgingType } from "../db/validation/repo
 import { formatCurrency, computeChange, getBucketLabels } from "../lib/report-utils";
 import { businessGroupsReturnSearch } from "../lib/business-groups/drilldown";
 import { buildPortfolioProfitLossCsv } from "../lib/business-groups/portfolio-profit-loss-export";
-import type { PortfolioProfitLossResult } from "../lib/business-groups/portfolio-profit-loss";
+import type { PortfolioProfitLossResult } from "../lib/business-groups/portfolio-profit-loss-model";
 import SmartDateFilter from "../components/smart-date-filter/SmartDateFilter";
 import {
   computePrevRange,

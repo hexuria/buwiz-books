@@ -3,7 +3,7 @@ import { buildProfitLoss } from "../../src/lib/report-calculations";
 import type {
   PortfolioProfitLossMetadata,
   PortfolioProfitLossResult,
-} from "../../src/lib/business-groups/portfolio-profit-loss";
+} from "../../src/lib/business-groups/portfolio-profit-loss-model";
 import { buildPortfolioProfitLossCsv } from "../../src/lib/business-groups/portfolio-profit-loss-export";
 
 function metadata(
