@@ -5,50 +5,15 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(REPO_ROOT, path), "utf8");
 
-describe("isolated Buwiz Business Groups deployment", () => {
-  it("locks the workflow to the approved project, service, registry, and Cloud SQL instance", () => {
+describe("isolated Buwiz Business Groups application wiring", () => {
+  it("keeps Business Group production wiring outside application CI", () => {
     const workflow = read(".github/workflows/deploy.yml");
 
-    expect(workflow).toContain("EXPECTED_GCP_PROJECT_ID: buwiz-503321");
-    expect(workflow).toContain("SERVICE_NAME: buwiz-books");
-    expect(workflow).toContain("buwiz-books-repo/app");
-    expect(workflow).toContain("buwiz-503321:europe-north1:buwiz-books-db");
-    expect(workflow).toContain("Validate deployment boundary");
-    expect(workflow).not.toContain("SERVICE_NAME: digits");
-    expect(workflow).not.toContain("digits-repo/app");
-  });
-
-  it("applies Enterprise migrations after schema reconciliation and before RLS/deploy", () => {
-    const workflow = read(".github/workflows/deploy.yml");
-    const push = workflow.indexOf("- name: Push DB schema");
-    const enterprise = workflow.indexOf("- name: Apply Enterprise migrations\n");
-    const rls = workflow.indexOf("- name: Apply RLS policies\n");
-    const deploy = workflow.indexOf("- name: Deploy to Cloud Run");
-
-    expect(push).toBeGreaterThan(-1);
-    expect(enterprise).toBeGreaterThan(push);
-    expect(rls).toBeGreaterThan(enterprise);
-    expect(deploy).toBeGreaterThan(rls);
-  });
-
-  it("ships the migration runner and account-scoped canary settings", () => {
-    const workflow = read(".github/workflows/deploy.yml");
-    const dockerfile = read("Dockerfile");
-
-    expect(dockerfile).toContain("scripts/apply-enterprise-migrations.ts");
-    expect(workflow).toContain("BUSINESS_GROUP_REPORT_SOURCE=");
-    expect(workflow).toContain("BUSINESS_GROUP_PROJECTION_ACCOUNT_ALLOWLIST=");
-    expect(workflow).toContain("DATABASE_URL=database-url:latest");
-    expect(workflow).toContain("DATABASE_URL_ADMIN=database-url-admin:latest");
-    expect(workflow).toContain("migration-${{ github.sha }}");
-    expect(workflow).toContain("buwiz-books-job-worker");
-    expect(workflow).toContain("sha256sum --check --strict");
-    expect(read("scripts/apply-enterprise-migrations.ts")).toContain(
-      '"0035_enterprise_stripe_billing.sql"',
-    );
-    expect(read("scripts/apply-enterprise-migrations.ts")).toContain(
-      '"0036_enterprise_checkout.sql"',
-    );
+    expect(workflow).not.toContain("BUSINESS_GROUP_REPORT_SOURCE");
+    expect(workflow).not.toContain("BUSINESS_GROUP_PROJECTION_ACCOUNT_ALLOWLIST");
+    expect(workflow).not.toContain("DATABASE_URL_ADMIN");
+    expect(workflow).not.toContain("buwiz-books-job-worker");
+    expect(workflow).not.toContain("deploy-cloudrun");
   });
 
   it("keeps provider events operator-only and subscription state member-readable", () => {
@@ -114,26 +79,5 @@ describe("isolated Buwiz Business Groups deployment", () => {
     expect(
       testBootstrap.indexOf("REVOKE ALL ON TABLE enterprise_billing_checkout_sessions"),
     ).toBeGreaterThan(testBootstrap.indexOf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES"));
-  });
-
-  it("makes the local provisioning path fail closed on the same target", () => {
-    const provision = read("scripts/provision-gcp.sh");
-    const makefile = read("Makefile");
-
-    for (const content of [provision, makefile]) {
-      expect(content).toContain("buwiz-503321");
-      expect(content).toContain("buwiz-books");
-    }
-    expect(provision).toContain('DB_TIER="${DB_TIER:-db-custom-1-3840}"');
-    expect(provision).toContain('DB_AVAILABILITY_TYPE="${DB_AVAILABILITY_TYPE:-REGIONAL}"');
-    expect(provision).toContain("--enable-point-in-time-recovery");
-    expect(provision).toContain("--deletion-protection");
-    expect(provision).toContain('ensure_database_user_secret "$DB_RUNTIME_USER" "database-url"');
-    expect(provision).toContain(
-      'ensure_database_user_secret "$DB_ADMIN_USER" "database-url-admin"',
-    );
-    expect(provision.indexOf("billing projects describe")).toBeLessThan(
-      provision.indexOf("services enable"),
-    );
   });
 });

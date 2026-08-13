@@ -6,7 +6,7 @@ This directory contains all test files organized by type:
 
 ```
 tests/
-├── unit/              # Unit tests for pure functions and utilities
+├── unit/              # Node tests for pure code and static repository contracts
 ├── integration/       # Integration tests for API endpoints and services
 ├── component/         # Component tests for React components
 ├── e2e/              # End-to-end tests for full user flows
@@ -19,8 +19,10 @@ tests/
 
 ### Unit Tests (`tests/unit/`)
 
-- Test pure functions in isolation
-- No external dependencies (DB, API, etc.)
+- Test pure functions and static repository contracts in isolation
+- May inspect checked-in configuration or invoke fail-closed local commands with provider tools
+  stubbed
+- No database, network, provider credential, browser, or DOM dependency
 - Fast execution
 - Run with: `bun test:unit`
 

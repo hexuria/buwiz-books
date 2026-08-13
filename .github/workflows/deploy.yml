@@ -1,21 +1,14 @@
-name: Deploy to Cloud Run
+name: Continuous Integration
 
 on:
+  pull_request:
   push:
     branches: [main]
-  workflow_dispatch:
 
-env:
-  EXPECTED_GCP_PROJECT_ID: buwiz-503321
-  GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GCP_REGION: europe-north1
-  SERVICE_NAME: buwiz-books
-  REGISTRY: ${{ secrets.GCP_PROJECT_ID && format('europe-north1-docker.pkg.dev/{0}/buwiz-books-repo/app', secrets.GCP_PROJECT_ID) || 'boundary-not-validated' }}
-  CLOUD_SQL_CONNECTION_NAME: buwiz-503321:europe-north1:buwiz-books-db
-  RUNTIME_SERVICE_ACCOUNT: buwiz-books-runner@buwiz-503321.iam.gserviceaccount.com
+permissions:
+  contents: read
 
 jobs:
-  # ── Quality gate: nothing deploys unless lint, typecheck, and tests pass ──
   test:
     runs-on: ubuntu-latest
     services:
@@ -36,10 +29,6 @@ jobs:
       DATABASE_URL: postgresql://buwiz_books:buwiz_books@localhost:5432/buwiz-books-tests
       TEST_DATABASE_URL: postgresql://buwiz_books:buwiz_books@localhost:5432/buwiz-books-tests
       BETTER_AUTH_SECRET: ci-test-secret
-      # src/lib/auth.ts constructs `new Resend(process.env.RESEND_API_KEY)` at
-      # module scope and the SDK throws on a missing key, so importing anything
-      # that reaches auth.ts fails at collection time. Locally .env.test
-      # supplies this; CI needs its own placeholder. No mail is ever sent here.
       RESEND_API_KEY: re_ci_placeholder_key
     steps:
       - name: Checkout code
@@ -51,11 +40,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Check formatting
+        run: bun run fmt:check
+
       - name: Lint
         run: bun run lint
 
       - name: Typecheck
         run: bun run typecheck
+
+      - name: Build
+        run: bun run build
 
       - name: Push schema to test DB
         run: bun x drizzle-kit push --force
@@ -66,10 +61,6 @@ jobs:
       - name: Apply RLS policies to test DB
         run: bun run db:rls
 
-      # Section A of the RLS hardening rollout: provisions the non-owner
-      # app_runtime role + grants. Idempotent and enforcement-neutral — the
-      # Section-B FORCE flip is a separate, manually-run maintenance step
-      # (see drizzle/rls_hardening.sql staged rollout).
       - name: Apply RLS hardening Section A to test DB
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/rls_hardening.sql
 
@@ -77,336 +68,7 @@ jobs:
         run: bun x vitest run tests/unit
 
       - name: Integration tests
-        # NOTE: never expose a live GEMINI_API_KEY in this job — the AI
-        # integration suites make real billable model calls when one is set
-        # (ai_findings #24). CI must stay key-free; live evals run in their own
-        # nightly workflow with a dedicated eval org.
         run: bun x vitest run tests/integration
 
       - name: Component tests
         run: bun x vitest run tests/component
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: test
-    permissions:
-      contents: read
-      id-token: write # Required for Workload Identity Federation
-
-    steps:
-      # ── Checkout ──────────────────────────────────────────────
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      # This repository is intentionally isolated from every other deployment.
-      # Validate the exact project before credentials can authorize a mutation.
-      - name: Validate deployment boundary
-        shell: bash
-        run: |
-          if [[ -z "${GCP_PROJECT_ID}" ]]; then
-            echo "::error::GCP_PROJECT_ID is not configured for this repository."
-            exit 1
-          fi
-
-          if [[ "${GCP_PROJECT_ID}" != "${EXPECTED_GCP_PROJECT_ID}" ]]; then
-            echo "::error::Refusing to deploy to project '${GCP_PROJECT_ID}'. Expected '${EXPECTED_GCP_PROJECT_ID}'."
-            exit 1
-          fi
-
-      # ── Authenticate to Google Cloud ──────────────────────────
-      - name: Authenticate to Google Cloud
-        id: auth
-        uses: google-github-actions/auth@v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      # ── Set up Cloud SDK ──────────────────────────────────────
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
-      - name: Start Cloud SQL Auth Proxy
-        shell: bash
-        run: |
-          PROXY_URL="https://storage.googleapis.com/cloud-sql-connectors/cloud-sql-proxy/v2.22.0/cloud-sql-proxy.linux.amd64"
-          curl --fail --silent --show-error --location "${PROXY_URL}" --output cloud-sql-proxy
-          echo "42e73a8775bc3300b6514816cc4893f01b109a50f65aa779a451d3e4ff4c3ead  cloud-sql-proxy" | sha256sum --check --strict
-          chmod +x cloud-sql-proxy
-          nohup ./cloud-sql-proxy --address 127.0.0.1 --port 5432 "${CLOUD_SQL_CONNECTION_NAME}" >cloud-sql-proxy.log 2>&1 &
-
-          for attempt in {1..30}; do
-            if (echo > /dev/tcp/127.0.0.1/5432) >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 1
-          done
-
-          echo "::error::Cloud SQL Auth Proxy did not become ready."
-          sed -n '1,80p' cloud-sql-proxy.log
-          exit 1
-
-      - name: Validate isolated secrets and prepare migration connection
-        shell: bash
-        run: |
-          REQUIRED_SECRETS=(
-            database-url
-            database-url-admin
-            better-auth-secret
-            better-auth-url
-            google-client-id
-            google-client-secret
-            r2-bucket
-            r2-access-key-id
-            r2-secret-access-key
-            r2-endpoint
-            resend-api-key
-            mail-from
-            inbox-worker-secret
-            admin-email
-            secrets-encryption-key
-          )
-
-          for secret_name in "${REQUIRED_SECRETS[@]}"; do
-            secret_value="$(gcloud secrets versions access latest --secret="${secret_name}" --project="${GCP_PROJECT_ID}")"
-            if [[ -z "${secret_value}" || "${secret_value}" == "REPLACE_ME" ]]; then
-              echo "::error::Secret '${secret_name}' is missing a production value in ${GCP_PROJECT_ID}."
-              exit 1
-            fi
-            echo "::add-mask::${secret_value}"
-          done
-
-          ADMIN_DATABASE_URL="$(gcloud secrets versions access latest --secret=database-url-admin --project="${GCP_PROJECT_ID}")"
-          MIGRATION_DATABASE_URL="$(printf '%s' "${ADMIN_DATABASE_URL}" | sed -E 's#@/([^?]+)\?host=/cloudsql/[^&]+#@127.0.0.1:5432/\1#')"
-          if [[ "${MIGRATION_DATABASE_URL}" == "${ADMIN_DATABASE_URL}" ]]; then
-            echo "::error::database-url-admin is not an isolated Cloud SQL socket URL."
-            exit 1
-          fi
-          echo "::add-mask::${MIGRATION_DATABASE_URL}"
-          printf 'MIGRATION_DATABASE_URL=%s\n' "${MIGRATION_DATABASE_URL}" >> "${GITHUB_ENV}"
-
-      # ── Configure Docker for Artifact Registry ────────────────
-      - name: Configure Docker
-        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
-
-      # ── Build and push Docker image ───────────────────────────
-      - name: Build and push image
-        run: |
-          IMAGE="${{ env.REGISTRY }}:${{ github.sha }}"
-          IMAGE_LATEST="${{ env.REGISTRY }}:latest"
-          MIGRATION_IMAGE="${{ env.REGISTRY }}:migration-${{ github.sha }}"
-
-          # VITE_* must be build args: Vite inlines them into the client bundle
-          # at build time, so setting them on the Cloud Run service has no
-          # effect. Unset repo variables fall through to the defaults in
-          # src/config/brand.ts ("Buwiz Books"). Non-secret by definition —
-          # anything passed here ends up readable in the shipped JS.
-          # Keep schema tooling out of the production runtime image. The local,
-          # unpushed build-stage image carries full dependencies for this job's
-          # migration steps; the final image remains production-only.
-          docker build \
-            --target build \
-            --tag "$MIGRATION_IMAGE" \
-            --cache-from "$IMAGE_LATEST" \
-            --build-arg VITE_APP_NAME="${{ vars.VITE_APP_NAME }}" \
-            --build-arg VITE_APP_URL="${{ vars.VITE_APP_URL }}" \
-            --build-arg VITE_BRAND_PRIMARY="${{ vars.VITE_BRAND_PRIMARY }}" \
-            --build-arg VITE_BRAND_ACCENT="${{ vars.VITE_BRAND_ACCENT }}" \
-            --build-arg VITE_BRAND_LOGO_URL="${{ vars.VITE_BRAND_LOGO_URL }}" \
-            --build-arg VITE_BRAND_FAVICON_URL="${{ vars.VITE_BRAND_FAVICON_URL }}" \
-            --build-arg VITE_SUPPORT_EMAIL="${{ vars.VITE_SUPPORT_EMAIL }}" \
-            .
-
-          docker build \
-            --tag "$IMAGE" \
-            --tag "$IMAGE_LATEST" \
-            --cache-from "$IMAGE_LATEST" \
-            --build-arg VITE_APP_NAME="${{ vars.VITE_APP_NAME }}" \
-            --build-arg VITE_APP_URL="${{ vars.VITE_APP_URL }}" \
-            --build-arg VITE_BRAND_PRIMARY="${{ vars.VITE_BRAND_PRIMARY }}" \
-            --build-arg VITE_BRAND_ACCENT="${{ vars.VITE_BRAND_ACCENT }}" \
-            --build-arg VITE_BRAND_LOGO_URL="${{ vars.VITE_BRAND_LOGO_URL }}" \
-            --build-arg VITE_BRAND_FAVICON_URL="${{ vars.VITE_BRAND_FAVICON_URL }}" \
-            --build-arg VITE_SUPPORT_EMAIL="${{ vars.VITE_SUPPORT_EMAIL }}" \
-            .
-
-          docker push "$IMAGE"
-          docker push "$IMAGE_LATEST"
-
-      # Pre-create the AI tables idempotently BEFORE push: with unmanaged
-      # tables present (app_manual_migrations), drizzle-kit push prompts
-      # interactively for brand-new tables ("created or renamed?"), which
-      # hangs a non-TTY deploy. Existing tables diff to nothing.
-      - name: Apply AI foundation tables
-        run: |
-          docker run --rm --network=host \
-            -e DATABASE_URL="${MIGRATION_DATABASE_URL}" \
-            "${{ env.REGISTRY }}:migration-${{ github.sha }}" \
-            bun run scripts/apply-ai-foundation.ts
-
-      # ── Reconcile the current schema in the isolated Cloud SQL database ──
-      # WARNING: `drizzle-kit push --force` diffs schema.ts against the live prod DB and
-      # applies the diff without review — it can DROP columns. Prefer moving to committed
-      # migrations (`drizzle-kit generate` + `drizzle-kit migrate`) once the migration
-      # journal is reconciled with prod. Until then, the test gate above is the only guard.
-      - name: Push DB schema
-        run: |
-          docker run --rm --network=host \
-            -e DATABASE_URL="${MIGRATION_DATABASE_URL}" \
-            "${{ env.REGISTRY }}:migration-${{ github.sha }}" \
-            bun x drizzle-kit push --force
-
-      - name: Apply Enterprise migrations
-        run: |
-          docker run --rm --network=host \
-            -e DATABASE_URL_ADMIN="${MIGRATION_DATABASE_URL}" \
-            "${{ env.REGISTRY }}:migration-${{ github.sha }}" \
-            bun run scripts/apply-enterprise-migrations.ts
-
-      # Backfill server-only credentials and install integrity indexes. The script is
-      # transactional and idempotent, so a failed precondition stops deployment safely.
-      - name: Apply integrity migration
-        run: |
-          docker run --rm --network=host \
-            -e DATABASE_URL="${MIGRATION_DATABASE_URL}" \
-            "${{ env.REGISTRY }}:migration-${{ github.sha }}" \
-            bun run scripts/apply-integrity-migration.ts
-
-      - name: Apply RLS policies
-        run: |
-          docker run --rm --network=host \
-            -v "${PWD}/drizzle:/migrations:ro" \
-            postgres:16 \
-            psql "${MIGRATION_DATABASE_URL}" -v ON_ERROR_STOP=1 -f /migrations/rls_policies.sql
-
-      - name: Provision non-owner runtime grants
-        run: |
-          docker run --rm --network=host \
-            -v "${PWD}/drizzle:/migrations:ro" \
-            postgres:16 \
-            psql "${MIGRATION_DATABASE_URL}" -v ON_ERROR_STOP=1 -f /migrations/rls_hardening.sql
-
-      # Seed the global review-rule catalog. Its rows only ever shipped inside
-      # drizzle/0019_inbox_review_foundation.sql, which drizzle-kit does not run and which
-      # this pipeline never applied — so prod had the tables and no rows, and /review-agents
-      # rendered empty. Runs after the schema push (the table must exist) and before the new
-      # revision serves traffic. Idempotent: ON CONFLICT (key) DO NOTHING.
-      - name: Seed review rule catalog
-        run: |
-          docker run --rm --network=host \
-            -e DATABASE_URL="${MIGRATION_DATABASE_URL}" \
-            "${{ env.REGISTRY }}:migration-${{ github.sha }}" \
-            bun run scripts/seed-review-rules.ts
-
-      # ── Deploy to Cloud Run ───────────────────────────────────
-      - name: Deploy to Cloud Run
-        uses: google-github-actions/deploy-cloudrun@v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          service: ${{ env.SERVICE_NAME }}
-          image: ${{ env.REGISTRY }}:${{ github.sha }}
-          region: ${{ env.GCP_REGION }}
-          flags: >-
-            --allow-unauthenticated
-            --port=8080
-            --memory=1Gi
-            --cpu=1
-            --min-instances=0
-            --max-instances=3
-            --concurrency=80
-            --timeout=300
-            --add-cloudsql-instances=${{ env.CLOUD_SQL_CONNECTION_NAME }}
-            --service-account=${{ env.RUNTIME_SERVICE_ACCOUNT }}
-          # JOB_DRAIN_MODE=off — production has no in-process drain loop; the
-          # Cloud Scheduler tick (`make scheduler`) is the only thing that runs
-          # queued jobs. INTERNAL_WORKER_URL keeps the fire-and-forget
-          # self-trigger on the loopback interface: without it, workerUrl()
-          # falls back to BETTER_AUTH_URL and the instance calls itself through
-          # the public load balancer — a billable round trip that can cold-start
-          # a second instance against --max-instances=3 above.
-          # SUPPORT_EMAIL is the SERVER half of the brand (emails, PDFs, the web
-          # manifest). VITE_* is stripped from the server bundle, so it must be
-          # plain runtime env — the build args above only reach the client.
-          #
-          # APP_NAME is deliberately absent: entries here are a newline-delimited
-          # NAME=VALUE list and values cannot contain whitespace (see
-          # tests/unit/deploy-secrets-block.test.ts), so "Buwiz Books" cannot be
-          # expressed. It does not need to be — serverBrand.appName falls back to
-          # exactly that string in src/config/brand.ts. To override it on this
-          # deployment, use the action's `env_vars_file` input, which does accept
-          # spaces, rather than adding a line here.
-          env_vars: |
-            NODE_ENV=production
-            HOST=0.0.0.0
-            STORAGE_PROVIDER=r2
-            JOB_DRAIN_MODE=off
-            INTERNAL_WORKER_URL=http://127.0.0.1:8080
-            SUPPORT_EMAIL=support@goldcoders.dev
-            BUSINESS_GROUP_REPORT_SOURCE=${{vars.BUSINESS_GROUP_REPORT_SOURCE||'live'}}
-            BUSINESS_GROUP_PROJECTION_ACCOUNT_ALLOWLIST=${{vars.BUSINESS_GROUP_PROJECTION_ACCOUNT_ALLOWLIST||'none'}}
-            BUSINESS_GROUP_PROJECTION_RECONCILIATION_TOLERANCE=${{vars.BUSINESS_GROUP_PROJECTION_RECONCILIATION_TOLERANCE||'0.01'}}
-          env_vars_update_strategy: overwrite
-          # This block is a newline-delimited NAME=SECRET:VERSION list, not YAML —
-          # a "#" line inside it is forwarded to `gcloud run deploy` as a literal
-          # secret entry and fails the deploy. Keep every comment out here.
-          #
-          # ADMIN_EMAIL is the break-glass platform-operator identity.
-          # `isPlatformOperator` in src/routes/api/-org-settings.ts is the ONLY
-          # thing that may enter a tenant the caller does not belong to, and it
-          # fails closed when this is unset — which it silently was, because
-          # secrets_update_strategy below overwrites the whole set on every
-          # deploy, wiping any value set by hand on the service.
-          secrets: |
-            DATABASE_URL=database-url:latest
-            DATABASE_URL_ADMIN=database-url-admin:latest
-            BETTER_AUTH_SECRET=better-auth-secret:latest
-            BETTER_AUTH_URL=better-auth-url:latest
-            GOOGLE_CLIENT_ID=google-client-id:latest
-            GOOGLE_CLIENT_SECRET=google-client-secret:latest
-            R2_BUCKET=r2-bucket:latest
-            R2_ACCESS_KEY_ID=r2-access-key-id:latest
-            R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest
-            R2_ENDPOINT=r2-endpoint:latest
-            RESEND_API_KEY=resend-api-key:latest
-            MAIL_FROM=mail-from:latest
-            INBOX_WORKER_SECRET=inbox-worker-secret:latest
-            ADMIN_EMAIL=admin-email:latest
-            SECRETS_ENCRYPTION_KEY=secrets-encryption-key:latest
-          secrets_update_strategy: overwrite
-
-      - name: Ensure durable worker scheduler
-        shell: bash
-        run: |
-          SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${GCP_REGION}" --project "${GCP_PROJECT_ID}" --format 'value(status.url)')"
-          WORKER_SECRET="$(gcloud secrets versions access latest --secret=inbox-worker-secret --project="${GCP_PROJECT_ID}")"
-          echo "::add-mask::${WORKER_SECRET}"
-          JOB_NAME="buwiz-books-job-worker"
-
-          if gcloud scheduler jobs describe "${JOB_NAME}" --location "${GCP_REGION}" --project "${GCP_PROJECT_ID}" >/dev/null 2>&1; then
-            SCHEDULER_VERB=update
-            HEADER_FLAG=--update-headers
-          else
-            SCHEDULER_VERB=create
-            HEADER_FLAG=--headers
-          fi
-
-          gcloud scheduler jobs "${SCHEDULER_VERB}" http "${JOB_NAME}" \
-            --location "${GCP_REGION}" \
-            --project "${GCP_PROJECT_ID}" \
-            --schedule="* * * * *" \
-            --time-zone=UTC \
-            --uri="${SERVICE_URL}/api/internal/worker" \
-            --http-method=POST \
-            --message-body='{}' \
-            "${HEADER_FLAG}=Authorization=Bearer ${WORKER_SECRET},Content-Type=application/json" \
-            --attempt-deadline=320s \
-            --max-retry-attempts=0
-
-      - name: Verify deployed service
-        shell: bash
-        run: |
-          SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${GCP_REGION}" --project "${GCP_PROJECT_ID}" --format 'value(status.url)')"
-          curl --fail --silent --show-error --location --retry 8 --retry-all-errors --retry-delay 5 "${SERVICE_URL}/" >/dev/null
-          echo "Deployed and verified ${SERVICE_NAME} at ${SERVICE_URL}"

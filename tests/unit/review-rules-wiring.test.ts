@@ -49,23 +49,11 @@ describe("review-rule catalog wiring", () => {
     });
   });
 
-  describe("deploy pipeline", () => {
+  describe("application CI", () => {
     const workflow = read(".github/workflows/deploy.yml");
 
-    it("runs the seeder", () => {
-      // This is the specific omission that left production blank: the pipeline ran
-      // apply-ai-foundation and apply-integrity-migration, but nothing seeded the catalog.
-      expect(workflow).toContain(SEEDER);
-    });
-
-    it("seeds after the schema push, before the new revision serves traffic", () => {
-      const push = workflow.indexOf("drizzle-kit push");
-      const seed = workflow.indexOf(SEEDER);
-      const deploy = workflow.indexOf("deploy-cloudrun");
-      expect(push).toBeGreaterThan(-1);
-      expect(deploy).toBeGreaterThan(-1);
-      expect(seed).toBeGreaterThan(push);
-      expect(seed).toBeLessThan(deploy);
+    it("does not carry the production seeding path", () => {
+      expect(workflow).not.toContain(SEEDER);
     });
   });
 
@@ -81,12 +69,14 @@ describe("review-rule catalog wiring", () => {
     });
   });
 
-  describe("Makefile", () => {
+  describe("application Makefile", () => {
     const makefile = read("Makefile");
 
-    it("seeds as part of the Cloud SQL migrate target", () => {
-      const migrate = makefile.slice(makefile.indexOf("\nmigrate:"));
-      expect(migrate).toContain(SEEDER);
+    it("does not expose production catalog seeding through migration", () => {
+      expect(makefile).not.toContain(SEEDER);
+      expect(makefile).toMatch(
+        /^migrate:\n\t@echo .*disabled in this application repository.*\n\t@exit 1$/m,
+      );
     });
   });
 

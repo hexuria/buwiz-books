@@ -1,6 +1,7 @@
 # Database Operations
 
-All database commands for local development and production.
+Local-development commands and the production database contract. No command in
+this application document is authorized for production.
 
 ---
 
@@ -53,17 +54,17 @@ writes to `review_rule_definitions`, which has **no `organization_id`** and is
 excluded from every RLS policy — a single empty table means every tenant sees
 zero review agents and `/review-agents` renders as if nothing were configured.
 
-It is idempotent and strictly additive (`ON CONFLICT (key) DO NOTHING`), so it is
-safe to run against any database at any time, and it never modifies a definition
-that already exists. That last part is load-bearing: migration `0020` rewrote
-`possible_duplicate`'s `default_config`, and the duplicate engine reads mode and
-scores straight off it, so an `ON CONFLICT DO UPDATE` would let an edit to a
-TypeScript constant retune duplicate blocking for every tenant at deploy time.
+It is idempotent and strictly additive (`ON CONFLICT (key) DO NOTHING`), and it
+never modifies a definition that already exists. That last part is load-bearing:
+migration `0020` rewrote `possible_duplicate`'s `default_config`, and the duplicate
+engine reads mode and scores straight off it, so an `ON CONFLICT DO UPDATE` would
+let an edit to a TypeScript constant retune duplicate blocking for every tenant at
+deploy time.
 Changing an existing definition is a reviewed numbered migration, not a seed.
 
-Unlike the other seeders it is wired into `db:fresh`, `db:test:fresh`, the deploy
-workflow and `make migrate`; `tests/unit/review-rules-wiring.test.ts` fails if any
-of those links is removed.
+Unlike the other seeders it is wired into the local `db:fresh` and `db:test:fresh`
+rebuilds. `tests/unit/review-rules-wiring.test.ts` guards those links. The
+unattached canonical deployment repository must own production seeding.
 
 ---
 
@@ -81,24 +82,19 @@ There are two database credentials:
 | `database-url`       | non-owner `app_runtime` | Cloud Run application queries under RLS              |
 | `database-url-admin` | `buwiz_books_admin`     | schema/RLS migrations and explicit operator commands |
 
-For local validation only, the historical target-guarded helper is:
-
-```bash
-make migrate
-```
-
-The canonical deployment tooling must preserve the same dependency order. The
-local helper runs AI foundation, schema reconciliation, Enterprise migrations `0028`
-through `0036`, integrity migration, RLS policies, runtime grants, and the
-review-rule catalog in dependency order. The local helper's target guards do not
-prove the current production boundary or live deployment state.
+The historical `make migrate` entry point is disabled here. The canonical
+deployment tooling must preserve the recorded dependency order: AI foundation,
+schema reconciliation, Enterprise migrations `0028` through `0036`, integrity
+migration, RLS policies, runtime grants, and the review-rule catalog. That order
+is historical evidence, not authorization to run application-repository tools
+against a non-local database.
 
 > [!WARNING]
-> The current reconciliation step still uses `drizzle-kit push --force`, which
-> can apply destructive schema differences. Review the generated schema diff,
-> take a target backup, and use a protected production deployment environment
-> before approving it. The numbered Enterprise migrations themselves are
-> checksum-fenced and must never be edited after application.
+> The historical reconciliation design used `drizzle-kit push --force`, which
+> can apply destructive schema differences. It is not runnable through the
+> disabled application Make target. Canonical deployment must replace or fence
+> that behavior, review every schema change, and prove backup/restore readiness
+> before approval. Numbered migrations must never be edited after application.
 
 After migration, verify:
 
@@ -113,25 +109,10 @@ After migration, verify:
 
 ## Backup & Restore
 
-### Create a Backup
-
-```bash
-source .env && pg_dump --data-only --inserts --column-inserts \
-  --no-owner --no-privileges "$DATABASE_URL" \
-  -f scripts/backup-$(date +%Y-%m-%d).sql
-```
-
-### Restore from Backup
-
-```bash
-bash scripts/restore-backup.sh
-```
-
-The restore script will:
-
-1. Apply the latest schema with `drizzle-kit push`
-2. Truncate all data tables
-3. Restore data from the backup file
+Backup, restore, and restore rehearsal are owned by the canonical deployment
+repository. The historical `scripts/restore-backup.sh` is fail-closed because it
+could truncate the database selected by ambient `DATABASE_URL`. Do not copy its
+unreachable implementation into an operator shell.
 
 > [!WARNING]
 > Backups contain sensitive auth tokens and are git-ignored via `scripts/backup-*.sql`. Never commit them.
@@ -146,7 +127,8 @@ Visual database browser for inspecting and editing data:
 bun db:studio
 ```
 
-Opens at `https://local.drizzle.studio` — works with both local and production databases (set `DATABASE_URL` accordingly).
+Opens at `https://local.drizzle.studio`. Use it only with an explicitly selected
+local development database; it is not an authorized production console.
 
 ---
 

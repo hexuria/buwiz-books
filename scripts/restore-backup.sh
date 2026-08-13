@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+echo "This historical database restore script is disabled in this application repository." >&2
+echo "Use an approved restore runbook in the unattached canonical deployment repository." >&2
+exit 1
+
+# Historical implementation below is intentionally unreachable evidence.
+
 # Restore database from backup-2026-02-09.sql
 #
 # Usage:

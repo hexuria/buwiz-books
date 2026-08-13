@@ -60,32 +60,27 @@ the loopback address of the container's own port:
 INTERNAL_WORKER_URL=http://127.0.0.1:8080
 ```
 
-8080 is the Cloud Run port in both deploy paths (`--port=8080` in the workflow,
-`ENV PORT=8080` in the `Dockerfile`).
+8080 is the container port recorded by `ENV PORT=8080` in the `Dockerfile`.
+The canonical deployment repository must verify and wire the same loopback port.
 
-## Deployment
+## Production deployment contract
+
+This section describes required behavior, not commands to run from this
+application checkout. Its cloud workflow is CI-only and its deployment,
+provisioning, scheduler, and environment Make targets fail closed. The
+unattached canonical deployment repository must implement and verify this
+contract.
 
 ### Secrets
 
-| Path                   | Secret Manager name     | Wired in                                    |
-| :--------------------- | :---------------------- | :------------------------------------------ |
-| GitHub Actions         | `inbox-worker-secret`   | `.github/workflows/deploy.yml` (`secrets:`) |
-| `make deploy(-docker)` | `inbox-worker-secret`   | `Makefile` (`--set-secrets`)                |
-| Cloud Scheduler header | copied from that secret | workflow or `make scheduler`                |
-
-Both deployment paths use the same lowercase Secret Manager ID. `make provision`
-generates it with `openssl rand -base64 32` and never overwrites an existing
-value. All commands are scoped to gcloud configuration `buwiz-books`, project
-`buwiz-503321`, and region `europe-north1`.
+The canonical deployment must mount one `inbox-worker-secret` value as
+`INBOX_WORKER_SECRET` and copy that same value into the external scheduler's
+authorization header. Rotation must update both consumers atomically or keep the
+service fenced until both are verified.
 
 ### Env vars
 
-`JOB_DRAIN_MODE=off` and `INTERNAL_WORKER_URL=http://127.0.0.1:8080` ship with
-the GitHub Actions deploy automatically (`env_vars:` block).
-
-The Makefile path passes plain env vars through `.env.cloudrun.yaml` — gcloud
-rejects `--set-env-vars` alongside `--env-vars-file`, and that file is
-git-ignored, so **add both keys there by hand** before deploying:
+The canonical deployment must set these non-secret runtime values:
 
 ```yaml
 JOB_DRAIN_MODE: "off"
@@ -94,32 +89,10 @@ INTERNAL_WORKER_URL: "http://127.0.0.1:8080"
 
 ### Scheduler
 
-The GitHub Actions deployment creates or updates the scheduler after Cloud Run
-is healthy. The local idempotent operator path is:
-
-```bash
-make scheduler
-```
-
-Both paths create or update `buwiz-books-job-worker` and fail if the service or
-secret is unavailable. The equivalent target-scoped raw command is:
-
-```bash
-gcloud --configuration=buwiz-books scheduler jobs create http buwiz-books-job-worker \
-  --location=europe-north1 \
-  --project=buwiz-503321 \
-  --schedule="* * * * *" \
-  --time-zone=UTC \
-  --uri="$(gcloud --configuration=buwiz-books run services describe buwiz-books \
-            --region=europe-north1 --project=buwiz-503321 \
-            --format='value(status.url)')/api/internal/worker" \
-  --http-method=POST \
-  --message-body='{}' \
-  --headers="Authorization=Bearer $(gcloud --configuration=buwiz-books secrets versions access latest \
-              --secret=inbox-worker-secret --project=buwiz-503321),Content-Type=application/json" \
-  --attempt-deadline=320s \
-  --max-retry-attempts=0
-```
+The canonical deployment must create or update the external scheduler only after
+the no-traffic service revision is healthy. It must target
+`POST /api/internal/worker` once a minute with the shared authorization secret,
+an empty JSON body, a 320-second deadline, and provider retries disabled.
 
 `--max-retry-attempts=0` is deliberate. The route returns **500** when a job
 fails, but that job has already been requeued with exponential backoff by the
@@ -127,24 +100,22 @@ runner. Scheduler retries would hammer a job that is intentionally sleeping —
 and the next tick is only 60s away.
 
 The scheduler job carries a **copy** of the secret in its header. Rotating
-`inbox-worker-secret` without re-running `make scheduler` leaves the job
-authenticating with the old value: every tick 401s and the queue stops draining.
+`inbox-worker-secret` without updating the scheduler leaves it authenticating
+with the old value: every tick 401s and the queue stops draining.
 
-There is no uppercase duplicate secret. A stale scheduler header after rotation
-is repaired by the next deployment or `make scheduler`.
+There is no uppercase duplicate secret. The canonical deployment must detect and
+repair a stale scheduler header during rotation or cutover.
 
-## Triage: "jobs are stuck"
+## Triage contract: "jobs are stuck"
+
+Live diagnostics are production operations and belong to the canonical
+deployment runbook. The observations below identify what that runbook must
+check; the historical cloud commands have been removed from this document.
 
 Symptom: uploads/emails are accepted but nothing ever completes; rows pile up in
 `processing_jobs` with `status = 'queued'`.
 
 **1. Is the secret set on the service?**
-
-```bash
-gcloud --configuration=buwiz-books run services describe buwiz-books \
-  --project=buwiz-503321 --region=europe-north1 \
-  --format='value(spec.template.spec.containers[0].env)' | tr ',' '\n' | grep -i worker
-```
 
 No `INBOX_WORKER_SECRET` → the route returns `500 Inbox worker is not
 configured.` and the self-trigger no-ops. Logs show
@@ -156,26 +127,12 @@ points at loopback in the same output.
 
 **2. Does the scheduler job exist, and did its last run succeed?**
 
-```bash
-gcloud --configuration=buwiz-books scheduler jobs describe buwiz-books-job-worker \
-  --location=europe-north1 --project=buwiz-503321 \
-  --format='yaml(state,schedule,lastAttemptTime,status,scheduleTime)'
-```
-
-- Not found → never created. Run `make scheduler`.
+- Not found → the canonical deployment never created it or cutover did not finish.
 - `state: PAUSED` → resume `buwiz-books-job-worker` in the guarded project.
 - `status.code: 16` / repeated 401s → the header secret and Secret Manager have
-  diverged (rotation). Re-run `make scheduler`.
+  diverged during rotation. Repair it through the canonical runbook.
 - `status.code: 2` with 500s → the worker is reaching a real job failure; go to
   step 3 and read `last_error`.
-
-Scheduler attempt history:
-
-```bash
-gcloud --configuration=buwiz-books logging read \
-  'resource.type="cloud_scheduler_job" AND resource.labels.job_id="buwiz-books-job-worker"' \
-  --limit=20 --project=buwiz-503321 --format='value(timestamp,jsonPayload.status)'
-```
 
 **3. What does the queue itself say?**
 
@@ -200,12 +157,8 @@ order by oldest_due;
   job was terminalized along with its ingestion event, source, Inbox item, and
   audit event. Read `last_error`; these do not retry.
 
-For Business Group projection readiness and scoped full replay, use the
-operator command documented in `docs/admin/enterprise-business-groups.md`:
-
-```bash
-DATABASE_URL_ADMIN=... bun run business-groups:projection --status
-```
+The canonical runbook must include read-only Business Group projection readiness
+for the reviewed scope, as specified in `docs/admin/enterprise-business-groups.md`.
 
 ```sql
 -- Why did they fail?
@@ -216,19 +169,9 @@ order by updated_at desc
 limit 20;
 ```
 
-**4. Verify end to end by hand**
+**4. Verify end to end through the canonical runbook**
 
-```bash
-SERVICE_URL=$(gcloud --configuration=buwiz-books run services describe buwiz-books \
-  --region=europe-north1 --project=buwiz-503321 --format='value(status.url)')
-SECRET=$(gcloud --configuration=buwiz-books secrets versions access latest \
-  --secret=inbox-worker-secret --project=buwiz-503321)
-
-curl -sS -X POST "$SERVICE_URL/api/internal/worker" \
-  -H "Authorization: Bearer $SECRET" \
-  -H 'Content-Type: application/json' \
-  -d '{}' -w '\nHTTP %{http_code}\n'
-```
+Issue one authenticated empty-JSON worker request without printing the secret.
 
 - `200` with a job result → the worker is healthy; the problem is the trigger.
 - `401` → the deployed secret differs from Secret Manager (redeploy after a

@@ -27,13 +27,9 @@ cross-currency amount. Related events are never automatically suppressed.
 
 `drizzle/meta/_journal.json` does not include the handwritten `0019` through
 `0024` migrations. `bun run db:migrate` therefore does **not** install this
-feature. Apply the exact migrations with:
-
-```bash
-DATABASE_URL=... bun run db:dedup:migrate
-DATABASE_URL=... bun run db:dedup:migrate --status
-DATABASE_URL=... bun run db:rls
-```
+feature. The unattached canonical deployment repository must apply and verify
+the exact migration and RLS sequence under its migration-only identity. Do not
+invoke these application scripts against production.
 
 The migration command runs `0019_inbox_review_foundation.sql` through
 `0024_tenant_lineage_integrity.sql` in order. It records a SHA-256 checksum for each
@@ -52,13 +48,8 @@ bill and invoice payment transitions. `0024` adds organization-consistent
 lineage constraints so a source, candidate, document, duplicate case, merge,
 and journal link cannot cross tenant boundaries.
 
-Run the read-only preflight before enforcement or backfill:
-
-```bash
-DATABASE_URL=... bun run dedup:preflight
-DATABASE_URL=... bun run dedup:preflight --org=<organization-id> --strict
-DATABASE_URL=... bun run dedup:preflight --json > dedup-preflight.json
-```
+Before enforcement or backfill, the canonical runbook must run the read-only
+preflight for the reviewed organization and retain its strict/JSON evidence.
 
 It reports duplicate document hashes, repeated active provider identities,
 origin sources linked to multiple journals, sources with multiple current
@@ -67,13 +58,13 @@ matches, and orphaned polymorphic document attachments. Successfully converted
 legacy rows no longer keep this preflight section red. `--strict` exits with
 status 2 when sampled findings exist.
 
-After the preflight is clean, promote the `NOT VALID` checks from `0020`:
+After the preflight is clean, the canonical runbook must compare strict preflight
+and read-only validation status before promoting the `NOT VALID` checks from
+`0020`.
 
-```bash
-DATABASE_URL=... bun run dedup:preflight --strict
-DATABASE_URL=... bun run db:dedup:validate --status
-DATABASE_URL=... bun run db:dedup:validate
-```
+Promoting the constraints is a production mutation. The canonical deployment
+runbook must execute the write mode under the approved migration identity during
+the maintenance window after the strict preflight and read-only status agree.
 
 The validation command covers source record state, direction, economic-event
 class, canonical source ordering, match score, match class, disposition, and
@@ -84,18 +75,13 @@ scan the affected tables.
 
 ## Twelve-month backfill
 
-The backfill defaults to a non-mutating dry run:
+The canonical runbook must produce a non-mutating, organization-scoped dry run
+with an explicit as-of date before considering any backfill.
 
-```bash
-DATABASE_URL=... bun run dedup:backfill
-DATABASE_URL=... bun run dedup:backfill --org=<organization-id> --as-of=2026-07-24
-```
-
-After reviewing the scope, apply in bounded batches:
-
-```bash
-DATABASE_URL=... bun run dedup:backfill --apply --org=<organization-id> --limit=500
-```
+Applying the backfill is a production mutation. The canonical runbook must use
+an approved migration identity, explicit organization, reviewed as-of date and
+bounded batch size, and must record progress without exposing a reusable write
+recipe in this application document.
 
 Apply mode synthesizes a `legacy_journal` source record for each effective
 posted journal that lacks an origin source, links existing documents, creates
@@ -147,20 +133,13 @@ restored; incomplete snapshots require manual quarantine.
 
 ### Legacy destructive-match conversion
 
-Install `0022`, then inspect active, unprocessed legacy rows in a bounded,
-organization-scoped dry run:
+After `0022` is verified, the canonical runbook must inspect active, unprocessed
+legacy rows using a bounded, organization-scoped dry run and retain the JSON
+evidence.
 
-```bash
-DATABASE_URL=... bun run dedup:convert-legacy --org=<organization-id> --limit=100
-DATABASE_URL=... bun run dedup:convert-legacy --org=<organization-id> --json
-```
-
-After reviewing every result, apply the same bounded batch:
-
-```bash
-DATABASE_URL=... bun run dedup:convert-legacy --apply --org=<organization-id> --limit=100
-DATABASE_URL=... bun run dedup:convert-legacy --quarantines --org=<organization-id>
-```
+Conversion is a production mutation. The canonical runbook must preserve the
+reviewed organization and batch bounds, execute through the approved migration
+identity, and inspect quarantines before any additional batch.
 
 Apply mode is idempotent and revalidates under row/advisory locks. A convertible
 row must have a complete current-schema snapshot, including explicit currency,

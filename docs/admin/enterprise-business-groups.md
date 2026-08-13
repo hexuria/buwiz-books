@@ -303,11 +303,9 @@ The default tolerance is `0.01`. The table is protected by direct-organization R
 
 ## Migrations
 
-Apply the manual Enterprise chain with:
-
-```sh
-bun run db:enterprise:migrate
-```
+The unattached canonical deployment repository must apply the manual Enterprise
+chain under the migration-only role. Do not run it against production from this
+application checkout.
 
 The checksum-guarded chain is:
 
@@ -325,39 +323,16 @@ Never edit an applied migration. Add another migration if the schema changes.
 
 ## Entitlement operations
 
-Entitlement commands are read-only previews unless `--apply` is present. They print the exact target database, database user, host, and proposed contract state before any write. The owner and audit actor must already have Buwiz user accounts.
+The canonical runbook must provide read-only entitlement status and previews. It
+must print the exact target database, database user, host, scope, and proposed
+contract state before any write. The owner and audit actor must already have
+Buwiz user accounts.
 
-Inspect every Enterprise contract or one account:
-
-```sh
-DATABASE_URL_ADMIN=... bun run business-groups:entitlement status
-DATABASE_URL_ADMIN=... bun run business-groups:entitlement status \
-  --enterprise-account-id=<account-uuid>
-```
-
-Preview and then provision a contract:
-
-```sh
-DATABASE_URL_ADMIN=... ADMIN_EMAIL=operator@example.com \
-  bun run business-groups:entitlement provision \
-  --name="Acme Holdings" --owner-email=owner@example.com --limit=25 \
-  --starts-at=2026-08-01 --ends-at=2027-07-31 \
-  --reason="Signed annual Enterprise agreement"
-
-# Repeat the reviewed command with --apply to commit it atomically.
-```
-
-Renew, cancel, lock, or change the allowance with optimistic version control:
-
-```sh
-DATABASE_URL_ADMIN=... ADMIN_EMAIL=operator@example.com \
-  bun run business-groups:entitlement update \
-  --enterprise-account-id=<account-uuid> --expected-version=1 \
-  --status=active --limit=40 --starts-at=2027-08-01 \
-  --ends-at=2028-07-31 --reason="Renewal and allowance increase"
-
-# Use --ends-at=none for an open-ended contract; add --apply only after review.
-```
+Provisioning, renewal, cancellation, locking, and allowance changes are
+production mutations. The canonical runbook must record the account, owner,
+dates, limit, expected version, reason, database identity, and audit actor;
+present the read-only preview for approval; then execute the reviewed operation
+without exposing credentials in copied shell commands.
 
 Every applied provision/update writes the contract and its `entitlement_events` audit row in one transaction. Updates take the account-specific entitlement advisory lock, then the linked-business allowance advisory lock, before locking the entitlement row. They fail if `--expected-version` is stale.
 
@@ -407,96 +382,36 @@ Authorization prerequisites:
 4. Use only `DATABASE_URL_ADMIN`. Never grant the function or context table to a runtime role and
    never insert the internal context row manually.
 
-Run the atomic transfer. The function inserts or promotes the replacement owner first, demotes the
-previous owner to `admin` second, removes its transaction-local capability, and emits the ordinary
-member audits plus one `group.owner_transferred` event containing the support reference. It works
-when the entitlement is locked and/or the group is archived, but its exact bypass cannot authorize
-any other addition or role increase.
-
-```sh
-export DATABASE_URL_ADMIN='postgresql://migration-owner:...@.../buwiz_books'
-
-psql "$DATABASE_URL_ADMIN" \
-  --set=ON_ERROR_STOP=1 \
-  --set=group_id='00000000-0000-0000-0000-000000000000' \
-  --set=current_owner_user_id='current-owner-user-id' \
-  --set=replacement_user_id='replacement-user-id' \
-  --set=support_reference='SUP-4242 verified owner request' <<'SQL'
-BEGIN;
-SELECT set_config('app.current_user_id', :'current_owner_user_id', true);
-SELECT transfer_organization_group_ownership(
-  :'group_id'::uuid,
-  :'replacement_user_id',
-  :'support_reference'
-);
-
-SELECT user_id, role
-FROM organization_group_members
-WHERE group_id = :'group_id'::uuid
-  AND user_id IN (:'current_owner_user_id', :'replacement_user_id')
-ORDER BY user_id;
-
-SELECT event_type, actor_user_id, subject_id, details
-FROM organization_group_audit_events
-WHERE group_id = :'group_id'::uuid
-  AND event_type = 'group.owner_transferred'
-ORDER BY created_at DESC
-LIMIT 1;
-COMMIT;
-SQL
-```
+Ownership transfer is a production mutation. The canonical runbook must execute
+the atomic transfer under the migration identity with explicit group, current
+owner, replacement, and durable support reference inputs. The function inserts
+or promotes the replacement owner first, demotes the previous owner to `admin`
+second, removes its transaction-local capability, and emits the ordinary member
+audits plus one `group.owner_transferred` event. It works when the entitlement is
+locked and/or the group is archived, but its exact bypass cannot authorize any
+other addition or role increase.
 
 The verification query must show the replacement as `owner`, the previous owner as `admin`, and
 the transfer audit with the exact support reference. A SQLSTATE `40001` or `40P01` means the whole
 transaction must be run again from `BEGIN`; do not retry only the function statement.
 
-Optionally remove the previous owner after the verified transfer. This is a separate access
-reduction authorized and audited as the replacement owner:
-
-```sh
-psql "$DATABASE_URL_ADMIN" \
-  --set=ON_ERROR_STOP=1 \
-  --set=group_id='00000000-0000-0000-0000-000000000000' \
-  --set=previous_owner_user_id='previous-owner-user-id' \
-  --set=replacement_owner_user_id='replacement-owner-user-id' <<'SQL'
-BEGIN;
-SELECT set_config('app.current_user_id', :'replacement_owner_user_id', true);
-DELETE FROM organization_group_members
-WHERE group_id = :'group_id'::uuid
-  AND user_id = :'previous_owner_user_id'
-  AND role <> 'owner';
-COMMIT;
-SQL
-```
+Optionally removing the previous owner after the verified transfer is a separate
+access reduction. It requires its own canonical-runbook approval and audit as the
+replacement owner.
 
 If the current owner cannot authorize the transfer or no eligible Enterprise replacement exists,
 stop. This release intentionally has no emergency ownership override.
 
 ## Projection operations
 
-The operator command always prints the target database, user, host, scope, and matching organizations before doing anything.
+The canonical runbook must provide read-only projection status and replay
+previews. It must print the target database, user, host, explicit scope, and
+matching organizations before doing anything.
 
-Read status for every linked organization:
-
-```sh
-DATABASE_URL_ADMIN=... bun run business-groups:projection --status
-```
-
-Preview a replay without writes:
-
-```sh
-DATABASE_URL_ADMIN=... bun run business-groups:projection --group-id=<group-uuid>
-DATABASE_URL_ADMIN=... bun run business-groups:projection --enterprise-account-id=<account-uuid>
-```
-
-Request a full replay. Mutating mode requires the explicit migration/owner connection and an explicit scope:
-
-```sh
-DATABASE_URL_ADMIN=... bun run business-groups:projection --apply --organization-id=<organization-id>
-DATABASE_URL_ADMIN=... bun run business-groups:projection --apply --group-id=<group-uuid>
-DATABASE_URL_ADMIN=... bun run business-groups:projection --apply --enterprise-account-id=<account-uuid>
-DATABASE_URL_ADMIN=... bun run business-groups:projection --apply --all
-```
+Requesting a replay is a production mutation. The canonical runbook must require
+the migration/owner identity, an explicit organization/group/account scope, and
+approval of the preview. Fleet-wide replay requires its own explicit approval;
+it must never be inferred from an omitted scope.
 
 The command requests work; it does not bypass the worker or wait indefinitely. Continue polling `--status` until every target is `ready`, `applied/requested` versions match, the initial backfill timestamp is present, and active jobs are zero.
 
@@ -504,17 +419,9 @@ The command requests work; it does not bypass the worker or wait indefinitely. C
 
 This is an application-requirements checklist for the owner of the separate canonical deployment repository. It is not an executable production runbook. The Makefile, provisioning script, and GitHub workflow in this application repository are non-authoritative historical aids and must not be used to infer current production state or deployment readiness.
 
-The following target values are historical assumptions that the canonical deployment owner must independently verify before using them:
-
-| Resource             | Required value                  |
-| -------------------- | ------------------------------- |
-| gcloud configuration | `buwiz-books`                   |
-| GCP project          | `buwiz-503321`                  |
-| Region               | `europe-north1`                 |
-| Cloud Run service    | `buwiz-books`                   |
-| Artifact Registry    | `buwiz-books-repo`              |
-| Cloud SQL            | `buwiz-books-db`, PostgreSQL 16 |
-| Domain               | `books.buwiz.com`               |
+Historical target names are deliberately omitted here so this requirements
+document cannot be mistaken for current production inventory. The canonical
+deployment owner must resolve every target from its approved record.
 
 Do not read or copy secrets, databases, buckets, OAuth clients, service accounts, or configuration from another deployment.
 

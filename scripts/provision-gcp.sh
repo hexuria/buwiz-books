@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+echo "This production provisioning script is disabled in this application repository." >&2
+echo "Use the unattached canonical deployment repository and its approved runbook." >&2
+exit 1
+
+# Historical implementation below is intentionally unreachable evidence.
+
 # Provision the isolated books.buwiz.com production project.
 #
 # This script is intentionally target-specific. It refuses any ambient project

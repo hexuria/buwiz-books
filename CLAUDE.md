@@ -70,9 +70,10 @@ list — one empty table means every tenant sees zero review agents. Its rows li
 so is never run by `drizzle-kit`; the only invoker was `db:dedup:migrate`, which the deploy
 pipeline does not call. Every environment therefore created the table from the Drizzle schema and
 left it empty, and the failure was silent: `/review-agents` simply reported that no agents were
-configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from
-`db:fresh`, `db:test:fresh`, `deploy.yml` and `make migrate`, with
-`tests/unit/review-rules-wiring.test.ts` asserting each of those links still exists. Use
+configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from the
+local `db:fresh` and `db:test:fresh` rebuilds, with `tests/unit/review-rules-wiring.test.ts`
+asserting those links still exist. The unattached canonical deployment repository must own the
+equivalent production seeding step. Use
 `bun db:review-rules:status` to inspect any database read-only. Both modes print the database
 they connected to first — an unset `DATABASE_URL` sends `psql` to the database named after your
 OS user, where these tables are genuinely absent, which reads exactly like a real bug.
