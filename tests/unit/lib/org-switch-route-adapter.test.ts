@@ -1,5 +1,5 @@
 // ============================================================================
-// adminSwitchOrg / listAllOrganizations — the tenant boundary
+// adminSwitchOrg / listAllOrganizations — the tenant boundary's route adapter
 //
 // `adminSwitchOrg` used to insert an auth_members row for a client-supplied
 // organizationId whenever the caller held admin or owner in ANY organization.
@@ -37,6 +37,18 @@ vi.mock("@/lib/server-context", () => ({
   withSessionOrgContext: withSessionOrgContextMock,
   withMutationPermissionOrgContextMock,
   withMutationPermissionOrgContext: withMutationPermissionOrgContextMock,
+}));
+vi.mock("@/services/email", () => ({ sendApproverInviteEmail: vi.fn() }));
+vi.mock("@/lib/org-secrets", () => ({
+  getOrganizationSecrets: vi.fn(),
+  updateOrganizationSecrets: vi.fn(),
+}));
+vi.mock("@/lib/ai/org-ai-config", () => ({
+  addOrgAiCredential: vi.fn(),
+  getOrgAiConfig: vi.fn(),
+  listOrgAiCredentials: vi.fn(),
+  revokeOrgAiCredential: vi.fn(),
+  updateOrgAiConfig: vi.fn(),
 }));
 
 import { adminSwitchOrg, listAllOrganizations } from "@/routes/api/-org-settings";
