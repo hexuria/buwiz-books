@@ -4,8 +4,7 @@ import { accounts } from "../../src/db/schema/accounts";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("Account Integration Tests", () => {
   let db: any;

@@ -137,8 +137,7 @@ import { runDuplicateMatchingForSource } from "@/lib/inbox/duplicate-engine";
 import workerHandler from "../../server/routes/api/internal/inbox-worker.post";
 import resendWebhookHandler from "../../server/routes/api/inbound-email/resend.post";
 
-const integrationDescribe =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const integrationDescribe = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 interface Fixture {
   organizationId: string;

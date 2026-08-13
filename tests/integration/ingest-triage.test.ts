@@ -13,8 +13,7 @@ import { aiActionProposals } from "../../src/db/schema/ai";
 const { aiCompleteMock } = vi.hoisted(() => ({ aiCompleteMock: vi.fn() }));
 vi.mock("../../src/lib/ai/facade", () => ({ aiComplete: aiCompleteMock }));
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("ingest triage", () => {
   let db: any;

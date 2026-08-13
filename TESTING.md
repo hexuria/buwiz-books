@@ -13,25 +13,25 @@ This project uses a comprehensive testing strategy with four test types:
 
 ```bash
 # Run all tests (except E2E)
-bun test
+bun run test
 
 # Run specific test type
-bun test:unit           # Unit tests only
-bun test:integration    # Integration tests only
-bun test:component      # Component tests only
-bun test:e2e           # E2E tests with Playwright
+bun run test:unit           # Unit tests only
+bun run test:integration    # Integration tests only; requires TEST_DATABASE_URL
+bun run test:component      # Component tests only
+bun run test:e2e            # E2E tests with Playwright
 
 # Development modes
-bun test:watch         # Watch mode for quick feedback
-bun test:ui            # Interactive UI for test debugging
-bun test:coverage      # Generate coverage report
+bun run test:watch         # Watch mode for quick feedback
+bun run test:ui            # Interactive UI for test debugging
+bun run test:coverage      # Generate coverage report
 
 # E2E specific
-bun test:e2e:ui        # E2E tests in UI mode
-bun test:e2e:debug     # E2E tests in debug mode
+bun run test:e2e:ui        # E2E tests in UI mode
+bun run test:e2e:debug     # E2E tests in debug mode
 
-# Run everything
-bun test:all           # All tests including E2E
+# Run every currently safe project (E2E stays separate until reset isolation lands)
+bun run test:all
 ```
 
 ## 📁 Test Structure

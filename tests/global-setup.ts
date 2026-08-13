@@ -16,10 +16,12 @@
 import postgres from "postgres";
 
 export async function setup() {
-  const connectionString = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL;
+  const connectionString = process.env.TEST_DATABASE_URL;
   if (!connectionString) {
-    // No DB configured — skip (unit tests don't need this)
-    return;
+    throw new Error(
+      "Integration tests require an explicit TEST_DATABASE_URL. " +
+        "DATABASE_URL is deliberately ignored; unit and component projects need no database.",
+    );
   }
 
   const sql = postgres(connectionString, { max: 1 });

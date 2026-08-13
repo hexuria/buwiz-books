@@ -70,8 +70,7 @@ import { processStatementOcrJob } from "@/lib/jobs/handlers/statement-ocr";
 import type { ProcessingJob } from "@/lib/jobs/registry";
 import { createTestDb } from "../utils/db-utils";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const ORG_NAME = "Northwind Trading";
 const PERIOD_START = "2026-03-01";

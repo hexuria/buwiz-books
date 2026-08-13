@@ -6,8 +6,7 @@ import { financialAccounts } from "../../src/db/schema/financial-accounts";
 import { eq } from "drizzle-orm";
 import postgres from "postgres";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("Document Deletion Safeguard Logic", () => {
   let db: any;

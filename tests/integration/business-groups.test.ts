@@ -36,8 +36,7 @@ import {
 } from "../../src/lib/enterprise/entitlement-state";
 import { getBusinessGroupsEntityUsage } from "../../src/lib/enterprise/entitlements";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 async function expectDatabaseError(operation: () => Promise<unknown>, expected: string) {
   let error: unknown;

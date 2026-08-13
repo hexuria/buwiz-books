@@ -9,7 +9,37 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  static-and-hermetic-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check formatting
+        run: bun run fmt:check
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build
+        run: bun run build
+
+      - name: Unit tests without a database or provider secrets
+        run: bun run test:unit
+
+      - name: Component tests without a database or provider secrets
+        run: bun run test:component
+
+  integration-tests:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -40,18 +70,6 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Check formatting
-        run: bun run fmt:check
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Typecheck
-        run: bun run typecheck
-
-      - name: Build
-        run: bun run build
-
       - name: Push schema to test DB
         run: bun x drizzle-kit push --force
 
@@ -64,11 +82,5 @@ jobs:
       - name: Apply RLS hardening Section A to test DB
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/rls_hardening.sql
 
-      - name: Unit tests
-        run: bun x vitest run tests/unit
-
       - name: Integration tests
-        run: bun x vitest run tests/integration
-
-      - name: Component tests
-        run: bun x vitest run tests/component
+        run: bun run test:integration

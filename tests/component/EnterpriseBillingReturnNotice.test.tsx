@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { BillingReturnNotice } from "../../src/routes/business-groups";
+import { BillingReturnNotice } from "../../src/components/business-groups/BillingReturnNotice";
 
 describe("Enterprise billing return notice", () => {
   it("treats a Checkout success redirect as unverified provider state", () => {

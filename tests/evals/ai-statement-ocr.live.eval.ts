@@ -10,9 +10,7 @@ import * as path from "path";
 
 // Real-API OCR fixtures live outside the repo. Point AI_OCR_FIXTURES_DIR at a
 // local copy to run this test; otherwise it skips when the fixture is absent.
-const OCR_FIXTURES_DIR =
-  process.env.AI_OCR_FIXTURES_DIR ??
-  "/Users/uriah/.gemini/antigravity/brain/f874e167-594f-4372-bd2f-394511a8ba4f";
+const OCR_FIXTURES_DIR = process.env.AI_OCR_FIXTURES_DIR ?? "";
 
 // Extract schema for testing
 const statementOcrSchema = {
@@ -69,7 +67,12 @@ const statementOcrSchema = {
 } as const;
 
 // Read only run this test if a real API key is available
-const runTest = process.env.GEMINI_API_KEY ? describe : describe.skip;
+const runTest =
+  process.env.AI_EVALS_MODE === "live" &&
+  process.env.GEMINI_API_KEY &&
+  process.env.TEST_DATABASE_URL
+    ? describe
+    : describe.skip;
 
 runTest("Real Gemini API Integration - Statement OCR", () => {
   let db: any;
@@ -110,65 +113,57 @@ runTest("Real Gemini API Integration - Statement OCR", () => {
 
     const prompt = `You are an expert financial document parser. Extract ALL information according to the response schema from this bank statement.`;
 
-    try {
-      const result = await callWithRetry(
-        {
-          orgId: ORG_ID,
-          task: "ocr",
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: statementOcrSchema as unknown as ResponseSchema,
-          },
+    const result = await callWithRetry(
+      {
+        orgId: ORG_ID,
+        task: "ocr",
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: statementOcrSchema as unknown as ResponseSchema,
         },
-        async (model) =>
-          model.generateContent([
-            prompt,
-            {
-              inlineData: {
-                data: base64Content,
-                mimeType: "application/pdf",
-              },
+      },
+      async (model) =>
+        model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64Content,
+              mimeType: "application/pdf",
             },
-          ]),
-      );
+          },
+        ]),
+    );
 
-      const responseText = result.response.text();
-      let jsonText = responseText.trim();
-      if (jsonText.startsWith("```json")) {
-        jsonText = jsonText
-          .replace(/```json\\n?/g, "")
-          .replace(/```\\n?/g, "")
-          .trim();
-      } else if (jsonText.startsWith("```")) {
-        jsonText = jsonText.replace(/```\\n?/g, "").trim();
-      }
-
-      const parsed = JSON.parse(jsonText);
-
-      // Assert Classification
-      expect(parsed.classification).toBeDefined();
-      expect(parsed.classification.isStatement).toBe(true);
-
-      // Assert Metadata
-      expect(parsed.metadata).toBeDefined();
-      expect(parsed.metadata.institutionName.length).toBeGreaterThan(0);
-      expect(parsed.metadata.accountNumberLast4).toBeDefined();
-
-      // Assert Transactions
-      expect(parsed.transactions).toBeDefined();
-      expect(Array.isArray(parsed.transactions)).toBe(true);
-      expect(parsed.transactions.length).toBeGreaterThan(0);
-
-      const firstTx = parsed.transactions[0];
-      expect(!isNaN(new Date(firstTx.date).getTime())).toBe(true);
-      expect(typeof firstTx.description).toBe("string");
-      expect(typeof firstTx.amount).toBe("number");
-    } catch (err: any) {
-      if (err.name === "GeminiRateLimitError" || err.message.includes("rate-limited")) {
-        console.warn("Skipping test due to real Gemini API rate limits (15 RPM).");
-        return; // Test passes gracefully
-      }
-      throw err;
+    const responseText = result.response.text();
+    let jsonText = responseText.trim();
+    if (jsonText.startsWith("```json")) {
+      jsonText = jsonText
+        .replace(/```json\\n?/g, "")
+        .replace(/```\\n?/g, "")
+        .trim();
+    } else if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/```\\n?/g, "").trim();
     }
+
+    const parsed = JSON.parse(jsonText);
+
+    // Assert Classification
+    expect(parsed.classification).toBeDefined();
+    expect(parsed.classification.isStatement).toBe(true);
+
+    // Assert Metadata
+    expect(parsed.metadata).toBeDefined();
+    expect(parsed.metadata.institutionName.length).toBeGreaterThan(0);
+    expect(parsed.metadata.accountNumberLast4).toBeDefined();
+
+    // Assert Transactions
+    expect(parsed.transactions).toBeDefined();
+    expect(Array.isArray(parsed.transactions)).toBe(true);
+    expect(parsed.transactions.length).toBeGreaterThan(0);
+
+    const firstTx = parsed.transactions[0];
+    expect(!isNaN(new Date(firstTx.date).getTime())).toBe(true);
+    expect(typeof firstTx.description).toBe("string");
+    expect(typeof firstTx.amount).toBe("number");
   }, 30000); // 30 second timeout for the real API call
 });

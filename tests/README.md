@@ -24,49 +24,49 @@ tests/
   stubbed
 - No database, network, provider credential, browser, or DOM dependency
 - Fast execution
-- Run with: `bun test:unit`
+- Run with: `bun run test:unit`
 
 ### Integration Tests (`tests/integration/`)
 
 - Test API endpoints and server functions
 - May include database interactions
 - Test multiple modules working together
-- Run with: `bun test:integration`
+- Run with: `TEST_DATABASE_URL=... bun run test:integration`
 
 ### Component Tests (`tests/component/`)
 
 - Test React components with Testing Library
 - Include user interactions and state changes
 - Focus on component behavior, not implementation
-- Run with: `bun test:component`
+- Run with: `bun run test:component`
 
 ### E2E Tests (`tests/e2e/`)
 
 - Test complete user flows with Playwright
 - Run in real browser environment
 - Test full application stack
-- Run with: `bun test:e2e`
+- Run with: `bun run test:e2e`
 
 ## Running Tests
 
 ```bash
 # Run all tests (except E2E)
-bun test
+bun run test
 
 # Run specific test type
-bun test:unit
-bun test:integration
-bun test:component
-bun test:e2e
+bun run test:unit
+TEST_DATABASE_URL=... bun run test:integration
+bun run test:component
+bun run test:e2e
 
 # Run tests in watch mode
-bun test:watch
+bun run test:watch
 
 # Run tests with coverage
-bun test:coverage
+bun run test:coverage
 
 # Run tests with UI
-bun test:ui
+bun run test:ui
 ```
 
 ## Writing Tests

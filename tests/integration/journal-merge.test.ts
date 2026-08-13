@@ -30,8 +30,7 @@ import {
 } from "../../src/lib/journal-merge";
 import { createTestDb } from "../utils/db-utils";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("lossless journal unmerge reconciliation safety", () => {
   let db: any;

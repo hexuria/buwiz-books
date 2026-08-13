@@ -11,9 +11,7 @@ import * as path from "path";
 // Real-API OCR fixtures (images/PDFs) live outside the repo. Point
 // AI_OCR_FIXTURES_DIR at a local copy to run these tests; otherwise each test
 // skips when its fixture is absent (e.g. CI, or a fresh checkout).
-const OCR_FIXTURES_DIR =
-  process.env.AI_OCR_FIXTURES_DIR ??
-  "/Users/uriah/.gemini/antigravity/brain/f874e167-594f-4372-bd2f-394511a8ba4f";
+const OCR_FIXTURES_DIR = process.env.AI_OCR_FIXTURES_DIR ?? "";
 
 const receiptFixture = (name: string) => path.join(OCR_FIXTURES_DIR, name);
 
@@ -98,7 +96,12 @@ const receiptTransactionSchema = {
   ],
 } as const;
 
-const runTest = process.env.GEMINI_API_KEY ? describe : describe.skip;
+const runTest =
+  process.env.AI_EVALS_MODE === "live" &&
+  process.env.GEMINI_API_KEY &&
+  process.env.TEST_DATABASE_URL
+    ? describe
+    : describe.skip;
 
 runTest("Real Gemini API Integration - Receipt OCR", () => {
   let db: any;
@@ -170,72 +173,64 @@ runTest("Real Gemini API Integration - Receipt OCR", () => {
     ${locationsBlock}
     ${preExtractedBlock}`;
 
-    try {
-      const result = await callWithRetry(
-        {
-          orgId: ORG_ID,
-          task: "ocr",
-          generationConfig: {
-            responseMimeType: "application/json",
-            responseSchema: receiptTransactionSchema as unknown as ResponseSchema,
-          },
+    const result = await callWithRetry(
+      {
+        orgId: ORG_ID,
+        task: "ocr",
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: receiptTransactionSchema as unknown as ResponseSchema,
         },
-        async (model) =>
-          model.generateContent([
-            prompt,
-            {
-              inlineData: {
-                data: base64Content,
-                mimeType: "image/png",
-              },
+      },
+      async (model) =>
+        model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64Content,
+              mimeType: "image/png",
             },
-          ]),
-      );
+          },
+        ]),
+    );
 
-      const responseText = result.response.text();
-      let jsonText = responseText.trim();
-      if (jsonText.startsWith("```json")) {
-        jsonText = jsonText
-          .replace(/```json\n?/g, "")
-          .replace(/```\n?/g, "")
-          .trim();
-      } else if (jsonText.startsWith("```")) {
-        jsonText = jsonText.replace(/```\n?/g, "").trim();
-      }
-
-      const parsed = JSON.parse(jsonText);
-
-      // Verify the parsed data matches what we expect
-      expect(parsed).toBeDefined();
-      expect(parsed.transactionType).toBe("pay_out");
-      expect(parsed.documentSubtype).toBe(expectedType);
-
-      // Vendor matching
-      expect(parsed.partyName.toLowerCase()).toContain(expectedVendor.toLowerCase());
-
-      // Lines exist
-      expect(parsed.lines).toBeDefined();
-      expect(Array.isArray(parsed.lines)).toBe(true);
-      expect(parsed.lines.length).toBeGreaterThan(0);
-
-      // Amount is formatted properly
-      expect(parsed.amount).toMatch(/^\\d+\\.\\d{2}$/);
-
-      // Extracted entities
-      expect(parsed.extractedEntities).toBeDefined();
-      expect(Array.isArray(parsed.extractedEntities)).toBe(true);
-
-      // At least the vendor should be extracted
-      const vendorEntity = parsed.extractedEntities.find((e: any) => e.entityType === "vendor");
-      expect(vendorEntity).toBeDefined();
-      expect(vendorEntity?.name.toLowerCase()).toContain(expectedVendor.toLowerCase());
-    } catch (err: any) {
-      if (err.name === "GeminiRateLimitError" || err.message.includes("rate-limited")) {
-        console.warn("Skipping test due to real Gemini API rate limits (15 RPM).");
-        return; // Test passes gracefully
-      }
-      throw err;
+    const responseText = result.response.text();
+    let jsonText = responseText.trim();
+    if (jsonText.startsWith("```json")) {
+      jsonText = jsonText
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
+        .trim();
+    } else if (jsonText.startsWith("```")) {
+      jsonText = jsonText.replace(/```\n?/g, "").trim();
     }
+
+    const parsed = JSON.parse(jsonText);
+
+    // Verify the parsed data matches what we expect
+    expect(parsed).toBeDefined();
+    expect(parsed.transactionType).toBe("pay_out");
+    expect(parsed.documentSubtype).toBe(expectedType);
+
+    // Vendor matching
+    expect(parsed.partyName.toLowerCase()).toContain(expectedVendor.toLowerCase());
+
+    // Lines exist
+    expect(parsed.lines).toBeDefined();
+    expect(Array.isArray(parsed.lines)).toBe(true);
+    expect(parsed.lines.length).toBeGreaterThan(0);
+
+    // Amount is formatted properly
+    expect(parsed.amount).toMatch(/^\\d+\\.\\d{2}$/);
+
+    // Extracted entities
+    expect(parsed.extractedEntities).toBeDefined();
+    expect(Array.isArray(parsed.extractedEntities)).toBe(true);
+
+    // At least the vendor should be extracted
+    const vendorEntity = parsed.extractedEntities.find((e: any) => e.entityType === "vendor");
+    expect(vendorEntity).toBeDefined();
+    expect(vendorEntity?.name.toLowerCase()).toContain(expectedVendor.toLowerCase());
   };
 
   it("should parse the coffee shop receipt", async (ctx) => {

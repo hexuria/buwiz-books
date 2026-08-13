@@ -11,8 +11,7 @@ import { loadCoaSnapshot } from "../../src/lib/coa/snapshot";
 import { allMappingKeys } from "../../src/lib/coa/mapping-registry";
 import { resolveMappedAccountId } from "../../src/lib/coa/resolve-mapped-account";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("Chart-of-accounts presets", () => {
   let ORG_A: string;

@@ -22,8 +22,7 @@ import {
 } from "../../src/lib/ai/proposals";
 import { AuthorizationError } from "../../src/lib/auth-errors";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const vendorPayload = (name: string) => ({
   entity: {

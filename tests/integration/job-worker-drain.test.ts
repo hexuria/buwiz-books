@@ -37,8 +37,7 @@ import {
 import { retryPolicyFor } from "@/lib/jobs/retry-policy";
 import { createTestDb } from "../utils/db-utils";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const registeredJobTypes: string[] = [];
 

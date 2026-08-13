@@ -10,8 +10,7 @@ import { journalHeaders, journalLines } from "../../src/db/schema/journals";
 import { aggregateBalances } from "../../src/services/reports";
 import type postgres from "postgres";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("aggregateBalances", () => {
   let db: any;

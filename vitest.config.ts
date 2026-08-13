@@ -12,13 +12,36 @@ export default defineConfig({
   },
   test: {
     globals: true,
-    environment: "jsdom",
-    globalSetup: ["./tests/global-setup.ts"],
-    setupFiles: ["./tests/setup.ts"],
-    include: [
-      "tests/unit/**/*.test.{ts,tsx}",
-      "tests/integration/**/*.test.{ts,tsx}",
-      "tests/component/**/*.test.{ts,tsx}",
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          environment: "node",
+          setupFiles: ["./tests/setup-node.ts"],
+          include: ["tests/unit/**/*.test.{ts,tsx}"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "component",
+          environment: "jsdom",
+          setupFiles: ["./tests/setup.ts"],
+          include: ["tests/component/**/*.test.{ts,tsx}"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "integration",
+          environment: "node",
+          setupFiles: ["./tests/setup-integration.ts"],
+          globalSetup: ["./tests/global-setup.ts"],
+          include: ["tests/integration/**/*.test.{ts,tsx}"],
+          fileParallelism: false,
+        },
+      },
     ],
     // tests/evals is excluded belt-and-suspenders: it has its own config
     // (vitest.evals.config.ts) and in live mode makes billable model calls.

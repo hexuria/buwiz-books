@@ -77,10 +77,10 @@ bun fmt              # Auto-format all files
 ### Testing
 
 ```bash
-bun test             # Run all tests
-bun test:watch       # Watch mode
-bun test:coverage    # Generate coverage report
-bun test:e2e         # End-to-end tests (Playwright)
+bun run test         # Run all Vitest projects
+bun run test:watch   # Watch mode
+bun run test:coverage # Generate coverage report
+bun run test:e2e     # End-to-end tests (Playwright)
 ```
 
 See [TESTING.md](./TESTING.md) for the full testing guide.

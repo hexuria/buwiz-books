@@ -19,8 +19,7 @@ import {
   HEALTH_CONSTANTS,
 } from "../../src/lib/ai/provider-health";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("ai provider health", () => {
   let sql: postgres.Sql;

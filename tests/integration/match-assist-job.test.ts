@@ -23,8 +23,7 @@ const { aiCompleteMock } = vi.hoisted(() => ({ aiCompleteMock: vi.fn() }));
 vi.mock("../../src/lib/ai/facade", () => ({ aiComplete: aiCompleteMock }));
 vi.mock("../../src/lib/jobs/trigger", () => ({ triggerWorker: vi.fn() }));
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("match_assist job", () => {
   let db: any;
