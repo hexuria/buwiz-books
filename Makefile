@@ -9,7 +9,7 @@ RESET := \033[0m
 CYAN  := \033[36m
 RED   := \033[31m
 
-.PHONY: help run build check test docs-dev internal-docs-dev push deploy deploy-docker scheduler env logs url open db-prod rls-prod promote-prod provision migrate domain
+.PHONY: help run build check test docs-dev internal-docs-dev push deploy deploy-docker scheduler env logs url open db-prod rls-prod promote-prod provision migrate migration-status migration-verify domain
 
 help:
 	@echo ""
@@ -95,6 +95,12 @@ provision:
 migrate:
 	@echo "$(RED)This production operation is disabled in this application repository.$(RESET)"
 	@exit 1
+
+migration-status:
+	@bun run scripts/migrate.ts status
+
+migration-verify:
+	@bun run scripts/migrate.ts verify
 
 domain:
 	@echo "$(RED)This production operation is disabled in this application repository.$(RESET)"

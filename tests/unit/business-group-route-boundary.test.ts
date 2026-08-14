@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { migrationManifest } from "@/lib/migrations/manifest";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(REPO_ROOT, path), "utf8");
@@ -111,7 +112,19 @@ describe("Business Group request and operator boundaries", () => {
     const entitlements = read("src/lib/enterprise/entitlements.ts");
     const page = read("src/routes/business-groups.tsx");
 
-    expect(runner).toContain('"0034_business_group_admin_guards.sql"');
+    // The runner is a thin delegate over the ordered manifest, so a filename inside it
+    // would prove nothing. Prove instead that the manifest still claims 0034 and that
+    // the delegate's applied bound actually reaches it.
+    const guardMigration = migrationManifest.find(
+      (item) => item.file === "0034_business_group_admin_guards.sql",
+    );
+    expect(guardMigration).toBeDefined();
+    expect(guardMigration?.phase).toBe("post_schema");
+    expect(runner).toContain('from "./migrate"');
+
+    const appliedBound = /--through=(\d{4})/.exec(pkg.scripts["db:enterprise:migrate"] ?? "")?.[1];
+    expect(appliedBound).toBeDefined();
+    expect(Number(guardMigration?.id)).toBeLessThanOrEqual(Number(appliedBound));
     expect(pkg.scripts["db:rls:hardening"]).toContain("drizzle/rls_hardening.sql");
     expect(pkg.scripts["db:test:fresh"]).toContain("db:rls:hardening");
     expect(migration).toContain("groups without an eligible owner");

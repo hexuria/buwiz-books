@@ -58,6 +58,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://buwiz_books:buwiz_books@localhost:5432/buwiz-books-tests
       TEST_DATABASE_URL: postgresql://buwiz_books:buwiz_books@localhost:5432/buwiz-books-tests
+      # The migration entrypoint parses its own target and rejects the "localhost"
+      # alias, so this URL states the loopback literal explicitly. It stays separate
+      # from DATABASE_URL because a serving credential must never drive migrations.
+      MIGRATION_DATABASE_URL: postgresql://buwiz_books:buwiz_books@127.0.0.1:5432/buwiz-books-tests
+      # Schema synchronization is fail-closed: this must equal the target database name.
+      MIGRATION_SCHEMA_SYNC_CONFIRM: buwiz-books-tests
       BETTER_AUTH_SECRET: ci-test-secret
       RESEND_API_KEY: re_ci_placeholder_key
     steps:
@@ -70,11 +76,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      - name: Push schema to test DB
-        run: bun x drizzle-kit push --force
-
-      - name: Apply Enterprise migrations to test DB
-        run: bun run db:enterprise:migrate
+      # One ordered pass owns the whole lifecycle: base schema, pre-schema migrations,
+      # schema synchronization, post-schema migrations, finalize. A standalone
+      # `drizzle-kit push` here would run the synchronization twice and place it before
+      # the pre-schema migrations that exist to keep push non-interactive.
+      - name: Apply managed migrations to test DB
+        run: bun run db:migrate
 
       - name: Apply RLS policies to test DB
         run: bun run db:rls

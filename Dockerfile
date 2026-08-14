@@ -70,10 +70,18 @@ COPY --from=prod-deps --chown=buwiz:buwiz /app/node_modules ./node_modules
 COPY --from=build --chown=buwiz:buwiz /app/.output ./.output
 COPY --from=build --chown=buwiz:buwiz /app/package.json ./package.json
 
-# Drizzle schema + config for CI db:push
+# Drizzle schema + config for the managed migration lifecycle
 COPY --from=build --chown=buwiz:buwiz /app/drizzle ./drizzle
 COPY --from=build --chown=buwiz:buwiz /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build --chown=buwiz:buwiz /app/src/db ./src/db
+# The migration entrypoint and its exact dependency closure. scripts/apply-*.ts are thin
+# delegates over scripts/migrate.ts, so shipping them without this closure would fail at
+# import time. loader.ts resolves migrations as ../../../drizzle/ relative to itself, which
+# is /app/drizzle above, and the @/ alias resolves through the tsconfig.json copied below.
+COPY --from=build --chown=buwiz:buwiz /app/scripts/migrate.ts ./scripts/migrate.ts
+COPY --from=build --chown=buwiz:buwiz /app/src/lib/migrations ./src/lib/migrations
+COPY --from=build --chown=buwiz:buwiz /app/src/lib/database-target.ts ./src/lib/database-target.ts
+COPY --from=build --chown=buwiz:buwiz /app/src/lib/database-target-internal.ts ./src/lib/database-target-internal.ts
 COPY --from=build --chown=buwiz:buwiz /app/scripts/apply-integrity-migration.ts ./scripts/apply-integrity-migration.ts
 COPY --from=build --chown=buwiz:buwiz /app/scripts/apply-ai-foundation.ts ./scripts/apply-ai-foundation.ts
 COPY --from=build --chown=buwiz:buwiz /app/scripts/apply-enterprise-migrations.ts ./scripts/apply-enterprise-migrations.ts

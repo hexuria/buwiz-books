@@ -57,11 +57,17 @@ CI is unaffected because it sets `DATABASE_URL` as a real job env var. Both scri
 an explicit message instead; pass the URL yourself:
 `DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" bun run db:rls`.
 
-A full local rebuild is `db:reset` → `db:dedup:migrate` → `scripts/apply-ai-foundation.ts` →
-`db:rls` → `db:seed` → `db:seed:coa`. `db:fresh` is **not** equivalent: it skips the dedup
-migrations (CHECK constraints, tenant-lineage FKs) and the `pg_trgm` extension, none of which the
-Drizzle schema can express. Run `db:rls` last — its policy blocks are guarded by table-existence
-checks and silently skip tables that do not exist yet.
+A full local rebuild is `db:fresh`, and it is now the complete path: `db:reset` drops the schema,
+`db:migrate` runs one ordered pass over the whole manifest — Drizzle's journal, the pre-schema
+migrations, schema synchronization, then the post-schema migrations — and `db:rls`, `db:seed`,
+`db:seed:coa`, and `db:seed:review-rules` follow. The older warning that `db:fresh` skipped the
+dedup migrations (CHECK constraints, tenant-lineage FKs, `pg_trgm`) no longer holds: those are
+manifest entries `0019`-`0024` and the engine cannot skip them. Do **not** run `drizzle-kit push`
+alongside `db:migrate`; synchronization is a lifecycle step the engine owns, and running it
+separately puts it ahead of the pre-schema migrations that exist to keep it non-interactive.
+`db:migrate` requires `MIGRATION_DATABASE_URL`, and because it synchronizes the schema it also
+requires `MIGRATION_SCHEMA_SYNC_CONFIRM` set to the target database name. Run `db:rls` last — its
+policy blocks are guarded by table-existence checks and silently skip tables that do not exist yet.
 
 **The review-rule catalog is global, and a seeding step is only as good as the paths that call
 it.** `review_rule_definitions` has no `organization_id` and is excluded from every RLS policy
