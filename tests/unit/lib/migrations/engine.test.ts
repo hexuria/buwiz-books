@@ -51,6 +51,7 @@ function fakeAdapter(
   initialStates: Readonly<Record<string, MigrationVerification["state"]>> = {},
 ): MigrationEngineAdapter & {
   executed: string[];
+  prepared: string[];
   recorded: string[];
   transactions: number;
   states: Map<string, MigrationVerification["state"]>;
@@ -65,6 +66,7 @@ function fakeAdapter(
   const states = new Map(Object.entries(initialStates));
   const adapter = {
     executed: [] as string[],
+    prepared: [] as string[],
     recorded: [] as string[],
     transactions: 0,
     states,
@@ -111,6 +113,9 @@ function fakeAdapter(
         async execute(item: PreparedMigration) {
           adapter.executed.push(item.id);
           states.set(item.id, "complete");
+        },
+        async prepareExecution(item: PreparedMigration) {
+          adapter.prepared.push(item.id);
         },
         async record(item: PreparedMigration) {
           adapter.recorded.push(item.id);
@@ -230,8 +235,8 @@ describe("migration engine", () => {
 
   it("passes mode and target context across the verifier seam", async () => {
     const migrations = [migration("0018", "post_schema"), migration("0026", "pre_schema")];
-    const adapter = fakeAdapter([history(migrations[0])], {
-      "0018": "complete",
+    const adapter = fakeAdapter([history(migrations[1])], {
+      "0026": "complete",
     });
     const contexts: Array<{ id: string; mode: string; includes: string[] }> = [];
     adapter.verifyHistoricalState = async (item, context) => {
@@ -247,8 +252,53 @@ describe("migration engine", () => {
 
     await createMigrationEngine(migrations, adapter).status();
     expect(contexts).toEqual([
-      { id: "0018", mode: "final", includes: ["0018", "0026"] },
-      { id: "0026", mode: "discovery", includes: ["0018", "0026"] },
+      { id: "0018", mode: "discovery", includes: ["0018", "0026"] },
+      { id: "0026", mode: "final", includes: ["0026"] },
+    ]);
+  });
+
+  it("verifies recorded migrations against their contiguous history prefix", async () => {
+    const migrations = [
+      migration("0018", "post_schema"),
+      migration("0019", "post_schema"),
+      migration("0026", "pre_schema"),
+      migration("0027", "pre_schema"),
+    ];
+    const adapter = fakeAdapter(
+      [history(migrations[2]), history(migrations[3]), history(migrations[0])],
+      { "0018": "complete", "0026": "complete", "0027": "complete" },
+    );
+
+    await createMigrationEngine(migrations, adapter).status();
+
+    expect(
+      adapter.contexts
+        .filter((context) => ["0026", "0027", "0018"].includes(context.id))
+        .map(({ id, mode, through, includes }) => ({
+          id,
+          mode,
+          through,
+          includes,
+        })),
+    ).toEqual([
+      {
+        id: "0018",
+        mode: "final",
+        through: "0018",
+        includes: ["0018", "0026", "0027"],
+      },
+      {
+        id: "0026",
+        mode: "final",
+        through: "0018",
+        includes: ["0018", "0026", "0027"],
+      },
+      {
+        id: "0027",
+        mode: "final",
+        through: "0018",
+        includes: ["0018", "0026", "0027"],
+      },
     ]);
   });
 
@@ -266,9 +316,26 @@ describe("migration engine", () => {
     expect(
       adapter.contexts
         .filter((context) => context.location === "transaction")
-        .map(({ id, mode, through, includes }) => ({ id, mode, through, includes })),
+        .map(({ id, mode, through, includes }) => ({
+          id,
+          mode,
+          through,
+          includes,
+        })),
     ).toEqual([
+      {
+        id: "0026",
+        mode: "pre_execution",
+        through: "0019",
+        includes: ["0018", "0019", "0026", "0027"],
+      },
       { id: "0026", mode: "post_apply", through: "0026", includes: ["0026"] },
+      {
+        id: "0027",
+        mode: "pre_execution",
+        through: "0019",
+        includes: ["0018", "0019", "0026", "0027"],
+      },
       {
         id: "0027",
         mode: "post_apply",
@@ -277,18 +344,49 @@ describe("migration engine", () => {
       },
       {
         id: "0018",
+        mode: "pre_execution",
+        through: "0019",
+        includes: ["0018", "0019", "0026", "0027"],
+      },
+      {
+        id: "0018",
         mode: "post_apply",
-        through: "0027",
+        through: "0018",
         includes: ["0018", "0026", "0027"],
       },
       {
         id: "0019",
+        mode: "pre_execution",
+        through: "0019",
+        includes: ["0018", "0019", "0026", "0027"],
+      },
+      {
+        id: "0019",
         mode: "post_apply",
-        through: "0027",
+        through: "0019",
         includes: ["0018", "0019", "0026", "0027"],
       },
     ]);
     expect(report.outcomes.map((outcome) => outcome.id)).toEqual(["0026", "0027", "0018", "0019"]);
+  });
+
+  it("re-verifies recorded pre-schema work against the current history prefix", async () => {
+    const migrations = [migration("0018", "post_schema"), migration("0026", "pre_schema")];
+    const adapter = fakeAdapter();
+
+    await createMigrationEngine(migrations, adapter).apply(lifecycleHooks());
+
+    expect(
+      adapter.contexts
+        .filter(
+          (context) =>
+            context.location === "adapter" && context.id === "0026" && context.mode === "final",
+        )
+        .map(({ through, includes }) => ({ through, includes })),
+    ).toEqual([
+      { through: "0026", includes: ["0026"] },
+      { through: "0018", includes: ["0018", "0026"] },
+    ]);
   });
 
   it("accepts a canonical-id alias but rejects duplicate aliases", async () => {
@@ -306,6 +404,73 @@ describe("migration engine", () => {
         fakeAdapter([history(migrations[0]), history(migrations[0], "0018")]),
       ).status(),
     ).rejects.toThrow(/duplicate history aliases/i);
+  });
+
+  it("blocks a recorded history gap whose missing migration is absent", async () => {
+    const migrations = [
+      migration("0018", "post_schema"),
+      migration("0026", "pre_schema"),
+      migration("0027", "pre_schema"),
+    ];
+    const adapter = fakeAdapter([history(migrations[1]), history(migrations[0])], {
+      "0018": "complete",
+      "0026": "complete",
+    });
+
+    const report = await createMigrationEngine(migrations, adapter).status();
+    expect(report.ok).toBe(false);
+    expect(report.outcomes).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "0027", state: "blocked" })]),
+    );
+  });
+
+  it("adopts verified legacy history gaps in lifecycle order without executing SQL", async () => {
+    const ids = [
+      "0018",
+      "0019",
+      "0020",
+      "0021",
+      "0022",
+      "0023",
+      "0024",
+      "0025",
+      "0026",
+      "0027",
+      "0028",
+      "0029",
+      "0030",
+      "0031",
+      "0032",
+      "0033",
+      "0034",
+      "0035",
+      "0036",
+    ] as const;
+    const migrations = ids.map((id) =>
+      migration(id, id === "0026" || id === "0027" ? "pre_schema" : "post_schema"),
+    );
+    const intentionallyUnjournaled = new Set(["0018", "0025", "0026", "0027"]);
+    const rows = migrations
+      .filter((item) => !intentionallyUnjournaled.has(item.id))
+      .map((item) => history(item));
+    const states = Object.fromEntries(ids.map((id) => [id, "complete"] as const));
+    const adapter = fakeAdapter(rows, states);
+    const engine = createMigrationEngine(migrations, adapter);
+
+    const report = await engine.status();
+    expect(report.ok).toBe(true);
+    expect(report.outcomes).toEqual(
+      expect.arrayContaining(
+        ["0018", "0025", "0026", "0027"].map((id) =>
+          expect.objectContaining({ id, state: "adoptable" }),
+        ),
+      ),
+    );
+
+    await engine.apply(lifecycleHooks());
+
+    expect(adapter.executed).toEqual([]);
+    expect(adapter.recorded).toEqual(["0026", "0027", "0018", "0025"]);
   });
 
   it("reports checksum drift but rejects malformed and ambiguous history", async () => {
@@ -419,12 +584,137 @@ describe("migration engine", () => {
     expect(adapter.transactions).toBe(2);
   });
 
+  it("preflights pending execution before prepare, execute, verify, and record in one transaction", async () => {
+    const item = migration("0018");
+    const adapter = fakeAdapter();
+    const events: string[] = [];
+    let installed = false;
+    adapter.verifyHistoricalState = async () => verification(installed ? "complete" : "absent");
+    adapter.readHistory = async () => (installed ? [history(item)] : []);
+    adapter.transaction = async (operation) =>
+      operation({
+        async prepareExecution() {
+          events.push("prepare");
+        },
+        async execute() {
+          events.push("execute");
+          installed = true;
+        },
+        async verifyHistoricalState(_item, context) {
+          events.push(`verify:${context.mode}`);
+          return verification(context.mode === "pre_execution" ? "absent" : "complete");
+        },
+        async record() {
+          events.push("record");
+          return history(item);
+        },
+      });
+
+    await createMigrationEngine([item], adapter).apply(lifecycleHooks());
+
+    expect(events).toEqual([
+      "verify:pre_execution",
+      "prepare",
+      "execute",
+      "verify:post_apply",
+      "record",
+    ]);
+  });
+
+  it("stops before preparation when transaction-local preflight changes the frozen plan", async () => {
+    const item = migration("0018");
+    const adapter = fakeAdapter();
+    const events: string[] = [];
+    adapter.transaction = async (operation) =>
+      operation({
+        async verifyHistoricalState(_item, context) {
+          events.push(`verify:${context.mode}`);
+          return verification("partial");
+        },
+        async prepareExecution() {
+          events.push("prepare");
+        },
+        async execute() {
+          events.push("execute");
+        },
+        async record() {
+          events.push("record");
+          return history(item);
+        },
+      });
+
+    await expect(createMigrationEngine([item], adapter).apply(lifecycleHooks())).rejects.toThrow(
+      /changed before execution/i,
+    );
+
+    expect(events).toEqual(["verify:pre_execution"]);
+  });
+
+  it("adopts complete historical state without preparing or executing SQL", async () => {
+    const item = migration("0018");
+    const adapter = fakeAdapter([], { "0018": "complete" });
+    const events: string[] = [];
+    adapter.transaction = async (operation) =>
+      operation({
+        async prepareExecution() {
+          events.push("prepare");
+        },
+        async execute() {
+          events.push("execute");
+        },
+        async verifyHistoricalState(_item, context) {
+          events.push(`verify:${context.mode}`);
+          return verification(context.mode === "pre_execution" ? "absent" : "complete");
+        },
+        async record() {
+          events.push("record");
+          adapter.states.set(item.id, "complete");
+          return history(item);
+        },
+      });
+    adapter.readHistory = async () => (events.includes("record") ? [history(item)] : []);
+
+    await createMigrationEngine([item], adapter).apply(lifecycleHooks());
+
+    expect(events).toEqual(["verify:post_apply", "record"]);
+  });
+
+  it("stops a pending transaction immediately when preparation fails", async () => {
+    const item = migration("0018");
+    const adapter = fakeAdapter();
+    const events: string[] = [];
+    adapter.transaction = async (operation) =>
+      operation({
+        async prepareExecution() {
+          events.push("prepare");
+          throw new Error("ambiguous compatibility state");
+        },
+        async execute() {
+          events.push("execute");
+        },
+        async verifyHistoricalState(_item, context) {
+          events.push(`verify:${context.mode}`);
+          return verification(context.mode === "pre_execution" ? "absent" : "complete");
+        },
+        async record() {
+          events.push("record");
+          return history(item);
+        },
+      });
+
+    await expect(createMigrationEngine([item], adapter).apply(lifecycleHooks())).rejects.toThrow(
+      /ambiguous compatibility state/i,
+    );
+    expect(events).toEqual(["verify:pre_execution", "prepare"]);
+  });
+
   it("adopts historical state only after re-verifying inside the transaction", async () => {
     const item = migration("0018");
     const adapter = fakeAdapter([], { "0018": "complete" });
     adapter.transaction = async (operation) =>
       operation({
         verifyHistoricalState: vi.fn(async () => verification("partial")),
+        prepareExecution: vi.fn(),
         execute: vi.fn(),
         record: vi.fn(),
       });
@@ -513,7 +803,44 @@ describe("migration engine", () => {
     expect(events).toEqual(["baseline", "schema-sync"]);
   });
 
-  it.each(["complete", "partial"] as const)(
+  it("replans a schema-synchronized pending migration before executing its SQL", async () => {
+    const item = migration("0018", "post_schema");
+    const adapter = fakeAdapter();
+    const seenModes: string[] = [];
+    let schemaSynchronized = false;
+    adapter.verifyHistoricalState = async (migrationItem, context) => {
+      seenModes.push(context.mode);
+      if (adapter.states.get(migrationItem.id) === "complete") return verification("complete");
+      if (!schemaSynchronized) return verification("absent");
+      return verification(context.mode === "pre_execution" ? "absent" : "partial");
+    };
+    const hooks = lifecycleHooks();
+    hooks.synchronizeSchema = async () => {
+      schemaSynchronized = true;
+    };
+
+    await createMigrationEngine([item], adapter).apply(hooks);
+
+    expect(seenModes).toContain("pre_execution");
+    expect(adapter.executed).toEqual(["0018"]);
+    expect(adapter.recorded).toEqual(["0018"]);
+  });
+
+  it("adopts independently complete post-schema state after schema synchronization", async () => {
+    const adapter = fakeAdapter();
+    const hooks = lifecycleHooks();
+    hooks.synchronizeSchema = async () => {
+      adapter.states.set("0018", "complete");
+    };
+
+    await createMigrationEngine([migration("0018", "post_schema")], adapter).apply(hooks);
+
+    expect(adapter.executed).toEqual([]);
+    expect(adapter.prepared).toEqual([]);
+    expect(adapter.recorded).toEqual(["0018"]);
+  });
+
+  it.each(["partial"] as const)(
     "keeps a frozen pending post-schema decision when schema sync changes it to %s",
     async (state) => {
       const events: string[] = [];
@@ -536,13 +863,29 @@ describe("migration engine", () => {
       expect(report.command).toBe("apply");
       expect(report.outcomes.map(({ id, state }) => ({ id, state }))).toEqual([
         { id: "0018", state: "blocked" },
-        { id: "0026", state: "applied" },
       ]);
       expect(adapter.executed).toEqual(["0026"]);
       expect(adapter.recorded).toEqual(["0026"]);
       expect(events).toEqual(["baseline", "schema-sync"]);
     },
   );
+
+  it("blocks a pending pre-schema migration when base preparation exposes partial state", async () => {
+    const events: string[] = [];
+    const adapter = fakeAdapter();
+    const hooks = lifecycleHooks(events);
+    hooks.prepareBaseSchema = async () => {
+      events.push("baseline");
+      adapter.states.set("0026", "partial");
+    };
+
+    await expect(
+      createMigrationEngine([migration("0026", "pre_schema")], adapter).apply(hooks),
+    ).rejects.toThrow(/pre-schema migrations were not started/i);
+    expect(adapter.executed).toEqual([]);
+    expect(adapter.recorded).toEqual([]);
+    expect(events).toEqual(["baseline"]);
+  });
 
   it("resumes after a committed migration without replaying it", async () => {
     const migrations = [migration("0026", "pre_schema"), migration("0027", "pre_schema")];
@@ -644,11 +987,15 @@ describe("migration engine", () => {
     const transactionEvents: string[] = [];
     adapter.transaction = async (operation) =>
       operation({
+        async prepareExecution() {
+          transactionEvents.push("prepare");
+        },
         async execute() {
           transactionEvents.push("execute");
         },
-        async verifyHistoricalState() {
-          return verification("partial");
+        async verifyHistoricalState(_item, context) {
+          transactionEvents.push(`verify:${context.mode}`);
+          return verification(context.mode === "pre_execution" ? "absent" : "partial");
         },
         async record() {
           transactionEvents.push("record");
@@ -659,7 +1006,12 @@ describe("migration engine", () => {
     await expect(createMigrationEngine([item], adapter).apply(lifecycleHooks())).rejects.toThrow(
       /transaction was rolled back/i,
     );
-    expect(transactionEvents).toEqual(["execute"]);
+    expect(transactionEvents).toEqual([
+      "verify:pre_execution",
+      "prepare",
+      "execute",
+      "verify:post_apply",
+    ]);
   });
 });
 

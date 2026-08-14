@@ -28,7 +28,14 @@ export interface VerificationTarget {
 }
 
 export interface VerificationContext {
-  mode: "discovery" | "post_apply" | "final";
+  /**
+   * discovery: classify history before lifecycle hooks run.
+   * pre_execution: a lifecycle hook may have materialized the expected base schema, but the
+   * managed SQL has not run; `absent` means that exact base is safe to execute, while `complete`
+   * requires independent migration evidence and is safe to adopt.
+   * post_apply/final: require the migration's completed invariants for the supplied target.
+   */
+  mode: "discovery" | "pre_execution" | "post_apply" | "final";
   target: VerificationTarget;
 }
 
@@ -43,6 +50,7 @@ export interface MigrationTransaction {
     migration: PreparedMigration,
     context: VerificationContext,
   ): Promise<MigrationVerification>;
+  prepareExecution(migration: PreparedMigration): Promise<void>;
   execute(migration: PreparedMigration): Promise<void>;
   record(migration: PreparedMigration): Promise<MigrationHistoryRow>;
 }
@@ -138,6 +146,10 @@ export function createMigrationEngine(
       } satisfies PreparedMigration),
     ),
   );
+  const lifecycleMigrations = Object.freeze([
+    ...managedMigrations.filter((migration) => migration.phase === "pre_schema"),
+    ...managedMigrations.filter((migration) => migration.phase === "post_schema"),
+  ]);
 
   const byId = new Map<MigrationId, PreparedMigration>(
     managedMigrations.map((migration) => [migration.id, migration]),
@@ -150,7 +162,7 @@ export function createMigrationEngine(
   }
 
   function targetFor(included: ReadonlySet<MigrationId>): VerificationTarget {
-    const ordered = managedMigrations.filter((migration) => included.has(migration.id));
+    const ordered = lifecycleMigrations.filter((migration) => included.has(migration.id));
     if (ordered.length === 0) {
       throw new Error("A verification target must include at least one managed migration.");
     }
@@ -172,6 +184,11 @@ export function createMigrationEngine(
     mode: "final",
     target: finalTarget,
   };
+  const preExecutionContext: VerificationContext = {
+    mode: "pre_execution",
+    target: finalTarget,
+  };
+  const noRecordedHistoryContext = discoveryContext;
 
   function outcome(
     migration: PreparedMigration,
@@ -194,6 +211,8 @@ export function createMigrationEngine(
   async function checkedHistory(): Promise<{
     resolved: Map<MigrationId, MigrationHistoryRow>;
     drift: Map<MigrationId, MigrationOutcome>;
+    historicalPrefix: ReadonlySet<MigrationId>;
+    recordedContext: VerificationContext;
   }> {
     const resolved = new Map<MigrationId, MigrationHistoryRow>();
     const drift = new Map<MigrationId, MigrationOutcome>();
@@ -237,22 +256,52 @@ export function createMigrationEngine(
       resolved.set(migration.id, row);
     }
 
-    return { resolved, drift };
+    const recordedIds = new Set<MigrationId>([...resolved.keys(), ...drift.keys()]);
+    let lastRecordedIndex = -1;
+    for (let index = lifecycleMigrations.length - 1; index >= 0; index -= 1) {
+      if (recordedIds.has(lifecycleMigrations[index].id)) {
+        lastRecordedIndex = index;
+        break;
+      }
+    }
+    const historicalPrefix = new Set(
+      lifecycleMigrations.slice(0, lastRecordedIndex + 1).map((migration) => migration.id),
+    );
+
+    return {
+      resolved,
+      drift,
+      historicalPrefix,
+      recordedContext: {
+        mode: "final",
+        target:
+          historicalPrefix.size > 0 ? targetFor(historicalPrefix) : noRecordedHistoryContext.target,
+      },
+    };
   }
 
   async function classify(
     migration: PreparedMigration,
     history: Map<MigrationId, MigrationHistoryRow>,
+    fillsHistoryGap: boolean,
+    recordedContext: VerificationContext,
     context: VerificationContext,
   ): Promise<MigrationOutcome> {
     const verification = await adapter.verifyHistoricalState(
       migration,
-      history.has(migration.id) ? finalContext : context,
+      history.has(migration.id) || fillsHistoryGap ? recordedContext : context,
     );
     if (history.has(migration.id)) {
       return outcome(
         migration,
         verification.state === "complete" ? "applied" : "blocked",
+        verification,
+      );
+    }
+    if (fillsHistoryGap) {
+      return outcome(
+        migration,
+        verification.state === "complete" ? "adoptable" : "blocked",
         verification,
       );
     }
@@ -266,10 +315,19 @@ export function createMigrationEngine(
   }
 
   async function inspect(context: VerificationContext): Promise<MigrationOutcome[]> {
-    const { resolved, drift } = await checkedHistory();
+    const { resolved, drift, historicalPrefix, recordedContext } = await checkedHistory();
     const results: MigrationOutcome[] = [];
     for (const migration of managedMigrations) {
-      results.push(drift.get(migration.id) ?? (await classify(migration, resolved, context)));
+      results.push(
+        drift.get(migration.id) ??
+          (await classify(
+            migration,
+            resolved,
+            historicalPrefix.has(migration.id) && !resolved.has(migration.id),
+            recordedContext,
+            context,
+          )),
+      );
     }
     return results;
   }
@@ -307,7 +365,14 @@ export function createMigrationEngine(
     included: ReadonlySet<MigrationId>,
     message: string,
   ): Promise<void> {
-    const { drift } = await checkedHistory();
+    const { drift, historicalPrefix, recordedContext } = await checkedHistory();
+    const includedContext: VerificationContext | null =
+      included.size > 0
+        ? {
+            mode: "final",
+            target: targetFor(included),
+          }
+        : null;
     const outcomes: MigrationOutcome[] = [];
     for (const migration of managedMigrations) {
       if (!included.has(migration.id)) continue;
@@ -315,7 +380,10 @@ export function createMigrationEngine(
         outcomes.push(drift.get(migration.id)!);
         continue;
       }
-      const verification = await adapter.verifyHistoricalState(migration, finalContext);
+      const verification = await adapter.verifyHistoricalState(
+        migration,
+        historicalPrefix.has(migration.id) ? recordedContext : includedContext!,
+      );
       outcomes.push(
         outcome(migration, verification.state === "complete" ? "applied" : "blocked", verification),
       );
@@ -330,11 +398,15 @@ export function createMigrationEngine(
     }
   }
 
-  async function assertFrozenPlanStable(frozen: readonly MigrationOutcome[]): Promise<void> {
-    const { resolved, drift } = await checkedHistory();
+  async function replanFrozenPhase(
+    frozen: readonly MigrationOutcome[],
+    phase: MigrationPhase,
+    message: string,
+  ): Promise<MigrationOutcome[]> {
+    const { resolved, drift, historicalPrefix, recordedContext } = await checkedHistory();
     const outcomes: MigrationOutcome[] = [];
 
-    for (const frozenOutcome of frozen) {
+    for (const frozenOutcome of frozen.filter((entry) => entry.phase === phase)) {
       const migration = byId.get(frozenOutcome.id)!;
       const drifted = drift.get(migration.id);
       if (drifted) {
@@ -342,36 +414,38 @@ export function createMigrationEngine(
         continue;
       }
 
-      const expectedState =
-        frozenOutcome.phase === "pre_schema" ||
-        frozenOutcome.state === "applied" ||
-        frozenOutcome.state === "adoptable"
-          ? "complete"
-          : "absent";
-      const verification = await adapter.verifyHistoricalState(
-        migration,
-        expectedState === "complete" ? finalContext : discoveryContext,
-      );
-      const historyShouldExist =
-        frozenOutcome.phase === "pre_schema" || frozenOutcome.state === "applied";
+      const verificationContext =
+        frozenOutcome.state === "pending"
+          ? preExecutionContext
+          : historicalPrefix.has(migration.id)
+            ? recordedContext
+            : finalContext;
+      const verification = await adapter.verifyHistoricalState(migration, verificationContext);
+      const historyShouldExist = frozenOutcome.state === "applied";
       const historyMatches = resolved.has(migration.id) === historyShouldExist;
-      const stable = verification.state === expectedState && historyMatches;
-      outcomes.push(
-        outcome(
-          migration,
-          stable ? (expectedState === "complete" ? "applied" : "pending") : "blocked",
-          verification,
-        ),
-      );
+      let replannedState: MigrationState = "blocked";
+      if (historyMatches) {
+        if (frozenOutcome.state === "applied" && verification.state === "complete") {
+          replannedState = "applied";
+        } else if (frozenOutcome.state === "adoptable" && verification.state === "complete") {
+          replannedState = "adoptable";
+        } else if (frozenOutcome.state === "pending") {
+          if (verification.state === "absent") replannedState = "pending";
+          if (verification.state === "complete") replannedState = "adoptable";
+        }
+      }
+      outcomes.push(outcome(migration, replannedState, verification));
     }
 
     const changed = outcomes.find((entry) => entry.state === "blocked" || entry.state === "drift");
     if (changed) {
-      throw new MigrationVerificationError(
-        "Schema synchronization changed a frozen migration decision; post-schema migrations were not started.",
-        { command: "apply", ok: false, outcomes },
-      );
+      throw new MigrationVerificationError(message, {
+        command: "apply",
+        ok: false,
+        outcomes,
+      });
     }
+    return outcomes;
   }
 
   async function applyPlanned(
@@ -393,12 +467,19 @@ export function createMigrationEngine(
       };
       const verification = await adapter.transaction(async (tx) => {
         if (plannedOutcome.state === "pending") {
+          const preflight = await tx.verifyHistoricalState(migration, preExecutionContext);
+          if (preflight.state !== "absent") {
+            throw new Error(
+              `${migration.id} changed before execution; the transaction was rolled back without running managed SQL.`,
+            );
+          }
           if (
             checksumMigration(migration.sql) !== migration.checksum ||
             prepareExecutionSql(migration, migration.sql) !== migration.executionSql
           ) {
             throw new Error(`Prepared migration ${migration.id} changed after validation.`);
           }
+          await tx.prepareExecution(migration);
           await tx.execute(migration);
         }
         const current = await tx.verifyHistoricalState(migration, context);
@@ -433,25 +514,28 @@ export function createMigrationEngine(
     }
 
     await hooks.prepareBaseSchema();
+    const prePlan = await replanFrozenPhase(
+      initial,
+      "pre_schema",
+      "Base schema preparation changed a frozen migration decision; pre-schema migrations were not started.",
+    );
     const included = new Set(
       initial
         .filter((entry) => entry.state === "applied" || entry.state === "adoptable")
         .map((entry) => entry.id),
     );
-    const preResults = await applyPlanned(
-      initial.filter((entry) => entry.phase === "pre_schema"),
-      included,
-    );
+    const preResults = await applyPlanned(prePlan, included);
     await hooks.synchronizeSchema();
     await assertIncludedComplete(
       included,
       "Schema synchronization invalidated a completed migration; post-schema migrations were not started.",
     );
-    await assertFrozenPlanStable(initial);
-    const postResults = await applyPlanned(
-      initial.filter((entry) => entry.phase === "post_schema"),
-      included,
+    const postPlan = await replanFrozenPhase(
+      initial,
+      "post_schema",
+      "Schema synchronization changed a frozen migration decision; post-schema migrations were not started.",
     );
+    const postResults = await applyPlanned(postPlan, included);
     await hooks.finalizeSchema();
     await verificationReport("apply");
 
