@@ -404,12 +404,16 @@ async function prepare(
 
 function fakeClient(options: { unlockFails?: boolean; unlockReturnsFalse?: boolean } = {}) {
   const statements: string[] = [];
+  // Bound parameters are captured separately because the value that matters most
+  // here -- the pinned search_path -- travels as a parameter, not as SQL text.
+  const boundValues: unknown[] = [];
   const release = vi.fn();
   const end = vi.fn(async () => undefined);
   const reserved = Object.assign(
-    vi.fn(async (parts: TemplateStringsArray) => {
+    vi.fn(async (parts: TemplateStringsArray, ...values: unknown[]) => {
       const statement = parts.join("");
       statements.push(statement);
+      boundValues.push(...values);
       if (statement.includes("pg_advisory_unlock") && options.unlockFails) {
         throw new Error("unlock failed");
       }
@@ -430,7 +434,7 @@ function fakeClient(options: { unlockFails?: boolean; unlockReturnsFalse?: boole
     reserve: vi.fn(async () => reserved),
     end,
   });
-  return { client, reserved, release, end, statements };
+  return { client, reserved, release, end, statements, boundValues };
 }
 
 describe("PostgreSQL migration adapter", () => {
@@ -471,6 +475,24 @@ describe("PostgreSQL migration adapter", () => {
 
     expect(statements[0]).toMatch(/pg_catalog\.set_config\('search_path'/i);
     expect(statements[1]).toMatch(/pg_catalog\.pg_advisory_lock\(\s*pg_catalog\.hashtextextended/i);
+  });
+
+  it("pins a search_path that unqualified CREATE statements can actually write into", async () => {
+    const { client, boundValues } = fakeClient();
+    const adapter = createPostgresMigrationAdapter({
+      target: migrationTarget(),
+      createClient: () => client as never,
+    });
+
+    await adapter.withGlobalLock(async () => undefined);
+
+    // The first schema in the path is the schema unqualified CREATE writes into.
+    // Naming pg_catalog explicitly makes it that schema and every managed
+    // migration that creates a table unqualified fails with "permission denied
+    // to create". Omitting it loses nothing: PostgreSQL searches pg_catalog
+    // first anyway when it is not named, so shadowing resistance is unchanged.
+    expect(boundValues[0]).toBe("public");
+    expect(boundValues[0]).not.toMatch(/pg_catalog/);
   });
 
   it("rejects lifecycle operations that bypass the global lock", async () => {

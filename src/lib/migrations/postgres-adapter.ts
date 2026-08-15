@@ -13,7 +13,21 @@ import { migrationVerifierRegistry, validateVerifierRegistry } from "./verifiers
 import type { VerificationQuery } from "./verifiers/types";
 
 const GLOBAL_LOCK_KEY = "buwiz:manual-migration-lifecycle:v1";
-const SECURE_SEARCH_PATH = "pg_catalog, public";
+/**
+ * Deliberately just "public", not "pg_catalog, public".
+ *
+ * PostgreSQL always searches pg_catalog first unless it is named explicitly, so
+ * omitting it keeps the shadowing resistance this pin exists for: a hostile
+ * public.pg_class still cannot mask the real one. Naming it explicitly buys no
+ * extra safety and costs correctness, because the first schema in the path is
+ * also the schema unqualified CREATE statements write into. With pg_catalog
+ * first, migration 0026's `CREATE TABLE IF NOT EXISTS ai_invocations` resolved
+ * to pg_catalog.ai_invocations and failed with "permission denied to create".
+ *
+ * Reads inside this module stay explicitly pg_catalog-qualified regardless, so
+ * they do not depend on this value at all.
+ */
+const SECURE_SEARCH_PATH = "public";
 
 const COMPATIBILITY_0028_STATE_SQL = String.raw`
 /* compatibility state for migration 0028 */
