@@ -295,13 +295,17 @@ describe("migration verifier 0026", () => {
     expect(result.state).toBe("complete");
   });
 
-  it("requires independent 0026 execution evidence only during discovery", async () => {
+  it("accepts either constraint spelling as 0026's completed shape", async () => {
     const discovery = withContext("discovery", ["0026"]);
     const postApply = withContext("post_apply", ["0026"]);
     const final = withContext("final", ["0026"]);
 
+    // Inline REFERENCES in 0026 produce PostgreSQL's generated _fkey names;
+    // src/db/schema/ai.ts produces Drizzle's explicit names. Both describe the
+    // same foreign keys, and every structural property of them is still compared,
+    // so neither spelling is treated as a missing constraint.
     expect((await verifier0026.verify(queryFor(complete0026("schema")), discovery)).state).toBe(
-      "partial",
+      "complete",
     );
     expect((await verifier0026.verify(queryFor(complete0026("raw")), discovery)).state).toBe(
       "complete",
@@ -322,8 +326,14 @@ describe("migration verifier 0026", () => {
     expect((await verifier0026.verify(queryFor(complete0026("raw")), preExecution)).state).toBe(
       "complete",
     );
+    // A schema-synchronized database is complete, not partial. 0026 is entirely
+    // IF NOT EXISTS, so executing it against a pushed database is a no-op that can
+    // never create the generated _fkey names; requiring them left 0026 partial,
+    // and the engine will neither execute nor adopt a partial migration. Adoption
+    // is the only reachable outcome, and it is a safe one: all 992 structural
+    // expectations are still checked, so only the constraint labels differ.
     expect((await verifier0026.verify(queryFor(complete0026("schema")), preExecution)).state).toBe(
-      "partial",
+      "complete",
     );
   });
 

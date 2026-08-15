@@ -268,7 +268,7 @@ const rawConstraintNames0026: Readonly<Record<string, string>> = {
 
 function expectation0026(
   snapshot: CatalogSnapshot,
-  context: VerificationContext,
+  _context: VerificationContext,
 ): CatalogExpectation {
   return {
     relations: relations0026,
@@ -276,12 +276,20 @@ function expectation0026(
     constraints: constraints0026.map((item) => {
       const rawName = rawConstraintNames0026[item.name];
       if (!rawName) return item;
+      // Both names are legitimate evidence of the same foreign key. 0026 writes
+      // its references inline, so PostgreSQL generates `<table>_<column>_fkey`,
+      // while a database synchronized from src/db/schema/ai.ts carries Drizzle's
+      // explicit `<table>_<column>_<target>_<col>_fk`. Demanding the generated
+      // name before execution made a pushed database look like it was missing six
+      // foreign keys that it actually has under the other spelling, which left
+      // 0026 partial and therefore neither executable nor adoptable.
+      //
+      // Only the label is allowed to vary: columns, referenced table, match type,
+      // on-update/on-delete and validation are all still compared, and a
+      // constraint under neither name is still absent.
       return {
         ...item,
-        name:
-          context.mode === "discovery" || context.mode === "pre_execution"
-            ? rawName
-            : knownConstraintName(snapshot, item.tableName, [item.name, rawName]),
+        name: knownConstraintName(snapshot, item.tableName, [item.name, rawName]),
       };
     }),
   };
