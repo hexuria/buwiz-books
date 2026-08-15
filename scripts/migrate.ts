@@ -150,11 +150,29 @@ function lifecycleHooks(
   };
 
   return {
-    // Drizzle's generated 0000-0002 history is the base-schema phase.
-    prepareBaseSchema: () => guarded(["x", "drizzle-kit", "migrate"]),
-    // Handwritten 0026-0027 run before this synchronization step; the same
-    // engine then verifies and records the post-schema migrations.
-    synchronizeSchema: () => guarded(["x", "drizzle-kit", "push", "--force"]),
+    // `drizzle-kit push --force` IS this repository's schema application, and has
+    // been for CI, onboarding and restore alike. `drizzle-kit migrate` is used
+    // nowhere, because the numbered files past 0002 are absent from
+    // drizzle/meta/_journal.json.
+    //
+    // It was tried as the base-schema phase and cannot work. On a fresh database
+    // it applies only the journalled 0000-0002 history, leaving an intermediate
+    // schema that push must then reconcile against the current one. That diff
+    // includes renamed enums, so push stops on an interactive
+    // "created or renamed?" prompt and dies in CI with "Interactive prompts
+    // require a TTY terminal". Pushing straight onto an empty database has no
+    // such ambiguity: every object is unambiguously new.
+    prepareBaseSchema: () => guarded(["x", "drizzle-kit", "push", "--force"]),
+    // Nothing is left to synchronize afterwards. Running push a second time here
+    // would re-diff a schema that already matches, for no benefit.
+    //
+    // The pre-schema migrations therefore land on an already-synchronized schema,
+    // which is exactly what they are built for: every statement in 0026 and 0027
+    // is IF NOT EXISTS, so the tables push already created are left alone while
+    // the objects push cannot express -- the pg_trgm extension and the
+    // gin_trgm_ops trigram index, which live in no Drizzle schema file -- are
+    // still created.
+    synchronizeSchema: async () => undefined,
     // RLS policy application is owned by the canonical deployment layer. A
     // local caller may provide a reviewed command explicitly later; no shell
     // text is accepted here.

@@ -184,11 +184,13 @@ describe("main", () => {
     await expect(hooks?.prepareBaseSchema()).rejects.toThrow(
       `MIGRATION_SCHEMA_SYNC_CONFIRM must exactly equal ${DATABASE_NAME}`,
     );
-    await expect(hooks?.synchronizeSchema()).rejects.toThrow(/fail-closed/);
+    // synchronizeSchema spawns nothing at all now, so there is no tool for the
+    // guard to gate; the guarded step is the one that applies the schema.
+    await expect(hooks?.synchronizeSchema()).resolves.toBeUndefined();
     expect(processRunner).not.toHaveBeenCalled();
   });
 
-  it("spawns the schema tools with the migration URL once the confirmation matches", async () => {
+  it("applies the schema with push and never invokes drizzle-kit migrate", async () => {
     const processRunner = vi.fn<ProcessRunner>(async () => undefined);
     runEntrypoint.mockResolvedValue(report(true, "apply"));
 
@@ -198,15 +200,18 @@ describe("main", () => {
     await hooks?.prepareBaseSchema();
     await hooks?.synchronizeSchema();
 
+    // `drizzle-kit migrate` applies only the journalled 0000-0002 history, and the
+    // intermediate schema it leaves cannot be reconciled by push without an
+    // interactive enum "created or renamed?" prompt, which is fatal in CI.
+    expect(processRunner).toHaveBeenCalledTimes(1);
     expect(processRunner).toHaveBeenNthCalledWith(
       1,
-      ["x", "drizzle-kit", "migrate"],
-      expect.objectContaining({ DATABASE_URL: LOOPBACK_URL }),
-    );
-    expect(processRunner).toHaveBeenNthCalledWith(
-      2,
       ["x", "drizzle-kit", "push", "--force"],
       expect.objectContaining({ DATABASE_URL: LOOPBACK_URL }),
+    );
+    expect(processRunner).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["migrate"]),
+      expect.anything(),
     );
   });
 });
