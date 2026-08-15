@@ -724,6 +724,40 @@ describe("migration engine", () => {
     );
   });
 
+  it("names the checks that failed, so a rollback is diagnosable without the database", async () => {
+    const item = migration("0018");
+    const adapter = fakeAdapter([], { "0018": "complete" });
+    adapter.transaction = async (operation) =>
+      operation({
+        verifyHistoricalState: vi.fn(async () => ({
+          state: "partial" as const,
+          shape: "0018",
+          evidence: [
+            { key: "relation:vendor_aliases", status: "pass" as const, expected: "present" },
+            {
+              key: "index:vendor_aliases_descriptor_trgm_idx",
+              status: "fail" as const,
+              expected: "gin(normalized_descriptor gin_trgm_ops)",
+              observed: "gin(normalized_descriptor public.gin_trgm_ops)",
+            },
+          ],
+        })),
+        prepareExecution: vi.fn(),
+        execute: vi.fn(),
+        record: vi.fn(),
+      });
+
+    // The database is gone by the time anyone reads a CI log, so the failing
+    // expectation and what was seen instead have to survive in the error itself.
+    const failure = createMigrationEngine([item], adapter).apply(lifecycleHooks());
+    await expect(failure).rejects.toThrow(/Failed 1 of 2 checks/);
+    await expect(failure).rejects.toThrow(/index:vendor_aliases_descriptor_trgm_idx/);
+    await expect(failure).rejects.toThrow(
+      /observed gin\(normalized_descriptor public\.gin_trgm_ops\)/,
+    );
+    await expect(failure).rejects.toThrow(/shape 0018/);
+  });
+
   it("holds one global lock for each complete command", async () => {
     for (const command of ["status", "verify", "apply"] as const) {
       const events: string[] = [];

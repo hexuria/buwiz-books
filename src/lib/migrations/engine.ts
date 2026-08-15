@@ -115,6 +115,30 @@ function fallbackEvidence(state: MigrationVerification["state"]): VerificationEv
   ];
 }
 
+/**
+ * Render the checks that actually failed into the rollback error.
+ *
+ * A verifier that returns `partial` already knows precisely which expectation
+ * missed and what it saw instead, and that evidence used to be discarded: the
+ * error named the migration and nothing else. On CI, where the database is gone
+ * by the time anyone reads the log, that leaves no way to tell a wrong
+ * expectation from a wrong migration without another full run per guess.
+ */
+function describeVerification(verification: MigrationVerification): string {
+  const failures = verification.evidence.filter((check) => check.status === "fail");
+  if (failures.length === 0) {
+    return "No individual check reported a failure, which itself indicates a verifier defect.";
+  }
+  const detail = failures
+    .map(
+      (check) =>
+        `${check.key} (expected ${check.expected}` +
+        `${check.observed === undefined ? "" : `, observed ${check.observed}`})`,
+    )
+    .join("; ");
+  return `Failed ${failures.length} of ${verification.evidence.length} checks: ${detail}.`;
+}
+
 export function createMigrationEngine(
   migrations: readonly PreparedMigration[],
   adapter: MigrationEngineAdapter,
@@ -470,7 +494,9 @@ export function createMigrationEngine(
           const preflight = await tx.verifyHistoricalState(migration, preExecutionContext);
           if (preflight.state !== "absent") {
             throw new Error(
-              `${migration.id} changed before execution; the transaction was rolled back without running managed SQL.`,
+              `${migration.id} changed before execution; the transaction was rolled back without running managed SQL. ` +
+                `Observed state ${preflight.state}${preflight.shape === undefined ? "" : ` (shape ${preflight.shape})`}. ` +
+                describeVerification(preflight),
             );
           }
           if (
@@ -486,7 +512,9 @@ export function createMigrationEngine(
         if (current.state !== "complete") {
           const action = plannedOutcome.state === "adoptable" ? "adoption" : "execution";
           throw new Error(
-            `${migration.id} changed or failed verification during ${action}; the transaction was rolled back.`,
+            `${migration.id} changed or failed verification during ${action}; the transaction was rolled back. ` +
+              `Observed state ${current.state}${current.shape === undefined ? "" : ` (shape ${current.shape})`}. ` +
+              describeVerification(current),
           );
         }
         await tx.record(migration);
