@@ -14,6 +14,13 @@ interface CliOptions {
   readonly json: boolean;
 }
 
+/**
+ * Parsing reports "the caller asked for help" as an outcome rather than an error.
+ * A sentinel exception would have to be recognized by message text, which is how a
+ * help request becomes a failure the moment someone rewords the string.
+ */
+export type MigrationCliRequest = { kind: "help" } | { kind: "run"; options: CliOptions };
+
 export type ProcessRunner = (
   args: readonly string[],
   environment: NodeJS.ProcessEnv,
@@ -31,19 +38,22 @@ Options:
 Migration commands require MIGRATION_DATABASE_URL or DATABASE_URL_ADMIN.
 Apply additionally requires MIGRATION_SCHEMA_SYNC_CONFIRM to equal the
 normalized migration database name before any schema tool can run.
+
+Exits non-zero whenever the report is not ok, including a blocked or
+drifted status, so Make and CI can act on the result.
 `;
+
+const VALUED_OPTIONS = ["--phase", "--through"] as const;
+type ValuedOption = (typeof VALUED_OPTIONS)[number];
 
 function parsePhase(value: string): MigrationApplyPhase {
   if (value === "all" || value === "pre_schema" || value === "post_schema") return value;
   throw new Error(`Invalid --phase ${value}; expected all, pre_schema, or post_schema.`);
 }
 
-export function parseMigrationCliArgs(argv: readonly string[]): CliOptions {
+export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequest {
   const [command, ...rest] = argv;
-  if (command === "--help" || command === "-h") {
-    console.log(usage.trim());
-    throw new Error("HELP_SHOWN");
-  }
+  if (command === "--help" || command === "-h") return { kind: "help" };
   if (command !== "status" && command !== "verify" && command !== "apply") {
     throw new Error("A command is required: status, verify, or apply.");
   }
@@ -57,33 +67,40 @@ export function parseMigrationCliArgs(argv: readonly string[]): CliOptions {
       json = true;
       continue;
     }
-    if (argument === "--help" || argument === "-h") {
-      console.log(usage.trim());
-      throw new Error("HELP_SHOWN");
+    if (argument === "--help" || argument === "-h") return { kind: "help" };
+
+    // One branch serves both `--phase value` and `--phase=value`; splitting them
+    // duplicated every option's handling and let the two forms drift apart.
+    const separator = argument.indexOf("=");
+    const name = (separator === -1 ? argument : argument.slice(0, separator)) as ValuedOption;
+    if (!VALUED_OPTIONS.includes(name)) {
+      throw new Error(`Unknown migration option ${argument}.`);
     }
-    if (argument === "--phase" || argument === "--through") {
-      const value = rest[index + 1];
-      if (!value) throw new Error(`${argument} requires a value.`);
+    let value: string | undefined;
+    if (separator === -1) {
+      value = rest[index + 1];
       index += 1;
-      if (argument === "--phase") phase = parsePhase(value);
-      else through = value;
-      continue;
+    } else {
+      value = argument.slice(separator + 1);
     }
-    if (argument.startsWith("--phase=")) {
-      phase = parsePhase(argument.slice("--phase=".length));
-      continue;
-    }
-    if (argument.startsWith("--through=")) {
-      through = argument.slice("--through=".length);
-      continue;
-    }
-    throw new Error(`Unknown migration option ${argument}.`);
+    if (!value) throw new Error(`${name} requires a value.`);
+    if (name === "--phase") phase = parsePhase(value);
+    else through = value;
   }
 
   if (command !== "apply" && phase !== "all") {
     throw new Error("--phase is only valid with apply.");
   }
-  return { command, phase, through, json };
+  return { kind: "run", options: { command, phase, through, json } };
+}
+
+/**
+ * A report that is not ok must fail the process. `status` deliberately returns a
+ * blocked or drifted report instead of throwing, so without this the one command
+ * meant to surface drift would exit 0 and read as green.
+ */
+export function migrationExitCode(report: MigrationReport): 0 | 1 {
+  return report.ok ? 0 : 1;
 }
 
 const defaultProcessRunner: ProcessRunner = (args, environment) =>
@@ -121,7 +138,9 @@ function lifecycleHooks(
   processRunner: ProcessRunner,
 ) {
   const commandEnvironment = { ...environment, DATABASE_URL: databaseUrl };
-  const guarded = (args: readonly string[]) => {
+  // Async so the guard rejects rather than throwing synchronously out of a
+  // Promise-returning hook; a caller attaching .catch() would otherwise crash.
+  const guarded = async (args: readonly string[]) => {
     requireSchemaConfirmation(target, environment);
     return processRunner(args, commandEnvironment);
   };
@@ -155,13 +174,12 @@ export async function main(
   environment: NodeJS.ProcessEnv = process.env,
   processRunner: ProcessRunner = defaultProcessRunner,
 ): Promise<MigrationReport | undefined> {
-  let options: CliOptions;
-  try {
-    options = parseMigrationCliArgs(argv);
-  } catch (error) {
-    if (error instanceof Error && error.message === "HELP_SHOWN") return undefined;
-    throw error;
+  const request = parseMigrationCliArgs(argv);
+  if (request.kind === "help") {
+    console.log(usage.trim());
+    return undefined;
   }
+  const { options } = request;
 
   const databaseUrl = migrationUrl(environment);
   const target = createMigrationDatabaseTarget(databaseUrl, {
@@ -179,6 +197,7 @@ export async function main(
       : {}),
   });
   printReport(report, options.json);
+  process.exitCode = migrationExitCode(report);
   return report;
 }
 

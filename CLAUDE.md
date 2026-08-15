@@ -73,8 +73,10 @@ policy blocks are guarded by table-existence checks and silently skip tables tha
 it.** `review_rule_definitions` has no `organization_id` and is excluded from every RLS policy
 list — one empty table means every tenant sees zero review agents. Its rows lived only inside
 `drizzle/0019_inbox_review_foundation.sql`, which is absent from `drizzle/meta/_journal.json` and
-so is never run by `drizzle-kit`; the only invoker was `db:dedup:migrate`, which the deploy
-pipeline does not call. Every environment therefore created the table from the Drizzle schema and
+so is never run by `drizzle-kit`; its only invoker back then was the since-removed
+`db:dedup:migrate`, which the deploy pipeline did not call. (The ordered manifest now applies
+0019 on every path, but the catalog's home has already moved.) Every environment therefore
+created the table from the Drizzle schema and
 left it empty, and the failure was silent: `/review-agents` simply reported that no agents were
 configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from the
 local `db:fresh` and `db:test:fresh` rebuilds, with `tests/unit/review-rules-wiring.test.ts`

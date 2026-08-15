@@ -29,7 +29,21 @@ bun run test:coverage      # Generate coverage report
 # E2E specific
 bun run test:e2e:ui        # E2E tests in UI mode
 bun run test:e2e:debug     # E2E tests in debug mode
+```
 
+### Environment for database-backed tests
+
+`test:e2e` runs `db:test:fresh` first, which drops the schema and then applies the whole
+ordered migration manifest. Copy `.env.test.example` to `.env.test` before the first run —
+three variables are required and the migration ones fail closed:
+
+- `TEST_DATABASE_URL` — psql drops and recreates the schema with this.
+- `MIGRATION_DATABASE_URL` — parsed before any client opens. The `localhost` alias is
+  rejected, so use the `127.0.0.1` literal.
+- `MIGRATION_SCHEMA_SYNC_CONFIRM` — must exactly equal that target's database name, or no
+  schema tool runs at all.
+
+```bash
 # Run every currently safe project (E2E stays separate until reset isolation lands)
 bun run test:all
 ```

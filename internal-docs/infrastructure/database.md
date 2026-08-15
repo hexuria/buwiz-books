@@ -20,12 +20,16 @@ bun db:studio
 ### Schema Changes
 
 ```bash
-bun db:push          # Push schema to local DB (no migration files)
 bun db:generate      # Generate migration from schema diff
-bun db:migrate       # Apply pending migration files
+bun db:migrate       # One ordered pass over the whole managed manifest
 ```
 
-> **`db:push` vs `db:generate + db:migrate`:** Use `db:push` during active development for speed. Use `db:generate` + `db:migrate` when you need version-controlled migration files.
+> **`db:migrate` is the only path that applies schema.** It owns the entire lifecycle — base
+> schema, pre-schema migrations, schema synchronization, post-schema migrations. Do not run
+> `drizzle-kit push` beside it: synchronization is a lifecycle step the engine owns, and
+> running it separately places it ahead of the pre-schema migrations that exist to keep it
+> non-interactive. `db:migrate` requires `MIGRATION_DATABASE_URL` and, because it
+> synchronizes, `MIGRATION_SCHEMA_SYNC_CONFIRM` set to the target database name.
 
 ### Reset
 

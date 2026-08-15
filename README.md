@@ -33,14 +33,21 @@ bun preview          # Preview production build locally
 ### Database
 
 ```bash
-bun fresh            # Reset database + seed superuser (clean slate)
-bun reset            # Drop all tables and re-push schema
-bun db:push          # Push schema changes (no migration files)
-bun db:generate      # Generate migration from schema diff
-bun db:migrate       # Apply pending migration files
-bun db:studio        # Open Drizzle Studio GUI
-bun seed             # Seed superuser account
+bun fresh                 # Reset + migrate + seed superuser (clean slate)
+bun reset                 # Drop all tables; leaves an empty schema, follow with db:migrate
+bun db:migrate            # One ordered pass: base schema, pre-schema, sync, post-schema
+bun db:migrations:status  # Report manifest state; non-zero exit if blocked or drifted
+bun db:migrations:verify  # Verify recorded migrations against the database
+bun db:generate           # Generate migration from schema diff
+bun db:studio             # Open Drizzle Studio GUI
+bun seed                  # Seed superuser account
 ```
+
+`db:migrate` is the only path that applies schema. It needs `MIGRATION_DATABASE_URL`, and
+because it also synchronizes the schema, `MIGRATION_SCHEMA_SYNC_CONFIRM` set to the target
+database name — see `.env.example`. Do not run `drizzle-kit push` beside it: synchronization
+is a lifecycle step the engine owns, and running it separately puts it ahead of the
+pre-schema migrations that exist to keep it non-interactive.
 
 **Review agents.** The rule catalog (`review_rule_definitions`) is a global table seeded from
 `src/lib/inbox/review-rule-catalog.ts`. It is wired into the local `db:fresh` and

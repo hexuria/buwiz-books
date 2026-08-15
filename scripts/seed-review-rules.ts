@@ -14,7 +14,7 @@
  * 0020 already changed `possible_duplicate`'s defaults, and re-asserting a TypeScript constant
  * over a reviewed migration would silently retune duplicate blocking for every tenant.
  *
- * Deliberately NOT folded into `db:dedup:migrate`: adding that to the deploy path would apply
+ * Deliberately NOT folded into the migration path: applying it there would apply
  * 0019-0024 to production for the first time — CHECK constraints, tenant-lineage FKs, pg_trgm —
  * a large unreviewed schema change on a live accounting database.
  *
