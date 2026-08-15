@@ -124,8 +124,8 @@ function fallbackEvidence(state: MigrationVerification["state"]): VerificationEv
  * by the time anyone reads the log, that leaves no way to tell a wrong
  * expectation from a wrong migration without another full run per guess.
  */
-function describeVerification(verification: MigrationVerification): string {
-  const failures = verification.evidence.filter((check) => check.status === "fail");
+function describeVerification(evidence: readonly VerificationEvidence[]): string {
+  const failures = evidence.filter((check) => check.status === "fail");
   if (failures.length === 0) {
     return "No individual check reported a failure, which itself indicates a verifier defect.";
   }
@@ -136,7 +136,7 @@ function describeVerification(verification: MigrationVerification): string {
         `${check.observed === undefined ? "" : `, observed ${check.observed}`})`,
     )
     .join("; ");
-  return `Failed ${failures.length} of ${verification.evidence.length} checks: ${detail}.`;
+  return `Failed ${failures.length} of ${evidence.length} checks: ${detail}.`;
 }
 
 export function createMigrationEngine(
@@ -461,9 +461,21 @@ export function createMigrationEngine(
       outcomes.push(outcome(migration, replannedState, verification));
     }
 
-    const changed = outcomes.find((entry) => entry.state === "blocked" || entry.state === "drift");
-    if (changed) {
-      throw new MigrationVerificationError(message, {
+    const changed = outcomes.filter(
+      (entry) => entry.state === "blocked" || entry.state === "drift",
+    );
+    if (changed.length > 0) {
+      // Naming the migration and the checks that moved it is the whole difference
+      // between a diagnosable rollback and another full CI run spent guessing.
+      const detail = changed
+        .map(
+          (entry) =>
+            `${entry.id} is ${entry.state} (was ${
+              frozen.find((item) => item.id === entry.id)?.state ?? "unknown"
+            }). ${describeVerification(entry.evidence)}`,
+        )
+        .join(" ");
+      throw new MigrationVerificationError(`${message} ${detail}`, {
         command: "apply",
         ok: false,
         outcomes,
@@ -496,7 +508,7 @@ export function createMigrationEngine(
             throw new Error(
               `${migration.id} changed before execution; the transaction was rolled back without running managed SQL. ` +
                 `Observed state ${preflight.state}${preflight.shape === undefined ? "" : ` (shape ${preflight.shape})`}. ` +
-                describeVerification(preflight),
+                describeVerification(preflight.evidence),
             );
           }
           if (
@@ -514,7 +526,7 @@ export function createMigrationEngine(
           throw new Error(
             `${migration.id} changed or failed verification during ${action}; the transaction was rolled back. ` +
               `Observed state ${current.state}${current.shape === undefined ? "" : ` (shape ${current.shape})`}. ` +
-              describeVerification(current),
+              describeVerification(current.evidence),
           );
         }
         await tx.record(migration);
