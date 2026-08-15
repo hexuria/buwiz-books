@@ -88,8 +88,12 @@ export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequ
     else through = value;
   }
 
-  if (command !== "apply" && phase !== "all") {
-    throw new Error("--phase is only valid with apply.");
+  // Both selectors are apply-only. Rejecting one and silently ignoring the other
+  // would let `status --through=0024` report the whole manifest while reading as
+  // though it had been bounded.
+  if (command !== "apply") {
+    if (phase !== "all") throw new Error("--phase is only valid with apply.");
+    if (through !== undefined) throw new Error("--through is only valid with apply.");
   }
   return { kind: "run", options: { command, phase, through, json } };
 }
@@ -166,7 +170,9 @@ function printReport(report: MigrationReport, json: boolean): void {
   for (const outcome of report.outcomes) {
     console.log(`${outcome.id} ${outcome.phase} ${outcome.state}`);
   }
-  console.log(`${report.command}: ${report.ok ? "ok" : "blocked"}`);
+  // "blocked" is one specific MigrationState; drift is another. Naming the summary
+  // after one of them mislabels the other, so summarize the report, not a state.
+  console.log(`${report.command}: ${report.ok ? "ok" : "not ok"}`);
 }
 
 export async function main(

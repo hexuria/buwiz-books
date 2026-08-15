@@ -10,7 +10,7 @@ this application document is authorized for production.
 ### Quick Setup
 
 ```bash
-# Full reset: drop all → push schema → seed superuser
+# Full reset: drop all → run the ordered migration manifest → seed superuser
 bun fresh
 
 # Start Drizzle Studio (visual DB browser)
@@ -34,8 +34,8 @@ bun db:migrate       # One ordered pass over the whole managed manifest
 ### Reset
 
 ```bash
-bun reset            # Drop all tables and re-push schema
-bun fresh            # reset + seed superuser (clean slate)
+bun reset            # Drop all tables; leaves an empty schema, follow with db:migrate
+bun fresh            # reset + db:migrate + seed superuser (clean slate)
 ```
 
 ### Seeders

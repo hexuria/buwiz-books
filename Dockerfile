@@ -75,6 +75,8 @@ COPY --from=build --chown=buwiz:buwiz /app/package.json ./package.json
 # all absent here, and drizzle-kit is a devDependency this stage never installs. Migration is
 # owned by the canonical deployment repository, which runs it as a separate privileged step.
 # Keeping the runner out of the serving revision is what keeps migration credentials out too.
+# The SQL and config below remain because the running server reads them for schema
+# introspection, not because anything here can apply them.
 COPY --from=build --chown=buwiz:buwiz /app/drizzle ./drizzle
 COPY --from=build --chown=buwiz:buwiz /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build --chown=buwiz:buwiz /app/src/db ./src/db

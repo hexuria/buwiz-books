@@ -83,6 +83,10 @@ describe("parseMigrationCliArgs", () => {
     [["apply", "--phase=sideways"], "Invalid --phase sideways"],
     [["apply", "--unknown"], "Unknown migration option --unknown"],
     [["status", "--phase=pre_schema"], "--phase is only valid with apply"],
+    // Both selectors are apply-only. Accepting one silently while rejecting the
+    // other would make a bounded-looking read command report the whole manifest.
+    [["status", "--through=0024"], "--through is only valid with apply"],
+    [["verify", "--through", "0024"], "--through is only valid with apply"],
   ])("rejects %j", (argv, message) => {
     expect(() => parseMigrationCliArgs(argv)).toThrow(message);
   });
@@ -136,6 +140,22 @@ describe("main", () => {
     await expect(main(["--help"], environment)).resolves.toBeUndefined();
 
     expect(runEntrypoint).not.toHaveBeenCalled();
+  });
+
+  it("forwards the bounded selection to the entrypoint", async () => {
+    runEntrypoint.mockResolvedValue(report(true, "apply"));
+
+    await main(
+      ["apply", "--phase=pre_schema", "--through=0027"],
+      environment,
+      async () => undefined,
+    );
+
+    expect(runEntrypoint.mock.calls[0]?.[0]).toMatchObject({
+      command: "apply",
+      phase: "pre_schema",
+      through: "0027",
+    });
   });
 
   it("passes no lifecycle hooks to a read-only command", async () => {

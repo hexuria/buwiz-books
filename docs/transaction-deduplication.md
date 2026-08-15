@@ -26,10 +26,12 @@ cross-currency amount. Related events are never automatically suppressed.
 ## Deployment
 
 `drizzle/meta/_journal.json` does not include the handwritten `0019` through
-`0024` migrations. `bun run db:migrate` therefore does **not** install this
-feature. The unattached canonical deployment repository must apply and verify
-the exact migration and RLS sequence under its migration-only identity. Do not
-invoke these application scripts against production.
+`0024` migrations, so `drizzle-kit` alone never runs them. The ordered migration
+manifest claims them instead, and `bun run db:migrate` **does** install this
+feature by applying and recording them in phase order. The unattached canonical
+deployment repository must still apply and verify the exact migration and RLS
+sequence under its migration-only identity. Do not invoke these application
+scripts against production.
 
 The migration command runs `0019_inbox_review_foundation.sql` through
 `0024_tenant_lineage_integrity.sql` in order. It records a SHA-256 checksum for each

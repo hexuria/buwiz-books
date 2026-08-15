@@ -62,7 +62,7 @@ async function reportStatus() {
   if (!(await catalogExists())) {
     console.log("❌ review_rule_definitions does not exist on this database.");
     console.log(
-      "   The table is in the Drizzle schema, so a `drizzle-kit push` has not run here.\n" +
+      "   The table is in the Drizzle schema, so `bun run db:migrate` has not run here.\n" +
         "   That is a schema problem, not a seeding problem — do not run the seeder to fix it.",
     );
     return;

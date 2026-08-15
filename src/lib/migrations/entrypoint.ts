@@ -59,16 +59,19 @@ function selectMigrations(
   return selected;
 }
 
-function lifecycleFor(
-  phase: MigrationApplyPhase,
-  hooks: MigrationLifecycleHooks | undefined,
-): MigrationLifecycleHooks {
+function requireHooks(hooks: MigrationLifecycleHooks | undefined): MigrationLifecycleHooks {
   if (!hooks) {
     invalid(
       "apply requires explicit prepareBaseSchema, synchronizeSchema, and finalizeSchema hooks",
     );
   }
+  return hooks;
+}
 
+function lifecycleFor(
+  phase: MigrationApplyPhase,
+  hooks: MigrationLifecycleHooks,
+): MigrationLifecycleHooks {
   if (phase === "all") return hooks;
 
   if (phase === "pre_schema") {
@@ -120,11 +123,9 @@ export async function runMigrationEntrypoint(
   if (options.command !== "apply" && phase !== "all") {
     invalid("phase selection is only valid for apply");
   }
-  if (options.command === "apply" && options.hooks === undefined) {
-    invalid(
-      "apply requires explicit prepareBaseSchema, synchronizeSchema, and finalizeSchema hooks",
-    );
-  }
+  // Checked here so a missing-hooks mistake fails before any client is created,
+  // and again at the call site purely to narrow the type. One guard, one message.
+  if (options.command === "apply") requireHooks(options.hooks);
 
   const loadMigrations = dependencies.loadMigrations ?? (() => loadPreparedMigrations());
   const createTarget = dependencies.createTarget ?? createMigrationDatabaseTarget;
@@ -141,7 +142,7 @@ export async function runMigrationEntrypoint(
     const engine = createMigrationEngine(migrations, adapter);
     if (options.command === "status") return await engine.status();
     if (options.command === "verify") return await engine.verify();
-    return await engine.apply(lifecycleFor(phase, options.hooks));
+    return await engine.apply(lifecycleFor(phase, requireHooks(options.hooks)));
   } finally {
     await adapter.close();
   }

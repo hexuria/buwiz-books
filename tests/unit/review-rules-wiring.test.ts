@@ -42,7 +42,7 @@ describe("review-rule catalog wiring", () => {
     );
 
     it("seeds after the schema exists", () => {
-      // The table is created by the reset/push step; seeding before it would fail loudly, but
+      // The table is created by the reset/migrate step; seeding before it would fail loudly, but
       // ordering it explicitly keeps the intent readable.
       const fresh = pkg.scripts["db:fresh"];
       expect(fresh.indexOf("db:reset")).toBeLessThan(fresh.indexOf("db:seed:review-rules"));
