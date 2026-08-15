@@ -11,7 +11,10 @@ import {
   withContext,
 } from "./fixtures";
 
-function complete0027(vectorAvailable: boolean) {
+function complete0027(
+  vectorAvailable: boolean,
+  trigramOperatorClass: string | null = "gin_trgm_ops",
+) {
   const snapshot = createEmptyCatalogSnapshot();
   addRelation(snapshot, "vendor_aliases", [
     column("id", "uuid", true, "gen_random_uuid()", 1),
@@ -34,9 +37,21 @@ function complete0027(vectorAvailable: boolean) {
     snapshot,
     "vendor_aliases_descriptor_trgm_idx",
     "vendor_aliases",
-    ["normalized_descriptor gin_trgm_ops"],
+    // PostgreSQL's per-column pg_get_indexdef reports the expression only and
+    // never the operator class, pretty-printed or not. The fixture previously
+    // claimed otherwise, which is why an expectation that could never match a
+    // real database passed here for as long as it did.
+    ["normalized_descriptor"],
     { accessMethod: "gin" },
   );
+  const trigramIndex = snapshot.indexes.get("vendor_aliases_descriptor_trgm_idx");
+  if (trigramIndex) {
+    // The operator class survives only in the full definition, so the fixture
+    // carries a real one rather than the generic stub.
+    trigramIndex.definition = trigramOperatorClass
+      ? `CREATE INDEX vendor_aliases_descriptor_trgm_idx ON public.vendor_aliases USING gin (normalized_descriptor ${trigramOperatorClass})`
+      : "CREATE INDEX vendor_aliases_descriptor_trgm_idx ON public.vendor_aliases USING gin (normalized_descriptor)";
+  }
   snapshot.extensions.add("pg_trgm");
   if (vectorAvailable) snapshot.extensions.add("vector");
   return snapshot;
@@ -104,6 +119,27 @@ describe("migration verifier 0027", () => {
     expect(
       (await verifier0027.verify(queryFor(snapshot, { vector_available: false }), context)).state,
     ).toBe("partial");
+  });
+
+  it("rejects a gin index that drops the trigram operator class", async () => {
+    // Every other check passes for this snapshot: same name, same table, same
+    // column, gin access method. Only the operator class differs, and without it
+    // the index cannot serve the similarity matching 0027 exists to enable.
+    const result = await verifier0027.verify(
+      queryFor(complete0027(false, null), { vector_available: false }),
+      context,
+    );
+
+    expect(result.state).toBe("partial");
+    expect(result.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: "index:vendor_aliases_descriptor_trgm_idx:operator-class",
+          status: "fail",
+          expected: "gin_trgm_ops",
+        }),
+      ]),
+    );
   });
 
   it("requires the migration principal to own its relation", async () => {

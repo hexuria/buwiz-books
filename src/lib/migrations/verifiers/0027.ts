@@ -1,7 +1,7 @@
 import { readCatalogSnapshot, verifyCatalog, type CatalogExpectation } from "./catalog";
 import { column, createdAt, exactTable, idColumn, index, primaryKey } from "./expectations";
 import { verifyMigrationSecurity } from "./security";
-import { classifyVerification, type MigrationVerifier } from "./types";
+import { classifyVerification, evidence, type MigrationVerifier } from "./types";
 
 function expectation0027(vectorAvailable: boolean): CatalogExpectation {
   return {
@@ -23,12 +23,15 @@ function expectation0027(vectorAvailable: boolean): CatalogExpectation {
         ["organization_id", "normalized_descriptor"],
         { unique: true },
       ),
-      index(
-        "vendor_aliases_descriptor_trgm_idx",
-        "vendor_aliases",
-        ["normalized_descriptor gin_trgm_ops"],
-        { accessMethod: "gin" },
-      ),
+      // Key expressions come from the per-column form of pg_get_indexdef, which
+      // reports only the expression and never the operator class -- with or
+      // without pretty-printing. Asking for "normalized_descriptor gin_trgm_ops"
+      // here can never match anything. The operator class is what makes this
+      // index worth having, so it is asserted separately against the full
+      // definition below rather than dropped.
+      index("vendor_aliases_descriptor_trgm_idx", "vendor_aliases", ["normalized_descriptor"], {
+        accessMethod: "gin",
+      }),
     ],
     constraints: [primaryKey("vendor_aliases", ["id"])],
     extensions: ["pg_trgm", ...(vectorAvailable ? ["vector"] : [])],
@@ -48,6 +51,21 @@ export const verifier0027: MigrationVerifier = {
     const catalogChecks = verifyCatalog(snapshot, expected);
     if (!footprint) return classifyVerification(false, catalogChecks, "0027");
     const securityChecks = await verifyMigrationSecurity(query, snapshot, ["vendor_aliases"]);
-    return classifyVerification(true, [...catalogChecks, ...securityChecks], "0027");
+    // Trigram search is the entire purpose of this index; a gin index on the same
+    // column with the default operator class would satisfy every check above and
+    // be useless for the matching this migration exists to enable.
+    const trigramDefinition =
+      snapshot.indexes.get("vendor_aliases_descriptor_trgm_idx")?.definition ?? "";
+    const trigramOperatorClass = evidence(
+      "index:vendor_aliases_descriptor_trgm_idx:operator-class",
+      /\bgin_trgm_ops\b/.test(trigramDefinition),
+      "gin_trgm_ops",
+      trigramDefinition || "missing",
+    );
+    return classifyVerification(
+      true,
+      [...catalogChecks, ...securityChecks, trigramOperatorClass],
+      "0027",
+    );
   },
 };
