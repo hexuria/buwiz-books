@@ -896,7 +896,17 @@ export function createPostgresMigrationAdapter(
     async transaction<T>(operation: (tx: MigrationTransaction) => Promise<T>): Promise<T> {
       const reserved = requireLock();
       let historyTableCreated = false;
-      const result = await reserved.begin(async (transaction) => {
+      // Transaction control is issued as explicit statements on the reserved
+      // connection rather than through `reserve().begin()`. postgres-js declares
+      // `ReservedSql extends Sql`, so `.begin` typechecks, but `reserve()` returns a
+      // bare tagged template from the internal Sql factory and `begin` is only ever
+      // attached to the root client; calling it fails at runtime with
+      // "reserved.begin is not a function". Delegating to the root client instead
+      // would be worse than the crash: it draws a different pooled connection,
+      // abandoning the session that holds the advisory lock and the pinned
+      // search_path, and the migration would then execute unprotected.
+      const transaction = reserved;
+      const runOperation = async (): Promise<T> => {
         const tx: MigrationTransaction = {
           verifyHistoricalState(migration, context) {
             return verify(transaction, migration, context);
@@ -939,9 +949,27 @@ export function createPostgresMigrationAdapter(
           },
         };
         return operation(tx);
-      });
+      };
+
+      await reserved`BEGIN`;
+      let result: T;
+      try {
+        result = await runOperation();
+        await reserved`COMMIT`;
+      } catch (error) {
+        // A rollback that fails must not replace the failure that caused it.
+        try {
+          await reserved`ROLLBACK`;
+        } catch {
+          // The original error is the one worth reporting.
+        }
+        throw error;
+      }
+      // Only a committed CREATE TABLE is visible to later operations, so the cache
+      // is updated after COMMIT returns -- never on the rollback or commit-failure
+      // path, where the table does not exist despite having been issued.
       if (historyTableCreated) historyTableExists = true;
-      return result as Promise<T>;
+      return result;
     },
 
     async close() {

@@ -231,6 +231,20 @@ function historyAdapterHarness(
   const reserved = Object.assign(
     vi.fn(async (parts: TemplateStringsArray) => {
       const statement = parts.join("");
+      // A reserved postgres-js connection has no `.begin`; the adapter issues
+      // transaction control as statements on this same session, so the fake must
+      // answer them here rather than through a callback that production never has.
+      const boundary = statement.trim().toUpperCase();
+      if (boundary === "BEGIN" || boundary === "COMMIT" || boundary === "ROLLBACK") return [];
+      if (statement.includes("INSERT INTO public.app_manual_migrations")) {
+        return [
+          {
+            migrationName: managedMigration.file,
+            checksum: managedMigration.checksum,
+            appliedAt: new Date(0),
+          },
+        ];
+      }
       if (statement.includes("migration history relation contract")) {
         return catalogState === null ? [] : [catalogState];
       }
@@ -247,7 +261,7 @@ function historyAdapterHarness(
     }),
     {
       release,
-      begin: vi.fn(async (operation) => operation(transaction)),
+      unsafe: transaction.unsafe,
     },
   );
   const client = Object.assign(vi.fn(), {
@@ -338,21 +352,40 @@ function adapterHarness(states: {
     },
   );
   const { client, reserved } = fakeClient();
-  reserved.begin.mockImplementation(async (operation) => {
-    transactionBoundaryEvents.push("begin");
-    try {
-      const result = await operation(transaction);
+  // The adapter runs its transaction on the reserved session itself, so this fake
+  // dispatches on transaction control instead of mocking a `begin` callback that
+  // postgres-js never provides. Tracking whether a transaction is open is what
+  // keeps transaction-scoped statements recorded in `events`, as they were when a
+  // separate transaction object existed.
+  const baseReserved = reserved.getMockImplementation();
+  if (!baseReserved) throw new Error("fakeClient must provide a reserved implementation.");
+  let inTransaction = false;
+  reserved.mockImplementation((async (parts: TemplateStringsArray, ...values: unknown[]) => {
+    const boundary = parts.join("").trim().toUpperCase();
+    if (boundary === "BEGIN") {
+      inTransaction = true;
+      transactionBoundaryEvents.push("begin");
+      return [];
+    }
+    if (boundary === "COMMIT") {
       if (states.commitFailsOnce && !commitFailed) {
         commitFailed = true;
         throw new Error("commit failed");
       }
+      inTransaction = false;
       transactionBoundaryEvents.push("commit");
-      return result;
-    } catch (error) {
-      transactionBoundaryEvents.push("rollback");
-      throw error;
+      return [];
     }
-  });
+    if (boundary === "ROLLBACK") {
+      inTransaction = false;
+      transactionBoundaryEvents.push("rollback");
+      return [];
+    }
+    return inTransaction
+      ? transaction(parts, ...(values as []))
+      : baseReserved(parts, ...(values as []));
+  }) as never);
+  reserved.unsafe = transaction.unsafe as never;
   const adapter = createPostgresMigrationAdapter({
     target: migrationTarget(),
     createClient: () => client as never,
@@ -388,7 +421,9 @@ function fakeClient(options: { unlockFails?: boolean; unlockReturnsFalse?: boole
     }),
     {
       release,
-      begin: vi.fn(),
+      // Deliberately no `begin`: postgres-js does not put one on a reserved
+      // connection, and mocking one is what let a runtime crash ship green.
+      unsafe: vi.fn(async () => []),
     },
   );
   const client = Object.assign(vi.fn(), {
