@@ -42,10 +42,18 @@ export const verifier0027: MigrationVerifier = {
   id: "0027",
   async verify(query, _context) {
     const snapshot = await readCatalogSnapshot(query);
-    const footprint =
-      snapshot.relations.has("vendor_aliases") ||
-      snapshot.indexes.has("vendor_aliases_org_descriptor_unique") ||
-      snapshot.indexes.has("vendor_aliases_descriptor_trgm_idx");
+    // Footprint means "this migration's SQL has run", so it is drawn only from
+    // objects this migration alone can produce. `vendor_aliases` and its unique
+    // index both exist in src/db/schema/ai.ts, so `drizzle-kit push` creates them
+    // on any synchronized database; counting them as footprint made a pushed but
+    // unmigrated database look like a half-applied 0027, which the engine reports
+    // as partial and refuses to execute or adopt.
+    //
+    // The trigram index appears in no Drizzle schema file and is named for this
+    // migration, so only 0027 can have created it. pg_trgm deliberately does not
+    // count: it is a shared extension any migration or operator may install, and
+    // its presence says nothing about whether this migration ran.
+    const footprint = snapshot.indexes.has("vendor_aliases_descriptor_trgm_idx");
     const vectorInstalled = snapshot.extensions.has("vector");
     const expected = expectation0027(vectorInstalled);
     const catalogChecks = verifyCatalog(snapshot, expected);

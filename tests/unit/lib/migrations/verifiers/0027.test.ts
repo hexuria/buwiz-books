@@ -67,10 +67,21 @@ describe("migration verifier 0027", () => {
       "complete",
     );
 
+    // A database synchronized from src/db/schema/ai.ts has vendor_aliases and its
+    // unique index but neither the extension nor the trigram index, because those
+    // exist in no schema file. That is not a half-applied 0027, it is a database
+    // 0027 has never run on, and it must stay executable: reporting it as partial
+    // is what made the engine refuse to either execute or adopt it.
     const schemaStyle = complete0027(false);
     schemaStyle.indexes.delete("vendor_aliases_descriptor_trgm_idx");
     schemaStyle.extensions.delete("pg_trgm");
-    expect((await verifier0027.verify(queryFor(schemaStyle), preExecution)).state).toBe("partial");
+    expect((await verifier0027.verify(queryFor(schemaStyle), preExecution)).state).toBe("absent");
+
+    // A genuinely half-applied 0027 still reports partial: the trigram index it
+    // alone creates is present, but the extension that index depends on is gone.
+    const halfApplied = complete0027(false);
+    halfApplied.extensions.delete("pg_trgm");
+    expect((await verifier0027.verify(queryFor(halfApplied), preExecution)).state).toBe("partial");
   });
 
   it("treats pg_trgm without vendor aliases as no 0027 footprint", async () => {
@@ -143,8 +154,9 @@ describe("migration verifier 0027", () => {
   });
 
   it("requires the migration principal to own its relation", async () => {
-    const snapshot = createEmptyCatalogSnapshot();
-    addRelation(snapshot, "vendor_aliases", []);
+    // The trigram index is what marks 0027 as having run, so it has to be present
+    // for the verifier to get as far as the ownership checks at all.
+    const snapshot = complete0027(false);
     snapshot.relations.get("vendor_aliases")!.owner = "unexpected_owner";
 
     const result = await verifier0027.verify(
