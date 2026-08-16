@@ -828,3 +828,67 @@ describe("identifiers PostgreSQL cannot store verbatim", () => {
     );
   });
 });
+
+describe("primary keys resolved by table rather than name", () => {
+  function tableWithPrimaryKey(constraintName: string): CatalogSnapshot {
+    const snapshot = createEmptyCatalogSnapshot();
+    snapshot.constraints.set(`organization_daily_account_activity.${constraintName}`, {
+      name: constraintName,
+      tableName: "organization_daily_account_activity",
+      type: "primary_key",
+      columns: ["organization_id", "activity_date", "account_id"],
+      referencedSchema: null,
+      referencedTable: null,
+      referencedColumns: [],
+      matchType: null,
+      onUpdate: null,
+      onDelete: null,
+      deferrable: false,
+      initiallyDeferred: false,
+      validated: true,
+      definition: "PRIMARY KEY (organization_id, activity_date, account_id)",
+    });
+    return snapshot;
+  }
+
+  const expectation: CatalogExpectation = {
+    constraints: [
+      {
+        tableName: "organization_daily_account_activity",
+        name: "organization_daily_account_activity_pkey",
+        type: "primary_key",
+        columns: ["organization_id", "activity_date", "account_id"],
+      },
+    ],
+  };
+
+  it.each([
+    ["the name the immutable SQL produces", "organization_daily_account_activity_pkey"],
+    [
+      "the name a Drizzle primaryKey({ columns }) produces",
+      "organization_daily_account_activity_organization_id_activity_date_account_id_pk",
+    ],
+  ])("accepts %s", (_label, storedName) => {
+    const checks = verifyCatalog(tableWithPrimaryKey(storedName), expectation);
+    expect(checks.filter((check) => check.status === "fail")).toEqual([]);
+  });
+
+  it("still reports a table with no primary key at all", () => {
+    const checks = verifyCatalog(createEmptyCatalogSnapshot(), expectation);
+    expect(checks).toEqual(expect.arrayContaining([expect.objectContaining({ status: "fail" })]));
+  });
+
+  it("does not let the fallback rescue a non-primary-key constraint", () => {
+    // The fallback is scoped to primary keys, where a table has at most one.
+    const checks = verifyCatalog(tableWithPrimaryKey("some_other_pkey"), {
+      constraints: [
+        {
+          tableName: "organization_daily_account_activity",
+          name: "organization_daily_account_activity_org_fk",
+          type: "foreign_key",
+        },
+      ],
+    });
+    expect(checks).toEqual(expect.arrayContaining([expect.objectContaining({ status: "fail" })]));
+  });
+});
