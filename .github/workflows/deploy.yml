@@ -118,7 +118,13 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c '
             ALTER TABLE IF EXISTS organization_group_entities
               ADD COLUMN IF NOT EXISTS parent_entity_id uuid;'
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/0028_enterprise_business_groups.sql
+          # --single-transaction because 0034 takes a LOCK TABLE, which PostgreSQL
+          # refuses outside a transaction block. The runner this replaced wrapped
+          # each file in client.begin() for the same reason. None of 0028-0036
+          # contains its own BEGIN/COMMIT or a CONCURRENTLY index, so a single
+          # enclosing transaction is safe for all of them.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction \
+            -f drizzle/0028_enterprise_business_groups.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c '
             ALTER TABLE IF EXISTS organization_group_entities
               DROP CONSTRAINT IF EXISTS organization_group_entities_account_group_fk;
@@ -135,7 +141,7 @@ jobs:
                       0034_business_group_admin_guards \
                       0035_enterprise_stripe_billing \
                       0036_enterprise_checkout; do
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "drizzle/${file}.sql"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "drizzle/${file}.sql"
           done
 
       - name: Apply RLS policies to test DB
