@@ -139,6 +139,19 @@ function describeVerification(evidence: readonly VerificationEvidence[]): string
   return `Failed ${failures.length} of ${evidence.length} checks: ${detail}.`;
 }
 
+/**
+ * Every path that refuses to proceed names the migrations responsible and the
+ * checks that made them so. Three separate CI rounds were spent on aborts that
+ * reported only that something was wrong, each time at a different throw site,
+ * so this is applied at all of them rather than the one that happened to fire.
+ */
+function describeOutcomes(outcomes: readonly MigrationOutcome[]): string {
+  if (outcomes.length === 0) return "";
+  return outcomes
+    .map((entry) => `${entry.id} is ${entry.state}. ${describeVerification(entry.evidence)}`)
+    .join(" ");
+}
+
 export function createMigrationEngine(
   migrations: readonly PreparedMigration[],
   adapter: MigrationEngineAdapter,
@@ -374,7 +387,9 @@ export function createMigrationEngine(
     };
     if (!report.ok) {
       throw new MigrationVerificationError(
-        "Managed migrations are not fully recorded and verified.",
+        `Managed migrations are not fully recorded and verified. ${describeOutcomes(
+          outcomes.filter((entry) => entry.state !== "applied"),
+        )}`,
         report,
       );
     }
@@ -412,9 +427,9 @@ export function createMigrationEngine(
         outcome(migration, verification.state === "complete" ? "applied" : "blocked", verification),
       );
     }
-    const blocked = outcomes.find((entry) => entry.state !== "applied");
-    if (blocked) {
-      throw new MigrationVerificationError(message, {
+    const blocked = outcomes.filter((entry) => entry.state !== "applied");
+    if (blocked.length > 0) {
+      throw new MigrationVerificationError(`${message} ${describeOutcomes(blocked)}`, {
         command: "apply",
         ok: false,
         outcomes,
@@ -545,10 +560,14 @@ export function createMigrationEngine(
 
   async function applyLocked(hooks: MigrationLifecycleHooks): Promise<MigrationReport> {
     const initial = await inspect(discoveryContext);
-    const blocking = initial.find((entry) => entry.state === "blocked" || entry.state === "drift");
-    if (blocking) {
+    const blocking = initial.filter(
+      (entry) => entry.state === "blocked" || entry.state === "drift",
+    );
+    if (blocking.length > 0) {
       throw new MigrationVerificationError(
-        `Migration ${blocking.id} is blocked; no managed migration was changed.`,
+        `Migration ${blocking[0]!.id} is blocked; no managed migration was changed. ${describeOutcomes(
+          blocking,
+        )}`,
         { command: "apply", ok: false, outcomes: initial },
       );
     }
