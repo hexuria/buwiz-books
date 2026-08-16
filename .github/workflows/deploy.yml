@@ -76,27 +76,17 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
-      # One ordered pass owns the whole lifecycle: base schema, pre-schema migrations,
-      # schema synchronization, post-schema migrations, finalize. A standalone
-      # `drizzle-kit push` here would run the synchronization twice and place it before
-      # the pre-schema migrations that exist to keep push non-interactive.
       # This job builds its database from the Drizzle schema, which is what the
       # integration tests need and what CI has always done. It deliberately does
-      # not run the managed migration lifecycle: the verifiers describe the shape
-      # a migration-built database has, and a pushed one genuinely differs --
-      # columns arrive in declaration order rather than ALTER order, and at least
-      # one nullability constraint differs between the two. Enforcing migration
-      # invariants here would mean weakening them until a pushed database passed.
-      # The lifecycle belongs to real databases, owned by the deployment repo.
+      # not gate on the managed migration lifecycle: the verifiers describe the
+      # shape a migration-built database has, and a pushed one differs -- columns
+      # arrive in declaration order rather than the order ALTER statements
+      # appended them, and default expressions render as typed literals.
+      # Enforcing migration invariants here would mean weakening them until a
+      # pushed database passed. The lifecycle gates real databases instead.
       - name: Push schema to test DB
         run: bun x drizzle-kit push --force
 
-      # 0028-0036 create guards, functions and triggers that exist in no Drizzle
-      # schema file, so push cannot produce them and the Business Group suites
-      # fail without them -- they assert that the database *rejects* invalid
-      # operations, and an absent guard rejects nothing. The workflow this
-      # replaced applied exactly this range. The adapter's 0028/0029
-      # compatibility preparation is what lets them land on a pushed schema.
       # Applied as plain SQL, deliberately, not through the managed lifecycle.
       #
       # The engine verifies what it applies, and its verifiers describe a
@@ -109,9 +99,14 @@ jobs:
       #
       # What this job actually needs is the guards to exist -- the Business Group
       # suites assert the database rejects invalid writes, and an absent trigger
-      # rejects nothing. The two compatibility statements mirror the adapter's
-      # prepare0028/prepare0029: give 0028 the historical parent column it expects,
-      # and stand the 0029 objects down so its immutable SQL can recreate them.
+      # rejects nothing.
+      #
+      # The two compatibility statements are deliberately NARROWER than the
+      # adapter's prepare0028/prepare0029, not a copy of them. Those inspect
+      # catalog state and refuse on anything ambiguous or partial; these are
+      # unconditional IF EXISTS DDL that no-ops on an unexpected shape. That is
+      # acceptable only because this database is disposable and rebuilt from
+      # scratch every run. Never reuse this block against a real database.
       - name: Apply Enterprise migrations to test DB
         run: |
           set -euo pipefail

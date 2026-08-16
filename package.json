@@ -27,7 +27,6 @@
     "db:migrations:verify": "bun run scripts/migrate.ts verify",
     "db:migrations:pre-schema": "bun run scripts/migrate.ts apply --phase=pre_schema",
     "db:migrations:post-schema": "bun run scripts/migrate.ts apply --phase=post_schema",
-    "db:enterprise:migrate": "bun run scripts/migrate.ts apply --from=0028 --through=0036",
     "business-groups:entitlement": "bun run scripts/business-group-entitlement.ts",
     "business-groups:projection": "bun run scripts/business-group-projection.ts",
     "db:dedup:validate": "bun run scripts/validate-dedup-constraints.ts",
