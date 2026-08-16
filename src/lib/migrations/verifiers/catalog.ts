@@ -386,7 +386,7 @@ constraint_rows AS (
     constraint_row.condeferrable AS deferrable,
     constraint_row.condeferred AS "initiallyDeferred",
     constraint_row.convalidated AS validated,
-    pg_get_constraintdef(constraint_row.oid, true) AS definition
+    pg_get_constraintdef(constraint_row.oid) AS definition
   FROM pg_constraint AS constraint_row
   INNER JOIN pg_class AS table_row ON table_row.oid = constraint_row.conrelid
   INNER JOIN pg_namespace AS namespace ON namespace.oid = table_row.relnamespace
@@ -725,6 +725,27 @@ export function normalizedSqlWhitespace(value: string): string {
   return normalizeWithProtectedSqlSegments(value, (masked) => masked.trim().replace(/\s+/g, " "));
 }
 
+/**
+ * PostgreSQL truncates every identifier to NAMEDATALEN-1 = 63 bytes as it creates
+ * the object, and warns while doing it ("identifier ... will be truncated to
+ * ..."). Catalogs therefore only ever report the truncated name, while Drizzle's
+ * naming convention produces foreign keys well past that -- 74 characters for
+ * `enterprise_account_members_enterprise_account_id_enterprise_accounts_id_fk`.
+ * Looking those up verbatim reports a constraint absent that is demonstrably
+ * present, which is what blocked migration 0028.
+ *
+ * Truncation is by byte, not character, because that is what NAMEDATALEN counts;
+ * a multi-byte character straddling the limit is dropped whole rather than split
+ * into invalid UTF-8.
+ */
+export function truncatePgIdentifier(name: string): string {
+  const bytes = Buffer.from(name, "utf8");
+  if (bytes.length <= 63) return name;
+  return new TextDecoder("utf8", { fatal: false })
+    .decode(bytes.subarray(0, 63))
+    .replace(/�+$/u, "");
+}
+
 function normalizeWhitespace(value: string): string {
   return normalizeWithProtectedSqlSegments(value, (masked) =>
     masked
@@ -919,7 +940,7 @@ export function verifyCatalog(
   }
 
   for (const index of expected.indexes ?? []) {
-    const actual = snapshot.indexes.get(index.name);
+    const actual = snapshot.indexes.get(truncatePgIdentifier(index.name));
     checks.push(presence(`index:${index.name}`, true, actual !== undefined));
     if (!actual) continue;
     checks.push(
@@ -945,7 +966,9 @@ export function verifyCatalog(
 
   for (const constraint of expected.constraints ?? []) {
     const identity = `${constraint.tableName}.${constraint.name}`;
-    const actual = snapshot.constraints.get(identity);
+    const actual = snapshot.constraints.get(
+      `${constraint.tableName}.${truncatePgIdentifier(constraint.name)}`,
+    );
     checks.push(presence(`constraint:${identity}`, true, actual !== undefined));
     if (!actual) continue;
     checks.push(

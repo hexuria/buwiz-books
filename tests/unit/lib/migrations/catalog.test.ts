@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   catalogHasAnyFootprint,
+  truncatePgIdentifier,
   createEmptyCatalogSnapshot,
   readCatalogSnapshot,
   verifyCatalog,
@@ -761,5 +762,69 @@ describe("PostgreSQL catalog verifier", () => {
         roles: [{ name: "other_worker", ...forbiddenRole }],
       }),
     }).toEqual({ matchingForbiddenRole: true, wrongName: false });
+  });
+});
+
+describe("identifiers PostgreSQL cannot store verbatim", () => {
+  const LONG_FK = "enterprise_account_members_enterprise_account_id_enterprise_accounts_id_fk";
+
+  it("truncates to 63 bytes the way NAMEDATALEN does", () => {
+    expect(LONG_FK.length).toBe(74);
+    expect(truncatePgIdentifier(LONG_FK)).toHaveLength(63);
+    expect(truncatePgIdentifier("short_name")).toBe("short_name");
+    // Byte-counted, not character-counted, and never split into invalid UTF-8.
+    const multibyte = "é".repeat(40);
+    expect(Buffer.from(truncatePgIdentifier(multibyte), "utf8").length).toBeLessThanOrEqual(63);
+  });
+
+  it("finds a constraint the catalog stored under its truncated name", () => {
+    const snapshot = createEmptyCatalogSnapshot();
+    const truncated = truncatePgIdentifier(LONG_FK);
+    snapshot.constraints.set(`enterprise_account_members.${truncated}`, {
+      name: truncated,
+      tableName: "enterprise_account_members",
+      type: "foreign_key",
+      columns: ["enterprise_account_id"],
+      referencedSchema: "public",
+      referencedTable: "enterprise_accounts",
+      referencedColumns: ["id"],
+      matchType: "simple",
+      onUpdate: "no_action",
+      onDelete: "cascade",
+      deferrable: false,
+      initiallyDeferred: false,
+      validated: true,
+      definition: "FOREIGN KEY (enterprise_account_id) REFERENCES enterprise_accounts(id)",
+    });
+
+    // The expectation carries the full 74-character name, as every verifier does.
+    const checks = verifyCatalog(snapshot, {
+      constraints: [
+        {
+          tableName: "enterprise_account_members",
+          name: LONG_FK,
+          type: "foreign_key",
+        },
+      ],
+    });
+
+    expect(checks.filter((check) => check.status === "fail")).toEqual([]);
+  });
+
+  it("still reports a genuinely absent constraint as absent", () => {
+    const checks = verifyCatalog(createEmptyCatalogSnapshot(), {
+      constraints: [
+        { tableName: "enterprise_account_members", name: LONG_FK, type: "foreign_key" },
+      ],
+    });
+
+    expect(checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: `constraint:enterprise_account_members.${LONG_FK}`,
+          status: "fail",
+        }),
+      ]),
+    );
   });
 });
