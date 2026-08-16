@@ -232,10 +232,12 @@ const relations0019: RelationExpectation[] = [
   {
     name: "journal_headers",
     columns: [
-      // Nullable, because no migration ever made it otherwise: 0000 creates it
-      // without NOT NULL and 0019 only widens its type, which does not change
-      // nullability. Asserting NOT NULL here described no database, migrated or
-      // pushed.
+      // Nullable, because nothing ever made it otherwise. No numbered migration
+      // creates total_amount at all -- it appears nowhere under drizzle/ except
+      // 0019's ALTER COLUMN ... TYPE, which does not touch nullability -- so the
+      // column exists only because src/db/schema/journals.ts declares it, and
+      // that declaration carries no .notNull(). Asserting NOT NULL here described
+      // no database, migrated or pushed.
       column("total_amount", "numeric(20,8)", false),
       column("functional_currency", "character varying(3)", true, "'USD'::character varying"),
       column("transaction_currency", "character varying(3)", false),
@@ -245,7 +247,8 @@ const relations0019: RelationExpectation[] = [
   {
     name: "journal_lines",
     columns: [
-      // Same as total_amount: created nullable in 0000, only retyped by 0019.
+      // These two, unlike total_amount, really are created by 0000 -- as plain
+      // numeric(15,2) with no NOT NULL -- and 0019 only retypes them.
       column("debit", "numeric(20,8)", false),
       column("credit", "numeric(20,8)", false),
       column("original_debit", "numeric(20,8)", false),
