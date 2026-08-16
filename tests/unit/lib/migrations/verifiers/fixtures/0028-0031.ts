@@ -333,7 +333,7 @@ function addSchema0028(snapshot: CatalogSnapshot) {
     snapshot,
     "organization_groups",
     "organization_groups_name_check",
-    "CHECK ((((name)::text = btrim((name)::text)) AND (char_length((name)::text) >= 2) AND (char_length((name)::text) <= 255)))",
+    "CHECK ((((name)::text = btrim((name)::text)) AND ((char_length((name)::text) >= 2) AND (char_length((name)::text) <= 255))))",
   );
   addCheck(
     snapshot,
