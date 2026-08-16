@@ -232,7 +232,11 @@ const relations0019: RelationExpectation[] = [
   {
     name: "journal_headers",
     columns: [
-      column("total_amount", "numeric(20,8)", true),
+      // Nullable, because no migration ever made it otherwise: 0000 creates it
+      // without NOT NULL and 0019 only widens its type, which does not change
+      // nullability. Asserting NOT NULL here described no database, migrated or
+      // pushed.
+      column("total_amount", "numeric(20,8)", false),
       column("functional_currency", "character varying(3)", true, "'USD'::character varying"),
       column("transaction_currency", "character varying(3)", false),
       column("exchange_rate_id", "uuid", false),
@@ -241,8 +245,9 @@ const relations0019: RelationExpectation[] = [
   {
     name: "journal_lines",
     columns: [
-      column("debit", "numeric(20,8)", true),
-      column("credit", "numeric(20,8)", true),
+      // Same as total_amount: created nullable in 0000, only retyped by 0019.
+      column("debit", "numeric(20,8)", false),
+      column("credit", "numeric(20,8)", false),
       column("original_debit", "numeric(20,8)", false),
       column("original_credit", "numeric(20,8)", false),
       column("original_currency", "character varying(3)", false),
