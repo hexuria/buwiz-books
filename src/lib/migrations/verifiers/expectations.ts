@@ -112,10 +112,17 @@ export function foreignKey(
 }
 
 export function check(tableName: string, name: string, definition: string): ConstraintExpectation {
-  return constraint(tableName, name, "check", [], {
+  // Columns are deliberately left undefined rather than empty. pg_constraint
+  // records the columns a CHECK references, so asserting `[]` claimed every check
+  // constraint touches no column and failed against every real database -- and
+  // the definition, which is compared, already pins which columns are involved.
+  // compareDefined skips undefined fields, so omitting it drops the check rather
+  // than asserting a wrong value.
+  const expectation = constraint(tableName, name, "check", [], {
     definition,
     validated: true,
   });
+  return { ...expectation, columns: undefined };
 }
 
 /**

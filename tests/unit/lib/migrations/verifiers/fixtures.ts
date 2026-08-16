@@ -1,5 +1,9 @@
 import type { VerificationContext } from "@/lib/migrations/engine";
-import { type CatalogSnapshot, type ColumnRow } from "@/lib/migrations/verifiers/catalog";
+import {
+  truncatePgIdentifier,
+  type CatalogSnapshot,
+  type ColumnRow,
+} from "@/lib/migrations/verifiers/catalog";
 import type { VerificationQuery } from "@/lib/migrations/verifiers/types";
 
 export const context: VerificationContext = {
@@ -100,7 +104,9 @@ export function addIndex(
     predicate?: string | null;
   } = {},
 ): void {
-  snapshot.indexes.set(name, {
+  // PostgreSQL truncates as it creates, so a fixture must not be able to hold a
+  // name the database could never have stored.
+  snapshot.indexes.set(truncatePgIdentifier(name), {
     name,
     tableName,
     unique: options.unique ?? false,
@@ -152,7 +158,7 @@ export function addForeignKey(
     initiallyDeferred?: boolean;
   } = {},
 ): void {
-  snapshot.constraints.set(`${tableName}.${name}`, {
+  snapshot.constraints.set(`${tableName}.${truncatePgIdentifier(name)}`, {
     tableName,
     name,
     type: "foreign_key",
@@ -177,7 +183,7 @@ export function addCheck(
   definition: string,
   validated = true,
 ): void {
-  snapshot.constraints.set(`${tableName}.${name}`, {
+  snapshot.constraints.set(`${tableName}.${truncatePgIdentifier(name)}`, {
     tableName,
     name,
     type: "check",
