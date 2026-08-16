@@ -2,6 +2,7 @@ import type { MigrationVerification, VerificationContext, VerificationEvidence }
 import {
   catalogHasAnyFootprint,
   readCatalogSnapshot,
+  truncatePgIdentifier,
   verifyCatalog,
   type CatalogExpectation,
   type CatalogSnapshot,
@@ -305,7 +306,14 @@ export function knownConstraintName(
   tableName: string,
   names: readonly string[],
 ): string {
-  return names.find((name) => snapshot.constraints.has(`${tableName}.${name}`)) ?? names[0]!;
+  // Probed through the same truncation the catalog applies. Without it a name
+  // past 63 bytes never matches, and this quietly falls through to the next
+  // candidate spelling -- turning a constraint that is present into a different
+  // one that is absent.
+  return (
+    names.find((name) => snapshot.constraints.has(`${tableName}.${truncatePgIdentifier(name)}`)) ??
+    names[0]!
+  );
 }
 
 export function sameColumns(actual: readonly string[], expected: readonly string[]): boolean {
