@@ -966,9 +966,21 @@ export function verifyCatalog(
 
   for (const constraint of expected.constraints ?? []) {
     const identity = `${constraint.tableName}.${constraint.name}`;
-    const actual = snapshot.constraints.get(
-      `${constraint.tableName}.${truncatePgIdentifier(constraint.name)}`,
-    );
+    const actual =
+      snapshot.constraints.get(
+        `${constraint.tableName}.${truncatePgIdentifier(constraint.name)}`,
+      ) ??
+      // A table has at most one primary key, so its name carries no information
+      // the columns do not. The immutable SQL lets PostgreSQL name it
+      // `<table>_pkey`, while a schema synchronized from a Drizzle
+      // `primaryKey({ columns })` declaration names it `<table>_<cols>_pk`. Both
+      // describe the same constraint, and its columns are still compared.
+      (constraint.type === "primary_key"
+        ? [...snapshot.constraints.values()].find(
+            (candidate) =>
+              candidate.tableName === constraint.tableName && candidate.type === "primary_key",
+          )
+        : undefined);
     checks.push(presence(`constraint:${identity}`, true, actual !== undefined));
     if (!actual) continue;
     checks.push(
