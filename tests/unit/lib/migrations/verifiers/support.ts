@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import type { MigrationId } from "@/lib/migrations/manifest";
 import {
   createEmptyCatalogSnapshot,
+  truncatePgIdentifier,
   type CatalogSnapshot,
   type ColumnExpectation,
   type ConstraintRow,
@@ -116,8 +117,10 @@ function addIndex(
   keyExpressions: string[],
   options: { unique?: boolean; predicate?: string | null } = {},
 ) {
-  snapshot.indexes.set(name, {
-    name,
+  // PostgreSQL truncates identifiers to 63 bytes as it creates them and keeps no
+  // memory of the longer name, so neither the key nor the row may hold one.
+  snapshot.indexes.set(truncatePgIdentifier(name), {
+    name: truncatePgIdentifier(name),
     tableName,
     unique: options.unique ?? false,
     primary: false,
@@ -139,9 +142,9 @@ function addConstraint(
   columns: string[],
   options: Partial<ConstraintRow> = {},
 ) {
-  snapshot.constraints.set(`${tableName}.${name}`, {
+  snapshot.constraints.set(`${tableName}.${truncatePgIdentifier(name)}`, {
     tableName,
-    name,
+    name: truncatePgIdentifier(name),
     type,
     columns,
     referencedSchema: null,
