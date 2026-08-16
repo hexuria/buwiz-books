@@ -64,7 +64,8 @@ const schema0036: CatalogExpectation = {
       ["enterprise_account_id"],
       {
         unique: true,
-        predicate: "status::text = ANY (ARRAY['creating'::text, 'open'::text, 'completed'::text])",
+        predicate:
+          "status::text = ANY (ARRAY['creating'::character varying, 'open'::character varying, 'completed'::character varying]::text[])",
       },
     ),
     index(
