@@ -19,6 +19,7 @@ import { startFieldScan as enqueueFieldScan, getFieldScanStatus } from "../route
 import type { FieldScanStatus } from "../routes/api/-ai-bill-ocr";
 import { getStatementPipelineStatus } from "../routes/api/-reconciliations";
 import type { StatementPipelineStatus } from "../routes/api/-reconciliations";
+import { PIPELINE_POLL_TIMEOUT_MS } from "./jobs/polling-policy";
 
 // ============================================================================
 // Types
@@ -101,7 +102,7 @@ const PIPELINE_POLL_INTERVAL_MS = 2000;
  * diverged once (a 123-minute retry curve behind a 10-minute watcher), which
  * made a permanently-failing job structurally unable to report its failure.
  */
-export const PIPELINE_POLL_TIMEOUT_MS = 10 * 60_000;
+export { PIPELINE_POLL_TIMEOUT_MS } from "./jobs/polling-policy";
 
 const PIPELINE_TERMINAL_STATUSES = new Set(["completed", "blocked", "failed"]);
 

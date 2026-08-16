@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { migrationManifest } from "@/lib/migrations/manifest";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../..");
 const read = (path: string) => readFileSync(resolve(REPO_ROOT, path), "utf8");
@@ -103,7 +104,6 @@ describe("Business Group request and operator boundaries", () => {
     const pkg = JSON.parse(read("package.json")) as {
       scripts: Record<string, string>;
     };
-    const runner = read("scripts/apply-enterprise-migrations.ts");
     const migration = read("drizzle/0034_business_group_admin_guards.sql");
     const rlsHardening = read("drizzle/rls_hardening.sql");
     const globalSetup = read("tests/global-setup.ts");
@@ -111,7 +111,17 @@ describe("Business Group request and operator boundaries", () => {
     const entitlements = read("src/lib/enterprise/entitlements.ts");
     const page = read("src/routes/business-groups.tsx");
 
-    expect(runner).toContain('"0034_business_group_admin_guards.sql"');
+    // There is no per-group runner to inspect any more: one ordered manifest owns which
+    // migrations exist and in what phase, and `db:migrate` applies all of it. Assert the
+    // manifest itself, which is the thing that would actually have to change for 0034 to
+    // stop being installed.
+    const guardMigration = migrationManifest.find(
+      (item) => item.file === "0034_business_group_admin_guards.sql",
+    );
+    expect(guardMigration).toBeDefined();
+    expect(guardMigration?.phase).toBe("post_schema");
+    expect(pkg.scripts["db:migrate"]).toContain("scripts/migrate.ts apply");
+    expect(pkg.scripts["db:test:fresh"]).toContain("db:migrate");
     expect(pkg.scripts["db:rls:hardening"]).toContain("drizzle/rls_hardening.sql");
     expect(pkg.scripts["db:test:fresh"]).toContain("db:rls:hardening");
     expect(migration).toContain("groups without an eligible owner");

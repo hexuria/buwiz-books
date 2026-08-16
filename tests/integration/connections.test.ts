@@ -7,8 +7,7 @@ import { partyableLinks } from "../../src/db/schema/partyable-links";
 import { eq, and, ilike, sql as drizzleSql } from "drizzle-orm";
 import postgres from "postgres";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 // Mirrors SOURCE_TYPE_TO_PARTY_TYPE from -connections.ts
 const SOURCE_TYPE_TO_PARTY_TYPE: Record<string, string | null> = {

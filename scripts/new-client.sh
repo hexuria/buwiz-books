@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+echo "This production client setup script is disabled in this application repository." >&2
+echo "Use the unattached canonical deployment repository and its approved runbook." >&2
+exit 1
+
+# Historical implementation below is intentionally unreachable evidence.
+
 # ── Initialize this repo for a new white-label client ─────────────────────────
 #
 # The single entry point after `git clone`. Interactively collects client +

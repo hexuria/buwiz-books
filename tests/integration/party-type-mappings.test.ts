@@ -4,8 +4,7 @@ import { partyTypeMappings } from "../../src/db/schema/party-type-mappings";
 import { eq, and, sql as drizzleSql } from "drizzle-orm";
 import postgres from "postgres";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("Party Type Mappings", () => {
   let ORG_A: string;

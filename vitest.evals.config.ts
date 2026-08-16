@@ -16,10 +16,16 @@
 import { defineConfig } from "vitest/config";
 import tsconfigPaths from "vite-tsconfig-paths";
 
+const mode = process.env.AI_EVALS_MODE ?? "recorded";
+if (mode !== "recorded" && mode !== "live") {
+  throw new Error(`Unsupported AI_EVALS_MODE: ${mode}`);
+}
+
 export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
-    include: ["tests/evals/**/*.eval.ts"],
+    include: mode === "live" ? ["tests/evals/*.live.eval.ts"] : ["tests/evals/prompts.eval.ts"],
+    setupFiles: mode === "live" ? ["./tests/evals/setup-live.ts"] : [],
     environment: "node",
     globals: true,
     // Evals are I/O-bound and order-independent, but live mode hits rate

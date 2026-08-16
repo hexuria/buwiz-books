@@ -9,24 +9,25 @@
 
 import { eq } from "drizzle-orm";
 import { db } from "../../db";
-import { organizationAiSettings, type AiAutonomyLevel } from "../../db/schema/ai";
-import type { AiTaskName } from "./types";
+import { organizationAiSettings } from "../../db/schema/ai";
 import type { AiProvider } from "./errors";
+import type { OrgAiSettings } from "./settings-policy";
 import { createLogger } from "../logger";
 
 const logger = createLogger("ai.settings");
 
 const CACHE_TTL_MS = 30_000;
 
-export interface OrgAiSettings {
-  taskChains: Record<string, unknown> | null;
-  confidenceThresholds: Record<string, number>;
-  autonomy: Record<string, AiAutonomyLevel>;
-  taskAllowlist: string[] | null;
-  providerAllowlist: AiProvider[] | null;
-  monthlySpendCapUsd: number | null;
-  killSwitch: boolean;
+export class AiSettingsUnavailableError extends Error {
+  constructor(orgId: string, cause: unknown) {
+    super("AI settings are temporarily unavailable.", { cause });
+    this.name = "AiSettingsUnavailableError";
+    void orgId;
+  }
 }
+
+export type { OrgAiSettings } from "./settings-policy";
+export { confidenceThresholdFor, isProviderAllowed, isTaskAllowed } from "./settings-policy";
 
 const DEFAULTS: OrgAiSettings = {
   taskChains: null,
@@ -72,31 +73,13 @@ export async function getOrgAiSettings(orgId: string): Promise<OrgAiSettings> {
     cache.set(orgId, { at: Date.now(), value });
     return value;
   } catch (err) {
-    // Settings are a guardrail layer; if they cannot be read we fail CLOSED
-    // on nothing (defaults are the most permissive-but-safe posture: suggest
-    // -only autonomy, no kill switch) and log loudly.
-    logger.error("Failed to load org AI settings — using defaults", {
+    // Settings are a guardrail layer. A read failure must stop before spend,
+    // credential resolution, or any provider call; permissive defaults are
+    // valid only when the organization genuinely has no settings row.
+    logger.error("Failed to load org AI settings — blocking AI execution", {
       orgId: orgId.slice(0, 8),
       error: err instanceof Error ? err.message : String(err),
     });
-    return DEFAULTS;
+    throw new AiSettingsUnavailableError(orgId, err);
   }
-}
-
-export function isTaskAllowed(settings: OrgAiSettings, task: AiTaskName): boolean {
-  if (!settings.taskAllowlist) return true;
-  return settings.taskAllowlist.includes(task);
-}
-
-export function isProviderAllowed(settings: OrgAiSettings, provider: AiProvider): boolean {
-  // Absent allowlist ⇒ Gemini only. Adding a new provider is an explicit,
-  // audited act, never a side effect of a default.
-  if (!settings.providerAllowlist) return provider === "gemini";
-  return settings.providerAllowlist.includes(provider);
-}
-
-/** Escalate below this self-reported confidence (0–1). */
-export function confidenceThresholdFor(settings: OrgAiSettings, task: AiTaskName): number | null {
-  const value = settings.confidenceThresholds[task];
-  return typeof value === "number" ? value : null;
 }

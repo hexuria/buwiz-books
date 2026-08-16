@@ -20,6 +20,13 @@ import {
   requireBusinessGroupsEntitlement,
   requireEnterpriseAccountRole,
 } from "../enterprise/entitlements";
+import type { AccessibleBusinessGroupView, GroupEntityAccessView } from "./types";
+
+export type {
+  AccessibleBusinessGroupView,
+  AccessibleGroupEntity,
+  GroupEntityAccessView,
+} from "./types";
 
 const GROUP_MANAGER_ROLES: readonly BusinessGroupRole[] = ["owner", "admin"];
 const ENTERPRISE_GROUP_MANAGER_ROLES = ["owner", "group_admin"] as const;
@@ -79,28 +86,6 @@ export interface BusinessGroupView {
   role: BusinessGroupRole;
   entityCount: number;
   updatedAt: Date;
-}
-
-export interface AccessibleGroupEntity {
-  id: string;
-  organizationId: string;
-  name: string;
-  role: string;
-  currency: string;
-}
-
-export interface GroupEntityAccessView {
-  entities: AccessibleGroupEntity[];
-  totalEntityCount: number;
-  omittedEntityCount: number;
-  isComplete: boolean;
-}
-
-export interface AccessibleBusinessGroupView {
-  enterpriseAccountId: string;
-  groupId: string;
-  groupName: string;
-  access: GroupEntityAccessView;
 }
 
 export async function listBusinessGroups(

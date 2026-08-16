@@ -1,6 +1,9 @@
 import { db, type DbExecutor } from "../db";
 import { organization } from "../db/schema/auth";
 import { eq } from "drizzle-orm";
+import { isDateLocked } from "./period-lock-policy";
+
+export { isDateLocked } from "./period-lock-policy";
 
 /**
  * Helper: Check if a transaction date falls within a locked period
@@ -35,13 +38,4 @@ export async function getClosedThrough(
     .where(eq(organization.id, orgId))
     .limit(1);
   return org?.closedThrough ?? null;
-}
-
-/**
- * Pure check: is an ISO date (YYYY-MM-DD) on or before the close boundary?
- * ISO date strings compare correctly lexicographically.
- */
-export function isDateLocked(transactionDate: string, closedThrough: string | null): boolean {
-  if (!closedThrough) return false;
-  return transactionDate <= closedThrough;
 }

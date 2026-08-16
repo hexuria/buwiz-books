@@ -4,8 +4,8 @@ import {
   paginateEntityReadiness,
   projectionReadinessWarning,
 } from "../../src/lib/business-groups/entity-readiness";
-import type { EntityReadiness } from "../../src/lib/business-groups/performance";
-import type { ProjectionStateView } from "../../src/lib/reporting/projection";
+import type { EntityReadiness } from "../../src/lib/business-groups/performance-model";
+import type { ProjectionStateView } from "../../src/lib/reporting/projection-types";
 
 const now = new Date("2026-08-01T12:00:00.000Z");
 

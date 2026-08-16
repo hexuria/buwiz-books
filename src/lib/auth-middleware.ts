@@ -3,10 +3,10 @@ import { AuthenticationError, AuthorizationError, toAuthErrorResponse } from "./
 import {
   getActiveMemberRole as getSessionActiveMemberRole,
   getActiveOrganizationId as getSessionActiveOrganizationId,
-  type UserRole,
 } from "./auth-types";
 import type { Resource, Action } from "./permissions";
-import { roles } from "./permissions";
+import { roleHasPermission } from "./permission-policy";
+import { resolveSessionOrganization, type SessionMembership } from "./session-organization-policy";
 import { db } from "@/db";
 import { member as memberTable } from "@/db/schema/auth";
 import { and, asc, eq } from "drizzle-orm";
@@ -50,68 +50,75 @@ export async function requireSession(headers: Headers) {
 export async function getSessionContext(headers: Headers): Promise<SessionContext> {
   const session = await requireSession(headers);
 
-  let orgId = getSessionActiveOrganizationId(session);
-  let role: string | null = getSessionActiveMemberRole(session);
+  const activeOrganizationId = getSessionActiveOrganizationId(session);
+  const activeMemberRole = getSessionActiveMemberRole(session);
+  let resolution = resolveSessionOrganization({
+    activeOrganizationId,
+    activeMemberRole,
+    membership: { state: "not_loaded" },
+  });
 
-  if (orgId && !role) {
-    // The session has an active org but no role. The role MUST come from the
-    // membership row of that same org — the previous fallback took the user's
-    // arbitrary first membership, which could belong to a different org and
-    // grant a mismatched role (e.g. admin-in-A acting on B).
-    const [membership] = await db
-      .select()
-      .from(memberTable)
-      .where(and(eq(memberTable.userId, session.user.id), eq(memberTable.organizationId, orgId)))
-      .limit(1);
+  if (
+    resolution.kind === "lookup_active_membership" ||
+    resolution.kind === "lookup_oldest_membership"
+  ) {
+    let membership: SessionMembership | null = null;
 
-    if (!membership) {
-      throw new AuthorizationError("organization", "access");
+    if (resolution.kind === "lookup_active_membership") {
+      const [row] = await db
+        .select({ organizationId: memberTable.organizationId, role: memberTable.role })
+        .from(memberTable)
+        .where(
+          and(
+            eq(memberTable.userId, session.user.id),
+            eq(memberTable.organizationId, resolution.orgId),
+          ),
+        )
+        .limit(1);
+      membership = row ?? null;
+    } else {
+      const [row] = await db
+        .select({ organizationId: memberTable.organizationId, role: memberTable.role })
+        .from(memberTable)
+        .where(eq(memberTable.userId, session.user.id))
+        .orderBy(asc(memberTable.createdAt), asc(memberTable.id))
+        .limit(1);
+      membership = row ?? null;
     }
-    role = membership.role as UserRole;
-  } else if (!orgId) {
-    // No active org on the session — deterministically pick the OLDEST
-    // membership (createdAt, then id, as tiebreak) and take BOTH orgId and
-    // role from that single row. Never mix rows: org and role must always
-    // describe the same membership.
-    const [membership] = await db
-      .select()
-      .from(memberTable)
-      .where(eq(memberTable.userId, session.user.id))
-      .orderBy(asc(memberTable.createdAt), asc(memberTable.id))
-      .limit(1);
 
-    if (membership) {
-      orgId = membership.organizationId;
-      role = membership.role as UserRole;
-
-      // Try to set active org on the session so future requests don't need this fallback
-      try {
-        await auth.api.setActiveOrganization({
-          headers,
-          body: { organizationId: orgId },
-        });
-      } catch {
-        // Non-fatal — we already have the orgId
-      }
-    }
+    resolution = resolveSessionOrganization({
+      activeOrganizationId,
+      activeMemberRole,
+      membership: { state: "loaded", membership },
+    });
   }
 
-  if (!orgId) {
+  if (resolution.kind === "forbidden") {
+    throw new AuthorizationError("organization", "access");
+  }
+  if (resolution.kind === "no_organization") {
     throw new Error("No active organization");
   }
-
-  if (!role) {
-    // Unreachable today: every path above either resolved a role or threw.
-    // Kept as a hard failure so a future refactor can't silently grant a
-    // default role for an org the user may not belong to.
+  if (resolution.kind !== "resolved") {
     throw new AuthorizationError("organization", "access");
+  }
+
+  if (resolution.activateOrganization) {
+    try {
+      await auth.api.setActiveOrganization({
+        headers,
+        body: { organizationId: resolution.orgId },
+      });
+    } catch {
+      // Non-fatal: the membership row already established this request's context.
+    }
   }
 
   return {
     session,
     userId: session.user.id,
-    orgId,
-    role,
+    orgId: resolution.orgId,
+    role: resolution.role,
   };
 }
 
@@ -119,35 +126,12 @@ export async function getSessionContext(headers: Headers): Promise<SessionContex
 // In-memory permission evaluation
 // ============================================================================
 
-/** Map role name → role definition from permissions.ts */
-const ROLE_MAP: Record<string, { statements: Record<string, readonly string[]> }> = {
-  owner: roles.superuser,
-  admin: roles.admin,
-  member: roles.member,
-  client_approver: roles.clientApprover,
-  report_viewer: roles.reportViewer,
-};
-
-/**
- * Evaluate a permission check in-memory using role definitions.
- * No DB call needed — all role→permission mappings are static.
- */
-function checkPermissionLocal(role: string, resource: string, action: string): boolean {
-  const roleDef = ROLE_MAP[role];
-  if (!roleDef) return false;
-  const allowed = roleDef.statements[resource];
-  if (!allowed) return false;
-  return allowed.includes(action);
-}
-
 /**
  * Boolean permission check for a role (no throw, no DB). Use inside a handler
  * that already passed a coarser gate but needs to conditionally allow a
  * finer-grained action (e.g. "may this caller also create parties?").
  */
-export function roleHasPermission(role: string, resource: string, action: string): boolean {
-  return checkPermissionLocal(role, resource, action);
-}
+export { roleHasPermission } from "./permission-policy";
 
 /**
  * Two-key model helper: assert an UNDERLYING resource permission inside a
@@ -159,7 +143,7 @@ export function assertRolePermission<R extends Resource>(
   resource: R,
   action: Action<R>,
 ): void {
-  if (!checkPermissionLocal(role, resource, action)) {
+  if (!roleHasPermission(role, resource, action)) {
     throw new AuthorizationError(resource, action);
   }
 }
@@ -181,7 +165,7 @@ export async function requirePermission<R extends Resource>(
   const ctx = await getSessionContext(headers);
 
   // In-memory permission check — no DB round-trip
-  if (!checkPermissionLocal(ctx.role, resource, action as string)) {
+  if (!roleHasPermission(ctx.role, resource, action as string)) {
     throw new AuthorizationError(resource, action);
   }
 

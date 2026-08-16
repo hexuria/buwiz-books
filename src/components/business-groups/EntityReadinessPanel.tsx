@@ -10,7 +10,7 @@ import type {
   EntityReadiness,
   EntityReadinessStatus,
   EntityReadinessSummary,
-} from "../../lib/business-groups/performance";
+} from "../../lib/business-groups/performance-model";
 
 const statusPresentation: Record<
   EntityReadinessStatus,

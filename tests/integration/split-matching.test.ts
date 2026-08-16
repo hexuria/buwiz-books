@@ -20,8 +20,7 @@ import { accounts } from "../../src/db/schema/accounts";
 import { journalHeaders, journalLines } from "../../src/db/schema/journals";
 import { computeFinalizeBalances } from "../../src/lib/reconciliation-finalize";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 describeDb("split matching", () => {
   let db: any;

@@ -1,0 +1,239 @@
+import { spawn } from "node:child_process";
+import { createMigrationDatabaseTarget, type DatabaseTarget } from "../src/lib/database-target";
+import {
+  runMigrationEntrypoint,
+  type MigrationApplyPhase,
+  type MigrationEntrypointCommand,
+} from "../src/lib/migrations/entrypoint";
+import type { MigrationReport } from "../src/lib/migrations/engine";
+
+interface CliOptions {
+  readonly command: MigrationEntrypointCommand;
+  readonly phase: MigrationApplyPhase;
+  readonly from?: string;
+  readonly through?: string;
+  readonly json: boolean;
+}
+
+/**
+ * Parsing reports "the caller asked for help" as an outcome rather than an error.
+ * A sentinel exception would have to be recognized by message text, which is how a
+ * help request becomes a failure the moment someone rewords the string.
+ */
+export type MigrationCliRequest = { kind: "help" } | { kind: "run"; options: CliOptions };
+
+export type ProcessRunner = (
+  args: readonly string[],
+  environment: NodeJS.ProcessEnv,
+) => Promise<void>;
+
+const usage = `
+Usage: bun run scripts/migrate.ts <status|verify|apply> [options]
+
+Options:
+  --phase=all|pre_schema|post_schema  Limit apply to one lifecycle phase.
+  --from=NNNN                        Start at a managed migration id.
+  --through=NNNN                     Stop at a managed migration id.
+  --json                             Print the report as JSON.
+  --help                             Show this help.
+
+Migration commands require MIGRATION_DATABASE_URL or DATABASE_URL_ADMIN.
+Apply additionally requires MIGRATION_SCHEMA_SYNC_CONFIRM to equal the
+normalized migration database name before any schema tool can run.
+
+Exits non-zero whenever the report is not ok, including a blocked or
+drifted status, so Make and CI can act on the result.
+`;
+
+const VALUED_OPTIONS = ["--phase", "--from", "--through"] as const;
+type ValuedOption = (typeof VALUED_OPTIONS)[number];
+
+function parsePhase(value: string): MigrationApplyPhase {
+  if (value === "all" || value === "pre_schema" || value === "post_schema") return value;
+  throw new Error(`Invalid --phase ${value}; expected all, pre_schema, or post_schema.`);
+}
+
+export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequest {
+  const [command, ...rest] = argv;
+  if (command === "--help" || command === "-h") return { kind: "help" };
+  if (command !== "status" && command !== "verify" && command !== "apply") {
+    throw new Error("A command is required: status, verify, or apply.");
+  }
+
+  let phase: MigrationApplyPhase = "all";
+  let from: string | undefined;
+  let through: string | undefined;
+  let json = false;
+  for (let index = 0; index < rest.length; index += 1) {
+    const argument = rest[index];
+    if (argument === "--json") {
+      json = true;
+      continue;
+    }
+    if (argument === "--help" || argument === "-h") return { kind: "help" };
+
+    // One branch serves both `--phase value` and `--phase=value`; splitting them
+    // duplicated every option's handling and let the two forms drift apart.
+    const separator = argument.indexOf("=");
+    const name = (separator === -1 ? argument : argument.slice(0, separator)) as ValuedOption;
+    if (!VALUED_OPTIONS.includes(name)) {
+      throw new Error(`Unknown migration option ${argument}.`);
+    }
+    let value: string | undefined;
+    if (separator === -1) {
+      value = rest[index + 1];
+      index += 1;
+    } else {
+      value = argument.slice(separator + 1);
+    }
+    if (!value) throw new Error(`${name} requires a value.`);
+    if (name === "--phase") phase = parsePhase(value);
+    else if (name === "--from") from = value;
+    else through = value;
+  }
+
+  // Both selectors are apply-only. Rejecting one and silently ignoring the other
+  // would let `status --through=0024` report the whole manifest while reading as
+  // though it had been bounded.
+  if (command !== "apply") {
+    if (phase !== "all") throw new Error("--phase is only valid with apply.");
+    if (from !== undefined) throw new Error("--from is only valid with apply.");
+    if (through !== undefined) throw new Error("--through is only valid with apply.");
+  }
+  return { kind: "run", options: { command, phase, from, through, json } };
+}
+
+/**
+ * A report that is not ok must fail the process. `status` deliberately returns a
+ * blocked or drifted report instead of throwing, so without this the one command
+ * meant to surface drift would exit 0 and read as green.
+ */
+export function migrationExitCode(report: MigrationReport): 0 | 1 {
+  return report.ok ? 0 : 1;
+}
+
+const defaultProcessRunner: ProcessRunner = (args, environment) =>
+  new Promise((resolve, reject) => {
+    const child = spawn("bun", args, { env: environment, stdio: "inherit" });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Schema command exited with code ${code ?? "unknown"}.`));
+    });
+  });
+
+function migrationUrl(environment: NodeJS.ProcessEnv): string {
+  const value = environment.MIGRATION_DATABASE_URL ?? environment.DATABASE_URL_ADMIN;
+  if (!value) {
+    throw new Error(
+      "MIGRATION_DATABASE_URL or DATABASE_URL_ADMIN is required; DATABASE_URL is a serving credential and is not accepted for migrations.",
+    );
+  }
+  return value;
+}
+
+function requireSchemaConfirmation(target: DatabaseTarget, environment: NodeJS.ProcessEnv): void {
+  if (environment.MIGRATION_SCHEMA_SYNC_CONFIRM !== target.databaseName) {
+    throw new Error(
+      `Schema synchronization is fail-closed: MIGRATION_SCHEMA_SYNC_CONFIRM must exactly equal ${target.databaseName}.`,
+    );
+  }
+}
+
+function lifecycleHooks(
+  target: DatabaseTarget,
+  databaseUrl: string,
+  environment: NodeJS.ProcessEnv,
+  processRunner: ProcessRunner,
+) {
+  const commandEnvironment = { ...environment, DATABASE_URL: databaseUrl };
+  // Async so the guard rejects rather than throwing synchronously out of a
+  // Promise-returning hook; a caller attaching .catch() would otherwise crash.
+  const guarded = async (args: readonly string[]) => {
+    requireSchemaConfirmation(target, environment);
+    return processRunner(args, commandEnvironment);
+  };
+
+  return {
+    // `drizzle-kit push --force` IS this repository's schema application, and has
+    // been for CI, onboarding and restore alike. `drizzle-kit migrate` is used
+    // nowhere, because the numbered files past 0002 are absent from
+    // drizzle/meta/_journal.json.
+    //
+    // It was tried as the base-schema phase and cannot work. On a fresh database
+    // it applies only the journalled 0000-0002 history, leaving an intermediate
+    // schema that push must then reconcile against the current one. That diff
+    // includes renamed enums, so push stops on an interactive
+    // "created or renamed?" prompt and dies in CI with "Interactive prompts
+    // require a TTY terminal". Pushing straight onto an empty database has no
+    // such ambiguity: every object is unambiguously new.
+    prepareBaseSchema: () => guarded(["x", "drizzle-kit", "push", "--force"]),
+    // Nothing is left to synchronize afterwards. Running push a second time here
+    // would re-diff a schema that already matches, for no benefit.
+    //
+    // The pre-schema migrations therefore land on an already-synchronized schema,
+    // which is exactly what they are built for: every statement in 0026 and 0027
+    // is IF NOT EXISTS, so the tables push already created are left alone while
+    // the objects push cannot express -- the pg_trgm extension and the
+    // gin_trgm_ops trigram index, which live in no Drizzle schema file -- are
+    // still created.
+    synchronizeSchema: async () => undefined,
+    // RLS policy application is owned by the canonical deployment layer. A
+    // local caller may provide a reviewed command explicitly later; no shell
+    // text is accepted here.
+    finalizeSchema: async () => undefined,
+  };
+}
+
+function printReport(report: MigrationReport, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(report, null, 2));
+    return;
+  }
+  for (const outcome of report.outcomes) {
+    console.log(`${outcome.id} ${outcome.phase} ${outcome.state}`);
+  }
+  // "blocked" is one specific MigrationState; drift is another. Naming the summary
+  // after one of them mislabels the other, so summarize the report, not a state.
+  console.log(`${report.command}: ${report.ok ? "ok" : "not ok"}`);
+}
+
+export async function main(
+  argv: readonly string[] = process.argv.slice(2),
+  environment: NodeJS.ProcessEnv = process.env,
+  processRunner: ProcessRunner = defaultProcessRunner,
+): Promise<MigrationReport | undefined> {
+  const request = parseMigrationCliArgs(argv);
+  if (request.kind === "help") {
+    console.log(usage.trim());
+    return undefined;
+  }
+  const { options } = request;
+
+  const databaseUrl = migrationUrl(environment);
+  const target = createMigrationDatabaseTarget(databaseUrl, {
+    applicationName: "buwiz-books-migration-entrypoint",
+  });
+  const report = await runMigrationEntrypoint({
+    command: options.command,
+    target,
+    ...(options.command === "apply"
+      ? {
+          phase: options.phase,
+          from: options.from,
+          through: options.through,
+          hooks: lifecycleHooks(target, databaseUrl, environment, processRunner),
+        }
+      : {}),
+  });
+  printReport(report, options.json);
+  process.exitCode = migrationExitCode(report);
+  return report;
+}
+
+if (process.argv[1]?.endsWith("/scripts/migrate.ts")) {
+  main().catch((error: unknown) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exitCode = 1;
+  });
+}

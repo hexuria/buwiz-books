@@ -1,13 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
-
-vi.mock("@/db", () => ({ db: {} }));
+import { describe, expect, it } from "vitest";
 
 import {
   buildJournalMergePairKey,
   evaluateJournalMergePreflight,
   type JournalMergeFact,
   type JournalMergeFacts,
-} from "../../../src/lib/journal-merge";
+} from "../../../src/lib/journal-merge-policy";
 
 const canonicalId = "11111111-1111-4111-8111-111111111111";
 const duplicateId = "22222222-2222-4222-8222-222222222222";

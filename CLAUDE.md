@@ -57,22 +57,31 @@ CI is unaffected because it sets `DATABASE_URL` as a real job env var. Both scri
 an explicit message instead; pass the URL yourself:
 `DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env | cut -d= -f2-)" bun run db:rls`.
 
-A full local rebuild is `db:reset` → `db:dedup:migrate` → `scripts/apply-ai-foundation.ts` →
-`db:rls` → `db:seed` → `db:seed:coa`. `db:fresh` is **not** equivalent: it skips the dedup
-migrations (CHECK constraints, tenant-lineage FKs) and the `pg_trgm` extension, none of which the
-Drizzle schema can express. Run `db:rls` last — its policy blocks are guarded by table-existence
-checks and silently skip tables that do not exist yet.
+A full local rebuild is `db:fresh`, and it is now the complete path: `db:reset` drops the schema,
+`db:migrate` runs one ordered pass over the whole manifest — Drizzle's journal, the pre-schema
+migrations, schema synchronization, then the post-schema migrations — and `db:rls`, `db:seed`,
+`db:seed:coa`, and `db:seed:review-rules` follow. The older warning that `db:fresh` skipped the
+dedup migrations (CHECK constraints, tenant-lineage FKs, `pg_trgm`) no longer holds: those are
+manifest entries `0019`-`0024` and the engine cannot skip them. Do **not** run `drizzle-kit push`
+alongside `db:migrate`; synchronization is a lifecycle step the engine owns, and running it
+separately puts it ahead of the pre-schema migrations that exist to keep it non-interactive.
+`db:migrate` requires `MIGRATION_DATABASE_URL`, and because it synchronizes the schema it also
+requires `MIGRATION_SCHEMA_SYNC_CONFIRM` set to the target database name. Run `db:rls` last — its
+policy blocks are guarded by table-existence checks and silently skip tables that do not exist yet.
 
 **The review-rule catalog is global, and a seeding step is only as good as the paths that call
 it.** `review_rule_definitions` has no `organization_id` and is excluded from every RLS policy
 list — one empty table means every tenant sees zero review agents. Its rows lived only inside
 `drizzle/0019_inbox_review_foundation.sql`, which is absent from `drizzle/meta/_journal.json` and
-so is never run by `drizzle-kit`; the only invoker was `db:dedup:migrate`, which the deploy
-pipeline does not call. Every environment therefore created the table from the Drizzle schema and
+so is never run by `drizzle-kit`; its only invoker back then was the since-removed
+`db:dedup:migrate`, which the deploy pipeline did not call. (The ordered manifest now applies
+0019 on every path, but the catalog's home has already moved.) Every environment therefore
+created the table from the Drizzle schema and
 left it empty, and the failure was silent: `/review-agents` simply reported that no agents were
-configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from
-`db:fresh`, `db:test:fresh`, `deploy.yml` and `make migrate`, with
-`tests/unit/review-rules-wiring.test.ts` asserting each of those links still exists. Use
+configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from the
+local `db:fresh` and `db:test:fresh` rebuilds, with `tests/unit/review-rules-wiring.test.ts`
+asserting those links still exist. The unattached canonical deployment repository must own the
+equivalent production seeding step. Use
 `bun db:review-rules:status` to inspect any database read-only. Both modes print the database
 they connected to first — an unset `DATABASE_URL` sends `psql` to the database named after your
 OS user, where these tables are genuinely absent, which reads exactly like a real bug.

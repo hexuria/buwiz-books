@@ -12,9 +12,9 @@ import type { DbExecutor } from "@/db";
  * `review_rule_definitions` is a GLOBAL table — no `organization_id`, deliberately excluded
  * from every RLS policy list. Its rows were historically inserted only by the raw SQL in
  * drizzle/0019_inbox_review_foundation.sql, which `drizzle-kit` never runs (0019 is not in
- * drizzle/meta/_journal.json) and which only `bun run db:dedup:migrate` applies. Every other
- * path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so `/review-agents`
- * rendered "No review agents are configured." on a database that was otherwise healthy.
+ * drizzle/meta/_journal.json) and which only the since-removed `db:dedup:migrate` applied.
+ * Every other path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so
+ * `/review-agents` rendered "No review agents are configured." on a healthy database.
  *
  * This module is what the seeder, the engine, and the server functions all read.
  *

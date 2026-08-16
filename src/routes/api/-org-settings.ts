@@ -16,6 +16,10 @@ import {
 import { sendApproverInviteEmail } from "../../services/email";
 import { parseOrgMetadata } from "../../lib/org-metadata";
 import { maskGeminiKeys } from "../../lib/mask-secret";
+import {
+  decideOrganizationSwitch,
+  isPlatformOperatorEmail,
+} from "../../lib/organization-switch-policy";
 import { getOrganizationSecrets, updateOrganizationSecrets } from "../../lib/org-secrets";
 import {
   addOrgAiCredential as addOrgAiCredentialRow,
@@ -202,7 +206,7 @@ async function listAllOrganizationsImpl() {
     // returns is a cross-tenant target, so it is gated on the same check. A
     // tenant admin gets the empty list and the switcher's "All Organizations"
     // section never renders for them.
-    if (!isPlatformOperator(ctx)) {
+    if (!isPlatformOperatorEmail(ctx.session?.user?.email, process.env.ADMIN_EMAIL)) {
       return { orgs: [], isAdmin: false };
     }
 
@@ -220,19 +224,6 @@ async function listAllOrganizationsImpl() {
   });
 }
 
-/**
- * True only for the platform operator — the `ADMIN_EMAIL` break-glass account
- * configured at deploy time (see the env table in README.md). Sign-in is Google
- * OAuth or email OTP, so matching it requires owning that mailbox; unlike
- * `isUserAdmin` it is not something a tenant can grant itself. Unset => nobody.
- */
-function isPlatformOperator(ctx: Pick<OrgServerContext, "session">): boolean {
-  const configured = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-  if (!configured) return false;
-  const email = ctx.session?.user?.email?.trim().toLowerCase();
-  return !!email && email === configured;
-}
-
 async function adminSwitchOrgImpl(rawData: unknown) {
   return withMutationPermissionOrgContext(
     "organization",
@@ -248,16 +239,22 @@ async function adminSwitchOrgImpl(rawData: unknown) {
         .where(and(eq(member.userId, ctx.userId), eq(member.organizationId, organizationId)))
         .limit(1);
 
+      const decision = decideOrganizationSwitch({
+        hasExistingMembership: existing.length > 0,
+        actorEmail: ctx.session?.user?.email,
+        configuredOperatorEmail: process.env.ADMIN_EMAIL,
+      });
+
       // Already a member: the caller is switching between orgs that are
       // genuinely theirs, and there is nothing to grant.
-      if (existing.length > 0) return { success: true };
+      if (decision === "existing_member") return { success: true };
 
       // Not a member. Granting membership in an org the caller does not belong
       // to crosses the tenant boundary, so "admin or owner in ANY org" can
       // never authorize it — every user who creates a workspace is its owner,
       // which would let anyone join any tenant as admin. Only the platform
       // operator identity, which no tenant can assign itself, may do this.
-      if (!isPlatformOperator(ctx)) {
+      if (decision === "denied") {
         throw new Error("Not authorized for this organization");
       }
 

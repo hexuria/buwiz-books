@@ -12,8 +12,7 @@ import { allMappingKeys } from "../../src/lib/coa/mapping-registry";
 import { resolveMappedAccountId } from "../../src/lib/coa/resolve-mapped-account";
 import { coaAccountsApplier, categoryMappingApplier } from "../../src/lib/ai/proposal-appliers/coa";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 /**
  * End-to-end cover for the AI write path.

@@ -7,6 +7,9 @@
 import { eq } from "drizzle-orm";
 import type { DbExecutor } from "../db";
 import { accounts } from "../db/schema/accounts";
+import { descendantAccountIds } from "./account-hierarchy";
+
+export { descendantAccountIds } from "./account-hierarchy";
 
 /**
  * Get all descendant account IDs for a given parent, using a single query.
@@ -23,26 +26,5 @@ export async function getAllDescendantIds(
     .from(accounts)
     .where(eq(accounts.organizationId, orgId));
 
-  // Build parent → children lookup
-  const childMap = new Map<string | null, string[]>();
-  for (const a of allAccounts) {
-    const key = a.parentId ?? null;
-    const bucket = childMap.get(key) ?? [];
-    bucket.push(a.id);
-    childMap.set(key, bucket);
-  }
-
-  // Iterative DFS — no recursion, no extra queries
-  const result: string[] = [];
-  const stack = [...(childMap.get(parentId) ?? [])];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    result.push(current);
-    const children = childMap.get(current);
-    if (children) {
-      stack.push(...children);
-    }
-  }
-
-  return result;
+  return descendantAccountIds(allAccounts, parentId);
 }

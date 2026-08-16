@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ReportRow } from "../../src/lib/report-calculations";
-import type { BusinessGroupPerformanceAccess } from "../../src/lib/business-groups/performance";
+import type { BusinessGroupPerformanceAccess } from "../../src/lib/business-groups/performance-model";
 import {
+  buildPortfolioProfitLossMetadata,
   buildPortfolioReportScope,
   combinePortfolioReportRows,
-  computeLivePortfolioProfitLoss,
   PORTFOLIO_PNL_SHADOW_UNSUPPORTED_WARNING,
   summarizeProjectionReadiness,
-} from "../../src/lib/business-groups/portfolio-profit-loss";
-import type { ProjectionStateView } from "../../src/lib/reporting/projection";
+} from "../../src/lib/business-groups/portfolio-profit-loss-model";
+import type { ProjectionStateView } from "../../src/lib/reporting/projection-types";
 import { portfolioProfitLossSchema } from "../../src/db/validation/reports";
 
 function reportRow(input: Partial<ReportRow> & Pick<ReportRow, "accountId">): ReportRow {
@@ -185,71 +185,69 @@ describe("portfolio Profit & Loss", () => {
     expect(scope.currency).toBeNull();
   });
 
-  it("withholds mixed-currency live totals before entering any organization ledger", async () => {
-    const result = await computeLivePortfolioProfitLoss(
-      [
-        group({
-          groupId: "group-a",
-          groupName: "Mixed",
-          access: {
-            entities: [
-              {
-                id: "entity-a",
-                organizationId: "org-a",
-                name: "Northwind",
-                role: "owner",
-                currency: "USD",
-              },
-              {
-                id: "entity-b",
-                organizationId: "org-b",
-                name: "Contoso",
-                role: "admin",
-                currency: "PHP",
-              },
-            ],
-            totalEntityCount: 2,
-            omittedEntityCount: 0,
-            isComplete: true,
-          },
-        }),
-      ],
-      {
-        userId: "user-1",
-        dateFrom: "2026-07-01",
-        dateTo: "2026-07-31",
-        compare: "none",
-      },
-    );
-
-    expect(result.report).toBeNull();
-    expect(result.metadata.currency).toBeNull();
-    expect(result.metadata.warnings).toEqual([
-      expect.stringContaining("different functional currencies"),
+  it("withholds mixed-currency live totals before entering any organization ledger", () => {
+    const scope = buildPortfolioReportScope([
+      group({
+        groupId: "group-a",
+        groupName: "Mixed",
+        access: {
+          entities: [
+            {
+              id: "entity-a",
+              organizationId: "org-a",
+              name: "Northwind",
+              role: "owner",
+              currency: "USD",
+            },
+            {
+              id: "entity-b",
+              organizationId: "org-b",
+              name: "Contoso",
+              role: "admin",
+              currency: "PHP",
+            },
+          ],
+          totalEntityCount: 2,
+          omittedEntityCount: 0,
+          isComplete: true,
+        },
+      }),
     ]);
+    const metadata = buildPortfolioProfitLossMetadata(scope, {
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+      compare: "none",
+      sourceMode: "live_ledger",
+    });
+
+    expect(metadata.currency).toBeNull();
+    expect(metadata.warnings).toEqual([expect.stringContaining("different functional currencies")]);
   });
 
-  it("labels unsupported shadow configuration as live ledger output", async () => {
-    const result = await computeLivePortfolioProfitLoss(
-      [
-        group({
-          groupId: "group-a",
-          groupName: "Empty Portfolio",
-        }),
-      ],
+  it("labels unsupported shadow configuration as live ledger output", () => {
+    const scope = buildPortfolioReportScope([
+      group({
+        groupId: "group-a",
+        groupName: "Empty Portfolio",
+      }),
+    ]);
+    const metadata = buildPortfolioProfitLossMetadata(
+      scope,
       {
-        userId: "user-1",
         dateFrom: "2026-07-01",
         dateTo: "2026-07-31",
         compare: "none",
+        sourceMode: "live_ledger",
+      },
+      {
         warnings: [PORTFOLIO_PNL_SHADOW_UNSUPPORTED_WARNING],
       },
     );
 
-    expect(result.metadata.sourceMode).toBe("live_ledger");
-    expect(JSON.stringify(result.metadata)).not.toContain('"sourceMode":"shadow"');
-    expect(result.metadata.warnings).toContain(PORTFOLIO_PNL_SHADOW_UNSUPPORTED_WARNING);
-    expect(result.metadata.projectionStatus).toBe("not_applicable");
+    expect(metadata.sourceMode).toBe("live_ledger");
+    expect(JSON.stringify(metadata)).not.toContain('"sourceMode":"shadow"');
+    expect(metadata.warnings).toContain(PORTFOLIO_PNL_SHADOW_UNSUPPORTED_WARNING);
+    expect(metadata.projectionStatus).toBe("not_applicable");
   });
 
   it("uses the oldest projection timestamp and fails closed on incomplete states", () => {

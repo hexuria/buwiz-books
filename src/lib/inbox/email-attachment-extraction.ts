@@ -11,8 +11,15 @@ import {
   PdfPasswordRequiredError,
 } from "@/lib/pdf-unlock";
 import { listOrgStatementPasswords } from "@/lib/financial-account-secrets";
+import {
+  EMAIL_ATTACHMENT_EXTRACTION_VERSION,
+  hasReusableEmailAttachmentExtraction,
+} from "./email-attachment-extraction-policy";
 
-export const EMAIL_ATTACHMENT_EXTRACTION_VERSION = 1;
+export {
+  EMAIL_ATTACHMENT_EXTRACTION_VERSION,
+  hasReusableEmailAttachmentExtraction,
+} from "./email-attachment-extraction-policy";
 
 // Single source of truth for the output schema lives in the shared AI
 // schemas module (Phase-1 prompt registry reuses it from there).
@@ -51,20 +58,6 @@ export interface EnsureDocumentMatchingExtractionInput {
 }
 
 export type EnsureEmailAttachmentExtractionInput = EnsureDocumentMatchingExtractionInput;
-
-export function hasReusableEmailAttachmentExtraction(
-  document: Pick<typeof documents.$inferSelect, "metadata" | "aiTransactionCache">,
-): boolean {
-  if (document.metadata?.inboxExtraction?.version === EMAIL_ATTACHMENT_EXTRACTION_VERSION) {
-    return true;
-  }
-  if (document.metadata?.billOcr?.result || document.aiTransactionCache?.result) return true;
-  return Boolean(
-    document.metadata?.extractedAmount &&
-    document.metadata.extractedDate &&
-    (document.metadata.extractedVendor || document.metadata.extractedInvoiceNumber),
-  );
-}
 
 /**
  * Ensure a canonical document has enough cached facts for deterministic matching.

@@ -7,7 +7,7 @@
 // silently widen or break AI access fails a test instead.
 // ============================================================================
 import { describe, expect, it } from "vitest";
-import { roleHasPermission } from "../../../src/lib/auth-middleware";
+import { roleHasPermission } from "../../../src/lib/permission-policy";
 
 // Better Auth role keys as stored on memberships
 const ROLES = ["owner", "admin", "member", "client_approver", "report_viewer"] as const;

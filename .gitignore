@@ -5,9 +5,10 @@ dist-ssr
 *.local
 .env
 # Ignore every .env variant (.env.test, .env.local, .env.cloudrun*, …) but keep
-# the committed template. Prevents leaking a real key via `git add .`.
+# the committed templates. Prevents leaking a real key via `git add .`.
 .env.*
 !.env.example
+!.env.test.example
 .nitro
 .tanstack
 .output

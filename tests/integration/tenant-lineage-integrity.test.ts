@@ -19,8 +19,7 @@ import { journalHeaders } from "@/db/schema/journals";
 import { journalDuplicateMerges } from "@/db/schema/match-history";
 import { createTestDb } from "../utils/db-utils";
 
-const describeDb =
-  process.env.TEST_DATABASE_URL || process.env.DATABASE_URL ? describe : describe.skip;
+const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
 const EXPECTED_TENANT_FOREIGN_KEYS = [
   "source_records_org_parent_source_fk",

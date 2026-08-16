@@ -232,7 +232,7 @@ async function assertRequiredSchema(client: QueryClient): Promise<void> {
   `;
   if (!tables.mergeTable || !tables.conversionTable) {
     throw new Error(
-      "Legacy converter schema is missing. Run `bun run db:dedup:migrate` through 0022 first.",
+      "Legacy converter schema is missing. Run `bun run db:migrate` first; the ordered manifest applies 0022.",
     );
   }
 }

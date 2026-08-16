@@ -14,28 +14,28 @@ No remaining reviewed backlog gap prevents the scoped claim **planned applicatio
 
 ## Merged slices
 
-| Pull request | Capability |
-|---|---|
-| #23 | Enterprise account and flat Business Group foundation, tenant isolation, roles, linking, and initial performance/readiness rollout |
-| #24 | Current/prior-period comparison control and URL state |
-| #25 | Portfolio Profit and Loss with authorization, deduplication, readiness, and mixed-currency withholding |
-| #26 | Per-business projection freshness and recovery visibility |
-| #27 | P&L drill-down and scoped export |
-| #28 and #29 | Business Group administration lifecycle, permissions, audit/recovery, and exact runtime helper ACL correction |
-| #30 | Stripe subscription mirror, signed webhook reconciliation, ordering, idempotency, and quarantine evidence |
-| #31 | Self-service Checkout, hosted billing portal, reservation recovery, and Checkout ACL hardening |
+| Pull request | Capability                                                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| #23          | Enterprise account and flat Business Group foundation, tenant isolation, roles, linking, and initial performance/readiness rollout |
+| #24          | Current/prior-period comparison control and URL state                                                                              |
+| #25          | Portfolio Profit and Loss with authorization, deduplication, readiness, and mixed-currency withholding                             |
+| #26          | Per-business projection freshness and recovery visibility                                                                          |
+| #27          | P&L drill-down and scoped export                                                                                                   |
+| #28 and #29  | Business Group administration lifecycle, permissions, audit/recovery, and exact runtime helper ACL correction                      |
+| #30          | Stripe subscription mirror, signed webhook reconciliation, ordering, idempotency, and quarantine evidence                          |
+| #31          | Self-service Checkout, hosted billing portal, reservation recovery, and Checkout ACL hardening                                     |
 
 ## Implementation anchors
 
-| Capability | Primary source |
-|---|---|
-| Enterprise accounts, flat Business Groups, tenant isolation, linked-business exclusivity, and composed roles | `src/lib/business-groups/service.ts`; `drizzle/0028_enterprise_business_groups.sql`; `drizzle/0029_business_group_entity_exclusivity.sql`; `drizzle/0034_business_group_admin_guards.sql`; `drizzle/rls_hardening.sql` |
-| Multi-group selection, comparison, deduplicated portfolio metrics, and partial-access warnings | `src/routes/business-groups.tsx`; `src/routes/api/-business-groups.ts`; `src/lib/business-groups/performance.ts`; `src/lib/business-groups/projected-performance.ts` |
-| Portfolio Profit and Loss, drill-down, and export | `src/lib/business-groups/portfolio-profit-loss.ts`; `src/lib/business-groups/drilldown.ts`; `src/lib/business-groups/portfolio-profit-loss-export.ts`; `src/routes/api/-reports.ts` |
-| Projection readiness, backfill, worker queue, shadow reconciliation, and rollback modes | `src/lib/business-groups/entity-readiness.ts`; `src/components/business-groups/EntityReadinessPanel.tsx`; `drizzle/0032_reporting_projections.sql`; `drizzle/0033_projection_reconciliation.sql` |
-| Group creation, rename, archive/restore, entity links, member roles, final-owner protection, audit, and recovery | `src/lib/business-groups/service.ts`; `src/routes/api/-business-groups.ts`; `src/components/business-groups/BusinessGroupAdminModal.tsx`; `drizzle/0034_business_group_admin_guards.sql` |
-| Stripe entitlement lifecycle | `server/routes/api/enterprise/stripe-webhook.post.ts`; `src/lib/enterprise/stripe-entitlements.ts`; `drizzle/0035_enterprise_stripe_billing.sql`; `scripts/business-group-entitlement.ts` |
-| Self-service Checkout and hosted portal | `src/lib/enterprise/billing.ts`; `src/routes/api/-enterprise-billing.ts`; `src/routes/business-groups.tsx`; `drizzle/0036_enterprise_checkout.sql` |
+| Capability                                                                                                       | Primary source                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Enterprise accounts, flat Business Groups, tenant isolation, linked-business exclusivity, and composed roles     | `src/lib/business-groups/service.ts`; `drizzle/0028_enterprise_business_groups.sql`; `drizzle/0029_business_group_entity_exclusivity.sql`; `drizzle/0034_business_group_admin_guards.sql`; `drizzle/rls_hardening.sql` |
+| Multi-group selection, comparison, deduplicated portfolio metrics, and partial-access warnings                   | `src/routes/business-groups.tsx`; `src/routes/api/-business-groups.ts`; `src/lib/business-groups/performance.ts`; `src/lib/business-groups/projected-performance.ts`                                                   |
+| Portfolio Profit and Loss, drill-down, and export                                                                | `src/lib/business-groups/portfolio-profit-loss.ts`; `src/lib/business-groups/drilldown.ts`; `src/lib/business-groups/portfolio-profit-loss-export.ts`; `src/routes/api/-reports.ts`                                    |
+| Projection readiness, backfill, worker queue, shadow reconciliation, and rollback modes                          | `src/lib/business-groups/entity-readiness.ts`; `src/components/business-groups/EntityReadinessPanel.tsx`; `drizzle/0032_reporting_projections.sql`; `drizzle/0033_projection_reconciliation.sql`                       |
+| Group creation, rename, archive/restore, entity links, member roles, final-owner protection, audit, and recovery | `src/lib/business-groups/service.ts`; `src/routes/api/-business-groups.ts`; `src/components/business-groups/BusinessGroupAdminModal.tsx`; `drizzle/0034_business_group_admin_guards.sql`                               |
+| Stripe entitlement lifecycle                                                                                     | `server/routes/api/enterprise/stripe-webhook.post.ts`; `src/lib/enterprise/stripe-entitlements.ts`; `drizzle/0035_enterprise_stripe_billing.sql`; `scripts/business-group-entitlement.ts`                              |
+| Self-service Checkout and hosted portal                                                                          | `src/lib/enterprise/billing.ts`; `src/routes/api/-enterprise-billing.ts`; `src/routes/business-groups.tsx`; `drizzle/0036_enterprise_checkout.sql`                                                                     |
 
 Checkout is server-authorized, role-checked, allowance-locked, account-idempotent, and provider-reconcilable. Browser input is limited to the Enterprise account and requested allowance; price, customer, metadata, and return URLs are derived server-side. Portal sessions require the controlled configuration identified by `STRIPE_ENTERPRISE_PORTAL_CONFIGURATION_ID`.
 

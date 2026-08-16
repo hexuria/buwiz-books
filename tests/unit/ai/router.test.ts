@@ -1,16 +1,6 @@
-// ============================================================================
-// Chain resolution: precedence and the three filters. The critical property
-// is that Phase 4 is a NO-OP for an existing Gemini-only org.
-// ============================================================================
-import { describe, expect, it, vi, beforeEach } from "vitest";
-
-const { hasCredentialsForMock } = vi.hoisted(() => ({ hasCredentialsForMock: vi.fn() }));
-vi.mock("../../../src/lib/ai/credentials", () => ({
-  hasCredentialsFor: hasCredentialsForMock,
-}));
-
-import { resolveChain } from "../../../src/lib/ai/router";
-import type { OrgAiSettings } from "../../../src/lib/ai/settings";
+import { describe, expect, it } from "vitest";
+import { resolveChainPolicy } from "../../../src/lib/ai/router-policy";
+import type { OrgAiSettings } from "../../../src/lib/ai/settings-policy";
 
 const baseSettings: OrgAiSettings = {
   taskChains: null,
@@ -22,50 +12,44 @@ const baseSettings: OrgAiSettings = {
   killSwitch: false,
 };
 
-describe("resolveChain", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Default: the org has Gemini keys only — today's reality.
-    hasCredentialsForMock.mockImplementation(async (_org: string, p: string) => p === "gemini");
-  });
+describe("resolveChainPolicy", () => {
+  const geminiOnly = (provider: string) => provider === "gemini";
 
-  it("is a no-op for a Gemini-only org: one Gemini hop, everything else filtered", async () => {
-    const { hops, filtered } = await resolveChain({
+  it("is a no-op for a Gemini-only organization", async () => {
+    const { hops, filtered } = await resolveChainPolicy({
       task: "transaction_parse",
-      orgId: "org-1",
       settings: baseSettings,
+      hasCredentialsFor: geminiOnly,
     });
+
     expect(hops).toEqual([{ provider: "gemini", model: expect.any(String) }]);
-    // The Anthropic hop is dropped for lack of allowlisting, not silently kept.
-    expect(filtered.some((f) => f.provider === "anthropic")).toBe(true);
+    expect(filtered.some((entry) => entry.provider === "anthropic")).toBe(true);
   });
 
-  it("keeps the Anthropic hop once allowlisted AND credentialed", async () => {
-    hasCredentialsForMock.mockResolvedValue(true);
-    const { hops } = await resolveChain({
+  it("keeps an allowlisted and credentialed provider", async () => {
+    const { hops } = await resolveChainPolicy({
       task: "transaction_parse",
-      orgId: "org-1",
       settings: { ...baseSettings, providerAllowlist: ["gemini", "anthropic"] },
+      hasCredentialsFor: () => true,
     });
-    expect(hops.map((h) => h.provider)).toEqual(["gemini", "anthropic"]);
+
+    expect(hops.map((hop) => hop.provider)).toEqual(["gemini", "anthropic"]);
   });
 
-  it("drops an allowlisted provider that has no credentials", async () => {
-    hasCredentialsForMock.mockImplementation(async (_o: string, p: string) => p === "gemini");
-    const { hops, filtered } = await resolveChain({
+  it("drops an allowlisted provider without credentials", async () => {
+    const { hops, filtered } = await resolveChainPolicy({
       task: "transaction_parse",
-      orgId: "org-1",
       settings: { ...baseSettings, providerAllowlist: ["gemini", "anthropic"] },
+      hasCredentialsFor: geminiOnly,
     });
-    expect(hops.map((h) => h.provider)).toEqual(["gemini"]);
-    expect(filtered.find((f) => f.provider === "anthropic")?.reason).toBe("no_credentials");
+
+    expect(hops.map((hop) => hop.provider)).toEqual(["gemini"]);
+    expect(filtered.find((entry) => entry.provider === "anthropic")?.reason).toBe("no_credentials");
   });
 
-  it("NEVER routes a document task off Gemini, even if an org override says so", async () => {
-    hasCredentialsForMock.mockResolvedValue(true);
-    const { hops, filtered } = await resolveChain({
+  it("never routes a document task away from Gemini", async () => {
+    const { hops, filtered } = await resolveChainPolicy({
       task: "statement_ocr",
-      orgId: "org-1",
       settings: {
         ...baseSettings,
         providerAllowlist: ["gemini", "openai"],
@@ -76,53 +60,59 @@ describe("resolveChain", () => {
           ],
         },
       },
+      hasCredentialsFor: () => true,
     });
-    expect(hops.every((h) => h.provider === "gemini")).toBe(true);
-    expect(filtered.find((f) => f.provider === "openai")?.reason).toBe("ocr_policy_gemini_only");
+
+    expect(hops.every((hop) => hop.provider === "gemini")).toBe(true);
+    expect(filtered.find((entry) => entry.provider === "openai")?.reason).toBe(
+      "ocr_policy_gemini_only",
+    );
   });
 
-  it("honors an org chain override for a text task", async () => {
-    hasCredentialsForMock.mockResolvedValue(true);
-    const { hops } = await resolveChain({
+  it("honors an organization chain override for a text task", async () => {
+    const { hops } = await resolveChainPolicy({
       task: "match_assist",
-      orgId: "org-1",
       settings: {
         ...baseSettings,
         providerAllowlist: ["gemini", "anthropic"],
         taskChains: { match_assist: [{ provider: "anthropic", model: "claude-custom" }] },
       },
+      hasCredentialsFor: () => true,
     });
+
     expect(hops).toEqual([{ provider: "anthropic", model: "claude-custom" }]);
   });
 
-  it("falls back to the org's legacy per-category model preference", async () => {
-    const { hops } = await resolveChain({
+  it("falls back to the legacy per-category model preference", async () => {
+    const { hops } = await resolveChainPolicy({
       task: "statement_ocr",
-      orgId: "org-1",
       settings: baseSettings,
       orgMetadata: JSON.stringify({ aiModelOcr: "gemini-legacy-choice" }),
+      hasCredentialsFor: geminiOnly,
     });
+
     expect(hops[0]).toEqual({ provider: "gemini", model: "gemini-legacy-choice" });
   });
 
-  it("an explicit model override wins over everything", async () => {
-    const { hops } = await resolveChain({
+  it("lets an explicit model override win", async () => {
+    const { hops } = await resolveChainPolicy({
       task: "statement_ocr",
-      orgId: "org-1",
       settings: baseSettings,
       orgMetadata: JSON.stringify({ aiModelOcr: "ignored" }),
       modelOverride: "explicit-model",
+      hasCredentialsFor: geminiOnly,
     });
+
     expect(hops).toEqual([{ provider: "gemini", model: "explicit-model" }]);
   });
 
-  it("returns no hops when the org has no credentials at all", async () => {
-    hasCredentialsForMock.mockResolvedValue(false);
-    const { hops } = await resolveChain({
+  it("returns no hops when the organization has no credentials", async () => {
+    const { hops } = await resolveChainPolicy({
       task: "date_parse",
-      orgId: "org-1",
       settings: baseSettings,
+      hasCredentialsFor: () => false,
     });
+
     expect(hops).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@ import {
   buildEntityPerformanceMetric,
   dedupeGroupAccess,
   type EntityPerformanceMetric,
-} from "../../src/lib/business-groups/performance";
+} from "../../src/lib/business-groups/performance-model";
 
 const sharedBusiness = {
   id: "entity-a",
