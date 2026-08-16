@@ -91,6 +91,15 @@ jobs:
       - name: Push schema to test DB
         run: bun x drizzle-kit push --force
 
+      # 0028-0036 create guards, functions and triggers that exist in no Drizzle
+      # schema file, so push cannot produce them and the Business Group suites
+      # fail without them -- they assert that the database *rejects* invalid
+      # operations, and an absent guard rejects nothing. The workflow this
+      # replaced applied exactly this range. The adapter's 0028/0029
+      # compatibility preparation is what lets them land on a pushed schema.
+      - name: Apply Enterprise migrations to test DB
+        run: bun run db:enterprise:migrate
+
       - name: Apply RLS policies to test DB
         run: bun run db:rls
 

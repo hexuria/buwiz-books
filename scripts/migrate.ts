@@ -10,6 +10,7 @@ import type { MigrationReport } from "../src/lib/migrations/engine";
 interface CliOptions {
   readonly command: MigrationEntrypointCommand;
   readonly phase: MigrationApplyPhase;
+  readonly from?: string;
   readonly through?: string;
   readonly json: boolean;
 }
@@ -31,6 +32,7 @@ Usage: bun run scripts/migrate.ts <status|verify|apply> [options]
 
 Options:
   --phase=all|pre_schema|post_schema  Limit apply to one lifecycle phase.
+  --from=NNNN                        Start at a managed migration id.
   --through=NNNN                     Stop at a managed migration id.
   --json                             Print the report as JSON.
   --help                             Show this help.
@@ -43,7 +45,7 @@ Exits non-zero whenever the report is not ok, including a blocked or
 drifted status, so Make and CI can act on the result.
 `;
 
-const VALUED_OPTIONS = ["--phase", "--through"] as const;
+const VALUED_OPTIONS = ["--phase", "--from", "--through"] as const;
 type ValuedOption = (typeof VALUED_OPTIONS)[number];
 
 function parsePhase(value: string): MigrationApplyPhase {
@@ -59,6 +61,7 @@ export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequ
   }
 
   let phase: MigrationApplyPhase = "all";
+  let from: string | undefined;
   let through: string | undefined;
   let json = false;
   for (let index = 0; index < rest.length; index += 1) {
@@ -85,6 +88,7 @@ export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequ
     }
     if (!value) throw new Error(`${name} requires a value.`);
     if (name === "--phase") phase = parsePhase(value);
+    else if (name === "--from") from = value;
     else through = value;
   }
 
@@ -93,9 +97,10 @@ export function parseMigrationCliArgs(argv: readonly string[]): MigrationCliRequ
   // though it had been bounded.
   if (command !== "apply") {
     if (phase !== "all") throw new Error("--phase is only valid with apply.");
+    if (from !== undefined) throw new Error("--from is only valid with apply.");
     if (through !== undefined) throw new Error("--through is only valid with apply.");
   }
-  return { kind: "run", options: { command, phase, through, json } };
+  return { kind: "run", options: { command, phase, from, through, json } };
 }
 
 /**
@@ -215,6 +220,7 @@ export async function main(
     ...(options.command === "apply"
       ? {
           phase: options.phase,
+          from: options.from,
           through: options.through,
           hooks: lifecycleHooks(target, databaseUrl, environment, processRunner),
         }

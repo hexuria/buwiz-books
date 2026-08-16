@@ -68,7 +68,13 @@ describe("parseMigrationCliArgs", () => {
     expect(separated).toEqual(joined);
     expect(joined).toEqual({
       kind: "run",
-      options: { command: "apply", phase: "pre_schema", through: "0027", json: false },
+      options: {
+        command: "apply",
+        phase: "pre_schema",
+        from: undefined,
+        through: "0027",
+        json: false,
+      },
     });
   });
 
@@ -86,6 +92,7 @@ describe("parseMigrationCliArgs", () => {
     // Both selectors are apply-only. Accepting one silently while rejecting the
     // other would make a bounded-looking read command report the whole manifest.
     [["status", "--through=0024"], "--through is only valid with apply"],
+    [["status", "--from=0028"], "--from is only valid with apply"],
     [["verify", "--through", "0024"], "--through is only valid with apply"],
   ])("rejects %j", (argv, message) => {
     expect(() => parseMigrationCliArgs(argv)).toThrow(message);
@@ -94,7 +101,13 @@ describe("parseMigrationCliArgs", () => {
   it("carries --json through", () => {
     expect(parseMigrationCliArgs(["verify", "--json"])).toEqual({
       kind: "run",
-      options: { command: "verify", phase: "all", through: undefined, json: true },
+      options: {
+        command: "verify",
+        phase: "all",
+        from: undefined,
+        through: undefined,
+        json: true,
+      },
     });
   });
 });
@@ -140,6 +153,22 @@ describe("main", () => {
     await expect(main(["--help"], environment)).resolves.toBeUndefined();
 
     expect(runEntrypoint).not.toHaveBeenCalled();
+  });
+
+  it("carries a lower bound so a suffix of the manifest can be applied alone", async () => {
+    runEntrypoint.mockResolvedValue(report(true, "apply"));
+
+    await main(["apply", "--from=0028", "--through=0036"], environment, async () => undefined);
+
+    // CI applies only the Enterprise migrations onto a pushed schema, exactly as
+    // the workflow it replaced did; without a lower bound the engine would also
+    // plan 0018-0027 and stop on migrations that a pushed database satisfies
+    // differently.
+    expect(runEntrypoint.mock.calls[0]?.[0]).toMatchObject({
+      command: "apply",
+      from: "0028",
+      through: "0036",
+    });
   });
 
   it("forwards the bounded selection to the entrypoint", async () => {

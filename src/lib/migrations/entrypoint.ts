@@ -17,6 +17,7 @@ export interface MigrationEntrypointOptions {
   readonly databaseUrl?: string;
   readonly target?: DatabaseTarget;
   readonly phase?: MigrationApplyPhase;
+  readonly from?: string;
   readonly through?: string;
   readonly hooks?: MigrationLifecycleHooks;
 }
@@ -40,21 +41,33 @@ function invalid(message: string): never {
 function selectMigrations(
   migrations: readonly PreparedMigration[],
   phase: MigrationApplyPhase,
+  from: string | undefined,
   through: string | undefined,
 ): readonly PreparedMigration[] {
-  if (through !== undefined && !/^\d{4}$/.test(through)) {
-    invalid(`--through must be a four-digit migration id, received ${through}`);
+  for (const [flag, value] of [
+    ["--from", from],
+    ["--through", through],
+  ] as const) {
+    if (value !== undefined && !/^\d{4}$/.test(value)) {
+      invalid(`${flag} must be a four-digit migration id, received ${value}`);
+    }
+  }
+  if (from !== undefined && through !== undefined && from > through) {
+    invalid(`--from ${from} is after --through ${through}`);
   }
 
   const selected = migrations.filter(
     (migration) =>
       (phase === "all" || migration.phase === phase) &&
+      (from === undefined || migration.id >= from) &&
       (through === undefined || migration.id <= through),
   );
   if (selected.length === 0) {
-    invalid(
-      `the requested ${phase} phase${through === undefined ? "" : ` through ${through}`} has no managed migrations`,
-    );
+    const bounds = [
+      from === undefined ? "" : ` from ${from}`,
+      through === undefined ? "" : ` through ${through}`,
+    ].join("");
+    invalid(`the requested ${phase} phase${bounds} has no managed migrations`);
   }
   return selected;
 }
@@ -135,7 +148,7 @@ export async function runMigrationEntrypoint(
 
   const target = resolveTarget(options, createTarget);
   const loaded = await loadMigrations();
-  const migrations = selectMigrations(loaded, phase, options.through);
+  const migrations = selectMigrations(loaded, phase, options.from, options.through);
   const adapter = createAdapter(target);
 
   try {
