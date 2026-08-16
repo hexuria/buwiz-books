@@ -92,8 +92,10 @@ const schema0032: CatalogExpectation = {
       column("organization_id", "text", true),
       column("activity_date", "date", true),
       column("account_id", "uuid", true),
-      column("total_debit", "numeric(20,8)", true, "0"),
-      column("total_credit", "numeric(20,8)", true, "0"),
+      // pg_get_expr renders a numeric default as a typed literal, never as the
+      // bare token the migration was written with, so "0" matched no database.
+      column("total_debit", "numeric(20,8)", true, "'0'::numeric"),
+      column("total_credit", "numeric(20,8)", true, "'0'::numeric"),
       column("computed_at", "timestamp with time zone", true, "now()"),
     ]),
     exactTable("organization_reporting_dirty_dates", [

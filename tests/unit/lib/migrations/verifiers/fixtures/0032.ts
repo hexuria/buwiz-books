@@ -30,8 +30,9 @@ function addSchema0032(snapshot: CatalogSnapshot) {
       column("organization_id", 1),
       column("activity_date", 2, "date"),
       column("account_id", 3, "uuid"),
-      column("total_debit", 4, "numeric(20,8)", true, "0"),
-      column("total_credit", 5, "numeric(20,8)", true, "0"),
+      // As pg_get_expr renders it, not as the migration spells it.
+      column("total_debit", 4, "numeric(20,8)", true, "'0'::numeric"),
+      column("total_credit", 5, "numeric(20,8)", true, "'0'::numeric"),
       column("computed_at", 6, "timestamp with time zone", true, "now()"),
     ],
     organization_reporting_dirty_dates: [
