@@ -1,0 +1,73 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Buwiz Books Internal",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#E2B714",
+    "light": "#F2C724",
+    "dark": "#C29704"
+  },
+  "theme": "mint",
+  "topbarCtaButton": {
+    "name": "Open App",
+    "url": "https://digits.mvgreenland.com"
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Docs",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["introduction"]
+          },
+          {
+            "group": "Domain Registrars (Setup)",
+            "pages": [
+              "infrastructure/domain-registrars/hostinger",
+              "infrastructure/domain-registrars/godaddy",
+              "infrastructure/domain-registrars/namecheap",
+              "infrastructure/domain-registrars/squarespace"
+            ]
+          },
+          {
+            "group": "Cloud Providers (Setup)",
+            "pages": [
+              "infrastructure/providers/gcp",
+              "infrastructure/providers/neon",
+              "infrastructure/providers/cloudflare",
+              "infrastructure/providers/google-oauth",
+              "infrastructure/providers/resend"
+            ]
+          },
+          {
+            "group": "Infrastructure & Ops",
+            "pages": [
+              "infrastructure/deployment",
+              "infrastructure/database",
+              "infrastructure/job-worker",
+              "infrastructure/providers/gcp-domain-mapping",
+              "infrastructure/document-domain-mapping"
+            ]
+          },
+          {
+            "group": "System Architecture",
+            "pages": [
+              "architecture/ledger_types",
+              "architecture/journal",
+              "architecture/party_category_mapping",
+              "architecture/transaction_category_mapping"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "footerSocials": {
+    "github": "https://github.com/goldcoders-corp/buwiz-books"
+  }
+}

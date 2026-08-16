@@ -1,0 +1,157 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "Buwiz Books",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#27ae60",
+    "light": "#2ecc71",
+    "dark": "#1e8449"
+  },
+  "theme": "mint",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "User Guide",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["introduction", "quickstart", "navigation"]
+          },
+          {
+            "group": "Accounting",
+            "pages": [
+              "ledger/overview",
+              "ledger/viewing-transactions",
+              "ledger/creating-transactions",
+              "ledger/editing-transactions",
+              "ledger/importing-transactions",
+              "ledger/exporting-data",
+              "ledger/financial-package"
+            ]
+          },
+          {
+            "group": "Reconciliations",
+            "pages": [
+              "reconciliations/overview",
+              "ledger/matching-transactions",
+              "reconciliations/creating-reconciliation",
+              "reconciliations/matching-process"
+            ]
+          },
+          {
+            "group": "Category Manager",
+            "pages": ["accounts/overview", "accounts/managing-categories", "accounts/account-types"]
+          },
+          {
+            "group": "Dimensions",
+            "pages": ["dimensions/departments", "dimensions/locations"]
+          },
+          {
+            "group": "Financials",
+            "pages": [
+              "financials/overview",
+              "financials/profit-loss",
+              "financials/balance-sheet",
+              "financials/cash-flow",
+              "financials/trial-balance",
+              "financials/aging-reports"
+            ]
+          },
+          {
+            "group": "Bills",
+            "pages": [
+              "bills/overview",
+              "bills/creating-bills",
+              "bills/managing-bills",
+              "bills/ai-bill-scanning"
+            ]
+          },
+          {
+            "group": "Invoices",
+            "pages": [
+              "invoices/overview",
+              "invoices/creating-invoices",
+              "invoices/sending-invoices",
+              "invoices/payment-portal"
+            ]
+          },
+          {
+            "group": "Documents",
+            "pages": ["documents/overview", "documents/uploading", "documents/ai-classification"]
+          },
+          {
+            "group": "Entities",
+            "pages": [
+              "entities/overview",
+              "entities/banks-cards",
+              "entities/vendors",
+              "entities/customers",
+              "entities/employees",
+              "entities/shareholders",
+              "entities/lenders",
+              "entities/government"
+            ]
+          },
+          {
+            "group": "Connections",
+            "pages": [
+              "connections/overview",
+              "connections/payment-gateways",
+              "connections/bank-accounts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Administration",
+        "groups": [
+          {
+            "group": "Settings",
+            "pages": [
+              "admin/organization-setup",
+              "admin/organization-settings",
+              "admin/import-export",
+              "admin/mappings"
+            ]
+          },
+          {
+            "group": "Personal",
+            "pages": ["admin/team-members", "admin/profile-settings"]
+          },
+          {
+            "group": "Enterprise",
+            "pages": ["admin/enterprise-business-groups"]
+          }
+        ]
+      },
+      {
+        "tab": "Tutorials",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["tutorials/first-setup"]
+          },
+          {
+            "group": "Monthly Workflows",
+            "pages": ["tutorials/monthly-close-process"]
+          },
+          {
+            "group": "Reporting",
+            "pages": ["tutorials/generating-financial-package"]
+          }
+        ]
+      }
+    ]
+  },
+  "feedback": {
+    "thumbsRating": true,
+    "suggestEdit": true
+  },
+  "search": {
+    "prompt": "Search documentation..."
+  }
+}

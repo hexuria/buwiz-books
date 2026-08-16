@@ -1,0 +1,65 @@
+---
+title: AI Classification
+description: Automatic document detection and data extraction
+---
+
+## How AI Classification Works
+
+When you upload a document, Buwiz Books automatically:
+
+1. **Identifies the document type** — Is it a receipt, invoice, bank statement, or contract?
+2. **Extracts key data** — Dates, amounts, vendor/customer names, line items
+3. **Suggests actions** — Link to existing transactions, create new bills, or file for reference
+
+## Classification Types
+
+| Classification     | What AI Looks For                                               |
+| ------------------ | --------------------------------------------------------------- |
+| **Receipt**        | Purchase amounts, vendor name, date, payment method             |
+| **Invoice/Bill**   | Invoice number, line items, due date, bill-to/ship-to addresses |
+| **Bank Statement** | Account number, transaction list, opening/closing balances      |
+| **Contract**       | Party names, terms, dates, signatures                           |
+| **Tax Document**   | Tax form numbers, EIN/SSN, filing periods                       |
+
+## Data Extraction
+
+For receipts and invoices, AI extracts structured data:
+
+```json
+{
+  "vendor": "Office Depot",
+  "date": "2026-03-15",
+  "total": 127.43,
+  "taxAmount": 10.62,
+  "items": [
+    { "description": "Printer Paper (5 reams)", "amount": 45.99 },
+    { "description": "Ink Cartridges (3-pack)", "amount": 70.82 }
+  ]
+}
+```
+
+This data is used to:
+
+- Pre-fill bill entry forms
+- Suggest matching transactions in the ledger
+- Auto-categorize expenses based on description patterns
+
+## Accuracy and Review
+
+<Note>
+  AI classification is highly accurate for standard business documents but should always be
+  reviewed. Confidence indicators show how certain the AI is about each extracted field.
+</Note>
+
+- **High Confidence** (green) — Very likely correct, quick confirmation only
+- **Medium Confidence** (amber) — Reasonable guess, verify the value
+- **Low Confidence** (red) — Needs manual review and correction
+
+## Statement Processing
+
+For **bank statements**, AI performs advanced extraction:
+
+1. Identifies the financial institution and account
+2. Extracts each transaction line (date, description, amount)
+3. Matches against your ledger automatically
+4. Flags unmatched items for reconciliation

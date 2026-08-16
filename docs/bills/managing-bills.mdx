@@ -1,0 +1,72 @@
+---
+title: Managing Bills
+description: Track payments, manage due dates, and handle bill lifecycle
+---
+
+<img src="/images/bills/managing-bills.png" alt="Managing Bills" />
+
+## Viewing Bill Details
+
+Click any bill in the list to open its detail view showing:
+
+- Full bill information (vendor, dates, amounts)
+- Line items with category assignments
+- Payment history
+- Attached documents
+- Comments and audit trail
+
+## Recording Payments
+
+To record a payment against a bill:
+
+<Steps>
+  <Step title="Open the Bill">Click on the bill you want to pay.</Step>
+  <Step title="Click Record Payment">Click the **Record Payment** button.</Step>
+  <Step title="Enter Payment Details">
+    - **Payment Date** — When the payment was made - **Amount** — Full or partial amount - **Payment
+    Account** — Which bank/cash account the money came from - **Reference** — Check number, transfer
+    reference, etc.
+  </Step>
+  <Step title="Save">The payment is recorded and the bill balance updates automatically.</Step>
+</Steps>
+
+The payment generates a journal entry:
+
+| Line | Account          | Debit   | Credit  |
+| ---- | ---------------- | ------- | ------- |
+| 1    | Accounts Payable | $500.00 | —       |
+| 2    | Bank Account     | —       | $500.00 |
+
+## Partial Payments
+
+Bills can be paid in installments:
+
+- Each payment reduces the outstanding balance
+- The bill status changes to **Partially Paid**
+- When the balance reaches zero, status becomes **Paid**
+
+## Overdue Management
+
+Bills past their due date are automatically flagged as **Overdue**. Use the bill list filters to:
+
+- **Sort by due date** — See what needs attention first
+- **Filter by status** — View only overdue items
+- **Filter by vendor** — See all outstanding amounts per vendor
+
+<Tip>
+  Run the [AP Aging Report](/financials/aging-reports) regularly to get a comprehensive view of all
+  outstanding payables.
+</Tip>
+
+## Voiding a Bill
+
+To void a posted bill:
+
+1. Open the bill detail view
+2. Click **⋯ menu → Void**
+3. Confirm — this creates a reversing journal entry
+
+<Warning>
+  Voiding a bill with recorded payments will also reverse those payment entries. Ensure this is
+  intentional.
+</Warning>

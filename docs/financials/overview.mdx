@@ -1,0 +1,67 @@
+---
+title: Financials
+description: View and export your core accounting reports
+---
+
+## Overview
+
+The **Financials** page provides five standard financial reports generated in real-time from your ledger data. Navigate to it from the sidebar.
+
+## Available Reports
+
+<CardGroup cols={2}>
+  <Card title="Profit & Loss" icon="chart-line" href="/financials/profit-loss">
+    Revenue minus expenses for a time period. Also known as the Income Statement.
+  </Card>
+  <Card title="Balance Sheet" icon="scale-balanced" href="/financials/balance-sheet">
+    Snapshot of assets, liabilities, and equity at a point in time.
+  </Card>
+  <Card title="Cash Flow" icon="money-bill-wave" href="/financials/cash-flow">
+    How cash moved through operating, investing, and financing activities.
+  </Card>
+  <Card title="Trial Balance" icon="list-check" href="/financials/trial-balance">
+    All accounts with their debit and credit balances to verify the books balance.
+  </Card>
+  <Card title="Aging Reports" icon="clock" href="/financials/aging-reports">
+    Accounts Receivable and Accounts Payable broken down by how overdue they are.
+  </Card>
+</CardGroup>
+
+## Navigation
+
+Reports are organized as tabs across the top of the Financials page:
+
+```
+P&L | Balance Sheet | Cash Flow | Trial Balance | Aging
+```
+
+Click any tab to switch between reports. The selected date range persists across tabs.
+
+## Date Controls
+
+Financial reports use different date semantics depending on the report type:
+
+| Report            | Date Meaning                                        |
+| ----------------- | --------------------------------------------------- |
+| **P&L**           | Revenue/expenses **during** the selected period     |
+| **Balance Sheet** | Point-in-time snapshot **as of** the end date       |
+| **Cash Flow**     | Cash movements **during** the selected period       |
+| **Trial Balance** | Cumulative balances from inception through end date |
+| **Aging**         | Outstanding amounts **as of** a specific date       |
+
+## Comparison Mode
+
+For Profit & Loss reports, you can enable comparison to see:
+
+- **Prior Period** — Compare against the same-length prior period
+- **Prior Year** — Compare against the same period in the previous year
+- **Budget** — Compare against your budget (when configured)
+
+Comparison shows both dollar and percentage change for each line item.
+
+## Exporting Reports
+
+All reports can be exported individually or as part of a [Financial Package](/ledger/financial-package):
+
+- Click the **export** button on any report tab to download that report as XLSX
+- Use the **Download Financial Package** from the Ledger to get all reports in a single ZIP

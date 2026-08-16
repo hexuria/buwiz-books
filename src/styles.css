@@ -1,0 +1,316 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* CSS Custom Properties for Design System */
+@theme {
+  /* Primary Brand Color - Green */
+  --color-primary: #22c55e;
+  --color-primary-hover: #16a34a;
+  --color-primary-light: #86efac;
+  --color-primary-dark: #15803d;
+  --color-primary-50: #f0fdf4;
+  --color-primary-100: #dcfce7;
+  --color-primary-200: #bbf7d0;
+  --color-primary-300: #86efac;
+  --color-primary-400: #4ade80;
+  --color-primary-500: #22c55e;
+  --color-primary-600: #16a34a;
+  --color-primary-700: #15803d;
+  --color-primary-800: #166534;
+  --color-primary-900: #14532d;
+
+  /* Background colors - Light theme (default) */
+  --color-background: #ffffff;
+  --color-surface: #f8fafc;
+  --color-surface-elevated: #f1f5f9;
+  --color-border: #e2e8f0;
+  --color-border-subtle: #cbd5e1;
+
+  /* Text colors - Light theme (default) */
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-muted: #94a3b8;
+
+  /* Semantic colors */
+  --color-accent: var(--color-primary);
+  --color-accent-hover: var(--color-primary-hover);
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  /* Account type colors */
+  --color-asset: #14b8a6;
+  --color-liability: #fb923c;
+  --color-equity: #a855f7;
+  --color-revenue: #3b82f6;
+  --color-expense: #f87171;
+
+  /* Accounting-specific colors */
+  --color-debit: #22c55e;
+  --color-credit: #ef4444;
+  --color-income: #22c55e;
+
+  /* App Design System Colors */
+  --color-app-bg-start: #a5cbe7;
+  --color-app-bg-end: #9db9f0;
+  --color-app-card: #f5f6f9;
+  --color-app-header-blue: #2490ce;
+  --color-app-header-teal: #2a9d8f;
+  --color-app-text-navy: #32497f;
+  --color-app-text-light: #6b7c93;
+  --color-app-btn-neon: #00ffbe;
+  --color-app-btn-neon-dark: #00d9a0;
+
+  /* Spacing scale */
+  /* Keep semantic app tokens outside Tailwind's --spacing-* namespace.
+     Using names such as --spacing-sm makes utilities like max-w-sm resolve
+     to 0.5rem instead of Tailwind's container width. */
+  --app-spacing-xs: 0.25rem;
+  --app-spacing-sm: 0.5rem;
+  --app-spacing-md: 1rem;
+  --app-spacing-lg: 1.5rem;
+  --app-spacing-xl: 2rem;
+  --app-spacing-2xl: 3rem;
+
+  /* Border radius */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+
+  /* Font families */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+/* Dark theme overrides — activated by .dark class on <html> */
+.dark {
+  --color-background: #0a0a0b;
+  --color-surface: #141416;
+  --color-surface-elevated: #1c1c1f;
+  --color-border: #2a2a2d;
+  --color-border-subtle: #1f1f22;
+
+  --color-text-primary: #fafafa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #71717a;
+
+  /* App design tokens — dark overrides */
+  --color-app-bg-start: #0f172a;
+  --color-app-bg-end: #1e293b;
+  --color-app-card: #1e293b;
+  --color-app-text-navy: #e2e8f0;
+  --color-app-text-light: #94a3b8;
+}
+
+/* Base styles */
+body {
+  @apply bg-background text-text-primary font-sans antialiased;
+  margin: 0;
+}
+
+code {
+  @apply font-mono;
+}
+
+/* ============================================================================
+   App Category Manager – Retained Styles
+   ============================================================================ */
+
+/* Full-page gradient background (complex radial-gradient, not expressible in Tailwind) */
+.app-page-bg {
+  min-height: 100vh;
+  background:
+    radial-gradient(at 38% 45%, rgba(222, 227, 223, 0.7) 0%, rgba(220, 226, 223, 0) 90%),
+    linear-gradient(135deg, var(--color-app-bg-start), var(--color-app-bg-end));
+}
+
+.dark .app-page-bg {
+  background:
+    radial-gradient(at 38% 45%, rgba(30, 41, 59, 0.5) 0%, rgba(15, 23, 42, 0) 90%),
+    linear-gradient(135deg, #0f172a, #1e293b);
+}
+
+/* Spinner (animation, best kept as CSS) */
+.app-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: var(--color-app-header-teal);
+  border-radius: 50%;
+  animation: app-spin 0.8s linear infinite;
+}
+
+.dark .app-spinner {
+  border-color: #334155;
+  border-top-color: var(--color-app-header-teal);
+}
+
+@keyframes app-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slide-up {
+  animation: slideUp 0.3s ease-out;
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Thin, dark-mode-friendly scrollbar */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+}
+.dark .thin-scrollbar {
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+.thin-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+}
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+.dark .thin-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+}
+.dark .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* ─── Safe areas ──────────────────────────────────────────────────────────────
+   iOS standalone (PWA) draws under the notch and the home indicator once the
+   viewport meta carries `viewport-fit=cover`. Any fixed top/bottom chrome — the
+   mobile app bar, the bottom tab bar, sheet footers — must pad itself out of
+   those regions or its controls sit under system UI and cannot be tapped.
+   The `max()` keeps a sane minimum on hardware with no inset.               */
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+.pl-safe {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+.pr-safe {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+/* Bottom chrome that needs its own padding *plus* the inset. */
+.pb-safe-3 {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+}
+.h-safe-bottom {
+  height: env(safe-area-inset-bottom);
+}
+
+/* ─── Horizontal scroll affordance ────────────────────────────────────────────
+   A table that scrolls sideways with no visual hint reads as truncated data,
+   which in an accounting app reads as missing money. The fades appear only when
+   there is something to scroll to, via a background-attachment trick that needs
+   no JS.                                                                     */
+.scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.scroll-x-shadow {
+  background:
+    linear-gradient(to right, var(--scroll-shadow-bg, #fff) 30%, rgba(255, 255, 255, 0)) left center,
+    linear-gradient(to left, var(--scroll-shadow-bg, #fff) 30%, rgba(255, 255, 255, 0)) right center,
+    linear-gradient(to right, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0)) left center,
+    linear-gradient(to left, rgba(0, 0, 0, 0.12), rgba(0, 0, 0, 0)) right center;
+  background-repeat: no-repeat;
+  background-size:
+    40px 100%,
+    40px 100%,
+    14px 100%,
+    14px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+.dark .scroll-x-shadow {
+  --scroll-shadow-bg: #0f172a;
+}
+
+/* Money and any column the eye scans vertically. Proportional digits make
+   columns of figures ragged and slow to compare. */
+.tabular-figures {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* Minimum comfortable touch target. Expands the *hit* area without forcing the
+   icon to grow, via a centred pseudo-element. */
+.touch-target {
+  position: relative;
+}
+.touch-target::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-up {
+    animation: none;
+  }
+}
+
+/* ─── Hover-revealed actions on touch ─────────────────────────────────────────
+   28 places in this app hide row actions behind `opacity-0 group-hover:opacity-100`.
+   A coarse pointer never generates hover, so on a phone those controls are not
+   "subtle" — they are invisible and unreachable, which is why several rows look
+   like they lost functionality at small sizes.
+
+   The selectors below deliberately match only elements that opted into the
+   hover-reveal pattern (both classes present), so nothing else is affected. Two
+   class selectors out-specify the single `.opacity-0` they override.          */
+@media (hover: none) {
+  .opacity-0.group-hover\:opacity-100,
+  .opacity-0.group-hover\:opacity-70,
+  .opacity-0.group-hover\:opacity-60 {
+    opacity: 1;
+  }
+}

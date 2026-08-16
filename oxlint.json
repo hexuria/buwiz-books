@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["react", "typescript", "unicorn"],
+  "rules": {
+    "no-unused-vars": "warn",
+    "react/jsx-no-duplicate-props": "error"
+  }
+}

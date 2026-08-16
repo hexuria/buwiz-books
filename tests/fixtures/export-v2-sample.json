@@ -1,0 +1,52 @@
+{
+  "meta": {
+    "version": 2,
+    "exportedAt": "2026-04-22T05:30:00.000Z",
+    "organizationName": "Test Org",
+    "organizationSlug": "test-org",
+    "entities": ["categories", "departments", "vendors"]
+  },
+  "data": {
+    "categories": [
+      {
+        "accountNumber": "10000",
+        "name": "Assets",
+        "description": "All company assets",
+        "accountType": "asset",
+        "subtype": null,
+        "parentName": null,
+        "icon": "Wallet",
+        "status": "active",
+        "isActive": true
+      }
+    ],
+    "departments": [
+      {
+        "name": "Marketing",
+        "code": "MKT",
+        "description": "Marketing team",
+        "parentName": null,
+        "isActive": true
+      }
+    ],
+    "vendors": [
+      {
+        "name": "Office Depot",
+        "partyType": "vendor",
+        "email": "sales@officedepot.com",
+        "phone": "555-0200",
+        "website": "https://officedepot.com",
+        "address": null,
+        "is1099Vendor": false,
+        "taxId": null,
+        "bankRoutingNumber": null,
+        "bankAccountNumber": null,
+        "mailingAddress": null,
+        "paymentTerms": "net_30",
+        "description": "Office supplies vendor",
+        "notes": null,
+        "isActive": true
+      }
+    ]
+  }
+}

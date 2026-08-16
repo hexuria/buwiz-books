@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1770346113219,
+      "tag": "0000_public_gamma_corps",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1770347194808,
+      "tag": "0001_pretty_carnage",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1770372442433,
+      "tag": "0002_deep_dark_phoenix",
+      "breakpoints": true
+    }
+  ]
+}

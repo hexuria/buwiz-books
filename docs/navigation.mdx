@@ -1,0 +1,76 @@
+---
+title: Navigation
+description: Understanding the Buwiz Books interface layout
+---
+
+## Sidebar Navigation
+
+The main navigation is a collapsible sidebar on the left side of the screen. It provides quick access to all areas of the application.
+
+<img src="/images/navigation.png" alt="Buwiz Books sidebar navigation" />
+
+### Main Sections
+
+The sidebar is organized into these sections:
+
+| Section        | Description                                                                         |
+| -------------- | ----------------------------------------------------------------------------------- |
+| **Accounting** | Core bookkeeping: Ledger, Reconciliations, Category Manager, Departments, Locations |
+| **Financials** | Financial reports: P&L, Balance Sheet, Cash Flow, Trial Balance, Aging              |
+| **Bills**      | Accounts payable management                                                         |
+| **Invoices**   | Accounts receivable and invoicing                                                   |
+| **Documents**  | File storage and AI-powered document classification                                 |
+| **Entities**   | Banks & Cards, Vendors, Customers, Employees, Shareholders, Lenders, Government     |
+
+### Bottom Section
+
+At the bottom of the sidebar you'll find:
+
+- **Profile** — Click your name/avatar to manage your personal settings
+- **Theme Toggle** — Switch between Light, Dark, and System theme modes
+- **Settings** — Organization-level configuration
+- **Mappings** — Category and entity mapping rules
+- **Help Center** — Access support resources
+- **Sign Out** — Log out of your account
+
+## Collapsible Sidebar
+
+Click the **chevron (‹)** button next to the organization name to collapse the sidebar into a compact icon-only rail. Hover over it to temporarily expand and see labels.
+
+<Tip>
+  The collapsed sidebar is great for maximizing screen real estate when working with detailed
+  transaction views.
+</Tip>
+
+## Organization Switcher
+
+If you belong to multiple organizations, click the **organization name** at the top of the sidebar to switch between them. Each organization has its own isolated set of data — accounts, transactions, entities, and settings.
+
+## Theme Modes
+
+Buwiz Books supports three visual themes:
+
+| Mode          | Behavior                                                   |
+| ------------- | ---------------------------------------------------------- |
+| ☀️ **Light**  | Clean white backgrounds with dark text                     |
+| 🌙 **Dark**   | Dark navy backgrounds with light text (reduces eye strain) |
+| 🖥 **System** | Automatically matches your operating system preference     |
+
+Toggle between themes using the **Light / Dark / System** pill selector at the bottom of the sidebar.
+
+## Keyboard Shortcuts
+
+| Shortcut       | Action                    |
+| -------------- | ------------------------- |
+| `Ctrl/Cmd + K` | Quick search / lookup     |
+| `Esc`          | Close modals and sidebars |
+
+## URL-Driven Navigation
+
+Most views in Buwiz Books are URL-driven, meaning you can bookmark specific views or share links with colleagues:
+
+```
+/transactions?dateFrom=2026-01-01&dateTo=2026-03-31    → Q1 2026 ledger
+/financials?tab=profit-loss                             → Profit & Loss report
+/entities/vendors                                       → Vendor list
+```

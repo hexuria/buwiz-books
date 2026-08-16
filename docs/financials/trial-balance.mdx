@@ -1,0 +1,66 @@
+---
+title: Trial Balance
+description: Verify that your books are in balance
+---
+
+## What is a Trial Balance?
+
+A **Trial Balance** lists every account in your Chart of Accounts with its total debit and credit balances. The sum of all debits must equal the sum of all credits — if they don't, there's an error in your books.
+
+<img src="/images/financials/trial-balance.png" alt="Trial Balance Report" />
+
+## Report Layout
+
+```
+ACCOUNT                       DEBIT        CREDIT
+─────────────────────────────────────────────────
+Bank Accounts                 $45,608.25
+Accounts Receivable           $12,000.00
+Prepaid Expenses              $3,500.00
+Fixed Assets                  $25,000.00
+Accounts Payable                           $8,200.00
+Credit Cards                               $4,500.00
+Owner's Equity                             $50,000.00
+Revenue                                    $35,000.00
+Operating Expenses            $11,591.75
+─────────────────────────────────────────────────
+TOTALS                        $97,700.00   $97,700.00
+```
+
+## Key Points
+
+<Note>
+  The Trial Balance shows **cumulative balances from inception** through the as-of date, not just
+  the selected period. This is the standard accounting treatment.
+</Note>
+
+| Concept                        | Meaning                                             |
+| ------------------------------ | --------------------------------------------------- |
+| **Debit Total = Credit Total** | Books are in balance ✅                             |
+| **Debit ≠ Credit**             | There's a booking error that needs investigation ❌ |
+| **Zero-balance accounts**      | Accounts with no activity are omitted by default    |
+
+## Using the Trial Balance
+
+The Trial Balance is primarily a **verification tool**:
+
+1. **Month-end close** — Run after posting all entries to verify balance
+2. **Before generating reports** — Ensures P&L and Balance Sheet will be accurate
+3. **Error detection** — If totals don't match, investigate recent entries
+4. **Auditor requests** — Often the first document requested in an audit
+
+## Troubleshooting Unbalanced Entries
+
+If your Trial Balance doesn't balance:
+
+<Steps>
+  <Step title="Check Recent Entries">
+    Look at the most recently posted transactions for any one-sided entries
+  </Step>
+  <Step title="Review Import Batches">
+    CSV imports occasionally create unbalanced entries if column mapping was incorrect
+  </Step>
+  <Step title="Check Opening Balances">
+    Ensure opening balances were entered with proper debits and credits
+  </Step>
+</Steps>

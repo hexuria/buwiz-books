@@ -1,0 +1,61 @@
+---
+title: Bank Accounts & Cards
+description: Display your company bank details on invoice payment links for wire transfers
+---
+
+## Overview
+
+The **Banks & Cards** tab in Connections shows your company-owned bank accounts that customers can use for manual wire / bank transfer payments — an alternative to Stripe or PayPal.
+
+---
+
+## Marking an Account as Company-Owned
+
+Only accounts you own appear here. To add an account:
+
+1. Go to **Entities → Banks & Cards**
+2. Open or create a bank account
+3. Toggle **"Company-owned account"** on
+4. Save — the account now appears in **Connections → Banks & Cards**
+
+<Note>
+  Third-party accounts (vendor banks, lender accounts, etc.) are intentionally excluded even if
+  entered in Entities. Only toggle "Company-owned" for accounts that belong to your business.
+</Note>
+
+---
+
+## What information to include
+
+When setting up a bank account for wire transfers, make sure to fill in:
+
+| Field                  | Example                                       |
+| ---------------------- | --------------------------------------------- |
+| Account Name           | Goldcoders Corp — Operating                   |
+| Institution            | Mercury                                       |
+| Account Type           | Checking                                      |
+| Account Number         | Full number (not just last 4)                 |
+| Routing Number / SWIFT | For domestic / international wires            |
+| Ledger Category        | Link to the correct asset account in your COA |
+
+These details are shown to customers on the payment link so they know where to send funds.
+
+---
+
+## Customer experience
+
+When a customer opens a payment link and your org has company-owned bank accounts enabled:
+
+1. They see a **"Bank Transfer"** section with your account details
+2. They initiate the transfer from their bank
+3. Once you confirm receipt, manually mark the invoice as paid:
+   - Open the invoice → **Actions → Record Payment**
+   - Select the bank account funds were deposited into
+   - Enter the amount received
+
+This creates the journal entry:
+
+| Line | Account             | Debit  | Credit |
+| ---- | ------------------- | ------ | ------ |
+| 1    | Your Bank Account   | Amount | —      |
+| 2    | Accounts Receivable | —      | Amount |

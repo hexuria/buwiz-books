@@ -1,0 +1,97 @@
+---
+title: Quick Start
+description: Get up and running with Buwiz Books in 5 minutes
+---
+
+## Step 1: Sign In
+
+Navigate to your Buwiz Books instance and sign in with your credentials. Buwiz Books supports email/password authentication and Google OAuth.
+
+<img src="/images/quickstart-login.png" alt="Login Screen" />
+
+<Note>
+  If this is your first time signing in, you'll be redirected to the onboarding flow to create your
+  organization.
+</Note>
+
+## Step 2: Create Your Organization
+
+After signing in for the first time, you'll be guided through organization setup:
+
+1. **Organization Name** — Enter your business name
+2. **Fiscal Year** — Select your fiscal year start month (default: January)
+3. **Currency** — Choose your primary operating currency
+
+<Tip>You can change these settings later from **Settings → Organization**.</Tip>
+
+## Step 3: Set Up Your Chart of Accounts
+
+Open the **Category Manager** (`/accounts`) and pick a starting template. Each one builds a complete
+double-entry chart **and** fills in every category mapping, so bills and invoices post correctly from
+your first transaction:
+
+| Template                    | Accounts | Best for                                        |
+| --------------------------- | -------- | ----------------------------------------------- |
+| **General small business**  | 79       | Start here if none of the others fit            |
+| **SaaS / startup**          | 87       | Subscription revenue, deferred revenue, hosting |
+| **Freelancer / consultant** | 39       | Solo services — the leanest chart               |
+| **Retail / e-commerce**     | 86       | Inventory, cost of goods, merchant fees         |
+
+Before anything is written you get a **preview** showing exactly what will be created, what will be
+reused, and which mappings will be filled. Applying a template never deletes or overwrites an
+existing account — it matches on account number first, then on name, and only creates what is
+genuinely missing. That makes it safe to run on a chart you have already started.
+
+Every template produces the same 8 root account types:
+
+| Account Type           | Code Range  | Purpose                             |
+| ---------------------- | ----------- | ----------------------------------- |
+| **Assets**             | 10000-19999 | Resources owned by the business     |
+| **Liabilities**        | 20000-29999 | Debts owed to others                |
+| **Equity**             | 30000-39999 | Owner's stake in the business       |
+| **Revenue**            | 40000-49999 | Income from operations              |
+| **Cost of Revenue**    | 50000-59999 | Direct costs of goods/services sold |
+| **Operating Expenses** | 60000-69999 | Day-to-day business expenses        |
+| **Other Income**       | 80000-89999 | Non-operating income                |
+| **Other Expenses**     | 90000-99999 | Non-operating expenses              |
+
+A template is a starting point, not a cage — add, rename, and deactivate accounts freely afterwards.
+See [Managing Categories](/accounts/managing-categories) for editing the chart and
+[Category Mappings](/admin/mappings) for the rules that route transactions into it.
+
+## Step 4: Import Your Data
+
+Buwiz Books supports importing data from other accounting systems:
+
+<Steps>
+  <Step title="Import Chart of Accounts">
+    Go to **Settings → Import/Export** and upload a CSV file with your account names, numbers, and
+    types.
+  </Step>
+  <Step title="Import Transactions">
+    From the **Ledger**, click **⋯ → Import Transactions** to upload bank statements or transaction
+    exports (CSV format).
+  </Step>
+  <Step title="Import Entities">
+    Vendors, customers, and other parties can be imported via CSV from **Settings → Import/Export**.
+  </Step>
+</Steps>
+
+## Step 5: Start Working
+
+You're ready to go! Here are the core workflows:
+
+<CardGroup cols={2}>
+  <Card title="Record Transactions" icon="plus" href="/ledger/creating-transactions">
+    Create journal entries for income, expenses, and transfers
+  </Card>
+  <Card title="Manage Bills" icon="file-invoice" href="/bills/overview">
+    Track vendor bills and manage accounts payable
+  </Card>
+  <Card title="Send Invoices" icon="paper-plane" href="/invoices/overview">
+    Create and send invoices to customers
+  </Card>
+  <Card title="Run Reports" icon="chart-line" href="/financials/overview">
+    Generate financial reports for any period
+  </Card>
+</CardGroup>

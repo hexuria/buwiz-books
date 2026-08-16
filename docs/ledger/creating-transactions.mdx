@@ -1,0 +1,144 @@
+---
+title: Creating Transactions
+description: Record new journal entries, payments, and transfers in the ledger
+---
+
+## Adding a New Transaction
+
+Click the **+ Add Transaction** button in the top-right corner of the Ledger to open the transaction creation form.
+
+## Transaction Types
+
+The left sidebar of the transaction form lets you switch between four entry types. Each type has an optimized layout for its use case.
+
+### Journal Entry
+
+The default transaction type for general-purpose double-entry bookkeeping.
+
+<img
+  src="/images/ledger/add-transaction/journal-form.png"
+  alt="Journal Entry form showing debit and credit lines with category, party, department, and location fields"
+/>
+
+**Key features:**
+
+- Free-form debit and credit lines — you control exactly which accounts are affected
+- Each line has its own **Category**, **Party**, **Department**, and **Location** selectors
+- Add the **Memo** field for internal notes
+- The bottom bar shows the running **Debit** and **Credit** totals — they must balance before saving
+
+| Field                | Description                                   |
+| -------------------- | --------------------------------------------- |
+| **Date**             | The posting date (defaults to today)          |
+| **Reference Number** | Optional reference for your records           |
+| **Memo**             | A description of the transaction              |
+| **Lines**            | Debit/credit entries with account assignments |
+
+### Pay In
+
+Use **Pay In** when your business receives money — customer payments, refunds received, or revenue deposits.
+
+<img
+  src="/images/ledger/add-transaction/pay-in-form.png"
+  alt="Pay In form with party selector and deposit account fields"
+/>
+
+**Key features:**
+
+- **Select Party** dropdown at the top to associate the payment with a customer or entity
+- **Pay In Category** — the bank or cash account receiving the deposit
+- **Receive For** lines — itemize what the payment covers (with Category, Department, Location)
+
+### Pay Out
+
+Use **Pay Out** to record money leaving the business — expenses, vendor payments, or refunds issued.
+
+<img
+  src="/images/ledger/add-transaction/pay-out-form.png"
+  alt="Pay Out form showing expense category and multiple line items"
+/>
+
+**Key features:**
+
+- **Select Party** dropdown to tag the vendor or payee
+- **Pay Out Category** — the bank or cash account the payment comes from
+- **Pay For** lines — itemize expenses with per-line Category, Department, and Location tagging
+- Multiple line items let you split a single payment across different expense accounts
+
+### Transfer
+
+Use **Transfer** to move money between two accounts (e.g., bank-to-bank transfers).
+
+<img
+  src="/images/ledger/add-transaction/transfer-form.png"
+  alt="Transfer form showing Transfer From and Transfer To with category and party selectors"
+/>
+
+**Key features:**
+
+- **Transfer From** — the source account (Category + Party)
+- **Transfer To** — the destination account (Category + Party)
+- Clean two-panel layout with a visual **→** arrow between accounts
+- Enter the dollar amount once — the system automatically balances the entry
+
+## Document Attachments
+
+Every transaction type supports document attachments via the right sidebar:
+
+- **Browse or Drag & Drop** — upload images or PDFs (max 20MB)
+- **Browse existing documents** — link to documents already in your document library
+- Supported formats: Images (PNG, JPG, HEIC) and PDF
+
+<Tip>
+  Attach receipts and invoices directly to transactions for a complete audit trail. Auditors love
+  this.
+</Tip>
+
+## Double-Entry Rules
+
+<Note>
+  Every transaction must balance — total debits must equal total credits. The form will not save if
+  the entry is unbalanced. The balance indicator at the bottom shows ✅ green when balanced.
+</Note>
+
+### Example: Recording an Expense
+
+To record a $500 payment for office supplies using **Pay Out**:
+
+1. Click **+ Add Transaction** → select **Pay Out**
+2. Set the Party to your vendor (e.g., "Staples")
+3. Set **Pay Out Category** to your bank account
+4. Add a line under **Pay For**: description "Office Supplies", amount $500
+5. Set the Category to "Office Supplies (Expense)"
+6. Click **Save & Close**
+
+### Example: Recording Revenue
+
+To record a $2,000 consulting invoice payment using **Pay In**:
+
+1. Click **+ Add Transaction** → select **Pay In**
+2. Set the Party to your customer (e.g., "Acme Corp")
+3. Set **Pay In Category** to your bank account
+4. Add a line under **Receive For**: description "Consulting services", amount $2,000
+5. Set the Category to "Consulting Revenue"
+6. Click **Save & Close**
+
+## AI-Assisted Entry
+
+When you start typing a description, Buwiz Books may suggest:
+
+- **Matching categories** based on similar past transactions
+- **Party auto-completion** from your entity database
+- **Amount suggestions** from uploaded documents or receipts
+
+## Saving Options
+
+The **Save & Close** button (top-right, green) saves and returns to the ledger. Click the dropdown arrow **▾** next to it for additional options:
+
+- **Save & New** — save and immediately open a fresh form
+- **Save as Draft** — save without posting (if supported)
+
+<Tip>
+  You can also create transactions from within the Bill or Invoice workflows — those automatically
+  generate the correct journal entries.
+</Tip>

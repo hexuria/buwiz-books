@@ -1,0 +1,65 @@
+# Git calls pre-push with pushed refs on stdin:
+#   <local-ref> <local-sha> <remote-ref> <remote-sha>
+# When there are no commits ahead of remote, every entry has local-sha == remote-sha
+# (or remote-sha is the null SHA 0000…000 for deletes). Skip all checks in those cases.
+
+# Read pushed refs into a variable; exit cleanly if stdin is empty (nothing to push)
+PUSH_REFS=$(cat)
+
+if [ -z "$PUSH_REFS" ]; then
+  exit 0
+fi
+
+# Check whether any ref has a new local SHA (i.e., is not a delete-only push or no-op).
+# Format: <local-ref> <local-sha1> <remote-ref> <remote-sha1>
+HAS_COMMITS=false
+echo "$PUSH_REFS" | while IFS=' ' read -r _local_ref local_sha _remote_ref remote_sha; do
+  NULL_SHA="0000000000000000000000000000000000000000"
+  # Skip deletes (local SHA is null) — nothing being pushed
+  if [ "$local_sha" = "$NULL_SHA" ]; then
+    continue
+  fi
+  # If local SHA differs from remote SHA there are new commits
+  if [ "$local_sha" != "$remote_sha" ]; then
+    echo "true" > /tmp/.buwiz_pre_push_has_commits
+  fi
+done
+
+if [ ! -f /tmp/.buwiz_pre_push_has_commits ]; then
+  # Nothing new to push — skip all checks
+  rm -f /tmp/.buwiz_pre_push_has_commits
+  exit 0
+fi
+rm -f /tmp/.buwiz_pre_push_has_commits
+
+echo "🚀 Running pre-push checks..."
+
+# Run integration tests
+echo "Running integration tests..."
+bun test:integration
+if [ $? -ne 0 ]; then
+  echo "❌ Integration tests failed. Please fix failing tests before pushing."
+  exit 1
+fi
+
+# Run component tests
+echo "Running component tests..."
+bun test:component
+if [ $? -ne 0 ]; then
+  echo "❌ Component tests failed. Please fix failing tests before pushing."
+  exit 1
+fi
+
+# Optional: Run test coverage check (only if coverage files exist)
+if [ -f "coverage/coverage-summary.json" ]; then
+  echo "Checking test coverage..."
+  COVERAGE=$(cat coverage/coverage-summary.json | grep '"total"' | grep -o '"lines":{"pct":[0-9.]*' | grep -o '[0-9.]*')
+  if (( $(echo "$COVERAGE < 70" | bc -l) )); then
+    echo "❌ Test coverage (${COVERAGE}%) is below minimum threshold (70%)."
+    exit 1
+  fi
+  echo "✅ Test coverage (${COVERAGE}%) meets minimum threshold."
+fi
+
+echo "✅ All pre-push checks passed!"
+exit 0

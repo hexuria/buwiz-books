@@ -1,0 +1,54 @@
+# ── gcloud source upload ignore ─────────────────────────────────
+# Used by `gcloud run deploy --source .` to skip unnecessary files
+#
+# Include the .dockerignore patterns
+#include:.dockerignore
+
+# Secrets — never upload
+.env
+.env.*
+!.env.example
+# White-label branding (VITE_* only, NON-secret) — MUST be uploaded so Cloud
+# Build bakes the client's brand into the bundle. Never put secrets here.
+!.env.production
+
+# Heavy / non-runtime directories
+node_modules
+.git
+.output
+.nitro
+.tanstack
+.vinxi
+.wrangler
+.vscode
+.agent
+.agents
+.stow
+.examples
+coverage
+.vitest
+playwright-report
+test-results
+tests
+COA
+EPICS
+# docs - deployed separately to Cloudflare Pages
+
+# macOS junk
+.DS_Store
+
+# Build artifacts
+dist
+dist-ssr
+
+# Local files
+*.local
+local.db
+todos
+todos.json
+scripts/backup-*.sql
+test-statement-*.pdf
+reproduce_delete.ts
+fetch-buckets.ts
+test-bucket.ts
+Hugo's Demo Client*

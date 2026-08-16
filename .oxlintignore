@@ -1,0 +1,8 @@
+node_modules/
+.nitro/
+.output/
+.tanstack/
+.vinxi/
+dist/
+drizzle/
+routeTree.gen.ts

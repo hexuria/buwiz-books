@@ -1,0 +1,45 @@
+#!/usr/bin/env sh
+
+echo "🔍 Running pre-commit checks..."
+
+# Get staged files (only TypeScript/JavaScript)
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(ts|tsx|js|jsx|mjs)$' | grep -v 'src/routeTree.gen.ts' || true)
+
+if [ -z "$STAGED_FILES" ]; then
+  echo "⏭️  No staged source files to check. Skipping lint and format."
+else
+  # Run linting on staged files only
+  echo "Running linter..."
+  echo "$STAGED_FILES" | xargs bunx oxlint
+  if [ $? -ne 0 ]; then
+    echo "❌ Linting failed. Please fix linting errors before committing."
+    exit 1
+  fi
+
+  # Run formatting check on staged files only
+  echo "Checking code formatting..."
+  echo "$STAGED_FILES" | xargs bunx oxfmt --check
+  if [ $? -ne 0 ]; then
+    echo "❌ Code formatting check failed. Run 'bun fmt' to fix formatting."
+    exit 1
+  fi
+fi
+
+# Run type checking
+echo "Running TypeScript type check..."
+bun typecheck
+if [ $? -ne 0 ]; then
+  echo "❌ TypeScript type check failed. Please fix type errors before committing."
+  exit 1
+fi
+
+# Run unit tests
+echo "Running unit tests..."
+bun test:unit
+if [ $? -ne 0 ]; then
+  echo "❌ Unit tests failed. Please fix failing tests before committing."
+  exit 1
+fi
+
+echo "✅ All pre-commit checks passed!"
+exit 0

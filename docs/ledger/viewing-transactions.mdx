@@ -1,0 +1,116 @@
+---
+title: Viewing Transactions
+description: How to filter, search, and navigate ledger entries
+---
+
+## Smart Date Filter
+
+The **Smart Date Filter** at the top of the ledger lets you quickly scope your view to specific periods. Click the green date range pill to open the filter dropdown.
+
+<img
+  src="/images/ledger/smart-date-filter/dropdown-presets.png"
+  alt="Smart Date Filter dropdown showing preset date ranges"
+/>
+
+### Preset Ranges
+
+The dropdown offers one-click access to common accounting periods:
+
+| Preset           | Period Covered                                     |
+| ---------------- | -------------------------------------------------- |
+| **Today**        | Current day only                                   |
+| **Yesterday**    | Previous day                                       |
+| **Last 7 Days**  | Rolling seven-day window                           |
+| **Last 30 Days** | Rolling thirty-day window                          |
+| **This Month**   | 1st to last day of current month                   |
+| **Last Month**   | Full previous month                                |
+| **This Quarter** | Current fiscal quarter                             |
+| **Custom**       | Pick any start and end date with a calendar picker |
+
+### AI-Powered Natural Language Search
+
+<Note>
+  The Smart Date Filter is powered by AI. Instead of manually selecting dates, you can **type any
+  natural language description** and the filter will intelligently resolve it.
+</Note>
+
+**How it works:**
+
+1. Click the date range pill to open the dropdown
+2. Start typing in the search field — for example, `last quarter`
+3. The filter will try to match your input to a preset first
+
+<img
+  src="/images/ledger/smart-date-filter/ai-last-quarter.png"
+  alt="Typing 'last quarter' matches the Last Quarter preset automatically"
+/>
+
+If your input **matches a preset** (like "last quarter" → Last Quarter), that preset is highlighted immediately.
+
+If your input **doesn't match any preset** (like "january 2026"), the filter shows a **✨ Try AI to resolve this** button:
+
+<img
+  src="/images/ledger/smart-date-filter/ai-try-resolve.png"
+  alt="AI fallback to resolve 'january 2026' using natural language processing"
+/>
+
+Click the **✨ Try AI to resolve this** button and the AI will parse your natural language input into the correct date range — for example, "january 2026" becomes January 1, 2026 – January 31, 2026.
+
+<Tip>
+  Try phrases like "last fiscal year", "Q3 2025", "first half of 2026", or "past 90 days" — the AI
+  understands a wide range of date expressions.
+</Tip>
+
+### Keyboard Shortcuts
+
+The date filter supports keyboard navigation:
+
+| Key        | Action                        |
+| ---------- | ----------------------------- |
+| **↑ / ↓**  | Navigate between presets      |
+| **Enter**  | Select the highlighted preset |
+| **Ctrl+V** | Trigger AI parse mode         |
+| **Esc**    | Cancel and close the dropdown |
+
+### Period Navigation
+
+Use the **← →** arrows on either side of the date range pill to step forward or backward by one period. For example, if you're viewing "This Month", clicking **←** moves to the previous month.
+
+## Search and Filter
+
+### Text Search
+
+Type in the **"Filter transactions…"** search box to search by:
+
+- Party name
+- Transaction description / memo
+- Amount
+- Account name
+
+### Account Filter
+
+Click any account in the **left sidebar** to filter transactions to just that account. The sidebar shows the transaction count and balance for each category.
+
+## Transaction Details
+
+Click any transaction row to open the **Transaction Detail** view, which shows:
+
+- Full journal entry with all line items (debits and credits)
+- Attached documents and receipts
+- Comments and audit trail
+- Department and Location tags
+- Linked bills or invoices
+- Edit and delete actions
+
+## View vs. Edit Mode
+
+Toggle between **View** and **Edit** mode using the buttons in the top-right corner of the ledger.
+
+| Mode        | Behavior                                                             |
+| ----------- | -------------------------------------------------------------------- |
+| **👁 View** | Read-only display, clicking a row opens the detail sidebar           |
+| **✏️ Edit** | Inline editing enabled, fields become editable directly in the table |
+
+<Warning>
+  Changes made in Edit mode are saved immediately. There is no bulk undo — edit with care.
+</Warning>

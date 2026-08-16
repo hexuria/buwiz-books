@@ -1,0 +1,83 @@
+---
+title: Matching Process
+description: How to match ledger entries with bank statement lines
+---
+
+<img src="/images/reconciliations/matching-process.png" alt="Matching Process" />
+
+## The Matching Interface
+
+When you open an active reconciliation, you'll see a split-panel view:
+
+| Panel                     | Contents                                                                  |
+| ------------------------- | ------------------------------------------------------------------------- |
+| **Left: Statement Items** | Lines from your bank statement (imported or manually entered)             |
+| **Right: Ledger Items**   | Transactions from your Buwiz Books ledger for the same period and account |
+
+## Matching Methods
+
+### Auto-Match
+
+Buwiz Books automatically matches transactions based on:
+
+- **Exact amount match** — Same dollar amount on the same date
+- **Near-date match** — Same amount within ±3 days
+- **Description similarity** — Fuzzy matching on memo/description text
+
+Auto-matched items appear with a green checkmark. Review them to confirm accuracy.
+
+### Manual Match
+
+For items that weren't auto-matched:
+
+1. Select a statement line item (left panel)
+2. Find the corresponding ledger entry (right panel)
+3. Click to link them together
+4. The pair is marked as matched
+
+### Creating Missing Entries
+
+If a statement line has no matching ledger entry:
+
+1. Select the unmatched statement item
+2. Click **Create Transaction**
+3. A pre-filled transaction form opens with the date, amount, and description from the statement
+4. Assign the correct account category
+5. Save — the new entry is automatically matched
+
+## The Difference Indicator
+
+At the top of the reconciliation view, you'll see:
+
+```
+Statement Balance:  $45,608.25
+Matched Balance:    $44,308.25
+Difference:         $1,300.00
+```
+
+Your goal is to get the **difference to $0.00**. When it reaches zero, you can complete the reconciliation.
+
+## Completing the Reconciliation
+
+Once all items are matched and the difference is zero:
+
+1. Click **Complete Reconciliation**
+2. The session is locked and marked as completed
+3. Matched transactions are flagged as reconciled in the ledger
+
+<Warning>
+  Completed reconciliations cannot be re-opened. If you discover an error later, create a new
+  reconciliation session for the affected period.
+</Warning>
+
+## Tips for Efficient Reconciliation
+
+<Tip>
+  Reconcile monthly, shortly after receiving your bank statement. The fewer transactions to match,
+  the faster the process.
+</Tip>
+
+- **Start with auto-matches** — Review and confirm all automatically matched items first
+- **Sort by amount** — Use sorting to quickly find matching amounts
+- **Check for duplicates** — If the difference is exactly double a transaction amount, you may have a duplicate entry
+- **Bank fees and interest** — These are commonly unrecorded. Create entries for them during reconciliation

@@ -1,0 +1,47 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.env
+# Ignore every .env variant (.env.test, .env.local, .env.cloudrun*, …) but keep
+# the committed template. Prevents leaking a real key via `git add .`.
+.env.*
+!.env.example
+.nitro
+.tanstack
+.output
+
+# Testing
+coverage
+.vitest
+playwright-report
+test-results
+
+/.examples/
+# Scraped Digits.com competitor docs, kept out of the repo. Named for THEIR
+# domain — not our brand, so the rebrand leaves it alone.
+/digits.com/
+# Reference material at the repo root only. Without the leading slash this
+# also matched src/lib/coa/ and tests/unit/lib/coa/ (core.ignorecase=true on
+# macOS makes COA/ match coa/), silently keeping that module out of git.
+/COA/
+/EPICS/
+
+# Stow directory (managed separately)
+/.stow/
+
+# Database backups (contain sensitive auth tokens)
+scripts/backup-*.sql
+
+/Hugo's Demo Client - Financial Package - 2017 - 2026/
+/Our Export - Financial Package/
+*.lock
+!bun.lock
+/todos/
+test-statement-*.pdf
+/.ideas/
+
+# Local database artifacts
+*.db
+.claude/settings.local.json

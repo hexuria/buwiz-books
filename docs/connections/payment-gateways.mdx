@@ -1,0 +1,156 @@
+---
+title: Payment Gateways
+description: Connect Stripe or PayPal to accept online payments on invoice payment links
+---
+
+## Overview
+
+Buwiz Books supports two online payment providers that customers can use to pay invoices directly from the payment portal:
+
+| Provider   | Method                | When funds arrive                                |
+| ---------- | --------------------- | ------------------------------------------------ |
+| **Stripe** | Credit/debit card     | 2-7 business days (instant with Instant Payouts) |
+| **PayPal** | PayPal balance / card | 1-3 business days                                |
+
+Both providers auto-mark the invoice as **Paid** upon successful capture and create the appropriate journal entry.
+
+---
+
+## Where to Connect
+
+Payment gateways are configured per organization at:
+
+```
+Organization → Connections → Payment Gateways tab
+```
+
+Navigate to your org's Connections hub and toggle **Stripe** or **PayPal** on, then enter your API keys.
+
+---
+
+## Stripe Setup
+
+### 1. Get your API keys
+
+1. Go to [dashboard.stripe.com](https://dashboard.stripe.com)
+2. Enable **Test mode** (toggle in the top-left) for sandbox testing
+3. Navigate to **Developers → API keys**
+4. Copy your **Secret key** (`sk_test_...`) and **Publishable key** (`pk_test_...`)
+
+### 2. Add to your environment
+
+Add the following to your `.env` file:
+
+```env
+STRIPE_SECRET_KEY=<your-stripe-test-secret-key>
+STRIPE_PUBLISHABLE_KEY=<your-stripe-test-publishable-key>
+```
+
+### 3. Test a payment
+
+Open any sent invoice's payment link and click **Pay with Card**. Use these [Stripe test cards](https://docs.stripe.com/testing):
+
+| Card Number           | Result                |
+| --------------------- | --------------------- |
+| `4242 4242 4242 4242` | ✅ Success            |
+| `4000 0000 0000 0002` | ❌ Declined           |
+| `4000 0025 0000 3155` | 🔐 3D Secure required |
+
+Use any future expiry date and any 3-digit CVC.
+
+### 4. Webhooks (auto-paid status)
+
+For the invoice to automatically flip to **Paid** after a customer pays, configure a Stripe webhook:
+
+**In production:** Add a webhook endpoint in the Stripe Dashboard pointing to:
+
+```
+https://your-domain.com/api/stripe-webhook
+```
+
+Select the event: `checkout.session.completed`
+
+**Locally (for testing):** Use the [Stripe CLI](https://docs.stripe.com/stripe-cli):
+
+```bash
+# Install
+brew install stripe/stripe-cli/stripe
+
+# Login
+stripe login
+
+# Forward webhooks to your local server
+stripe listen --forward-to localhost:3000/api/stripe-webhook
+```
+
+Copy the webhook secret from the CLI output and add it to `.env`:
+
+```env
+STRIPE_WEBHOOK_SECRET=whsec_XXXXX
+```
+
+<Note>
+  Without a webhook configured, payments still process successfully — the invoice just won't
+  auto-update to "Paid". You can manually mark it paid in the app under **Actions → Record
+  Payment**.
+</Note>
+
+---
+
+## PayPal Setup
+
+### 1. Get your sandbox credentials
+
+1. Go to [developer.paypal.com](https://developer.paypal.com) and log in
+2. Navigate to **Apps & Credentials → Sandbox** tab
+3. Click your default app (or create a new one)
+4. Copy your **Client ID** and **Secret**
+
+### 2. Add to your environment
+
+```env
+PAYPAL_CLIENT_ID=AXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+PAYPAL_CLIENT_SECRET=EXxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Use "sandbox" for testing, "live" for production
+PAYPAL_MODE=sandbox
+```
+
+### 3. Test a payment
+
+Open any sent invoice's payment link and click **Pay with PayPal**. The PayPal button will open a popup to complete payment.
+
+Log in with a **sandbox buyer account** — find yours at:
+
+```
+developer.paypal.com → Testing Tools → Sandbox Accounts
+```
+
+The pre-created buyer account has a funded balance ready to use.
+
+---
+
+## How auto-paid works
+
+When a customer completes payment:
+
+1. Provider confirms payment to Buwiz Books
+2. Invoice status → **Paid**
+3. Journal entry is automatically created:
+
+| Line | Account                              | Debit  | Credit |
+| ---- | ------------------------------------ | ------ | ------ |
+| 1    | Bank Account (chosen in Connections) | Amount | —      |
+| 2    | Accounts Receivable                  | —      | Amount |
+
+The `paidVia` field records `"stripe"` or `"paypal"` for your records.
+
+---
+
+## Bank Transfer / Manual Payment
+
+If you prefer not to use Stripe or PayPal, you can accept manual bank deposits instead.
+
+1. Mark bank accounts as **Company-owned** in **Entities → Banks & Cards** (toggle on the account)
+2. Those accounts will appear in **Connections → Banks & Cards** for display on payment links
+3. Share wire/routing details with your customer — they transfer manually
+4. Once received, mark the invoice paid via **Actions → Record Payment** in the invoice view

@@ -1,0 +1,728 @@
+[
+  {
+    "name": "Accounts Receivable",
+    "accountType": "asset",
+    "subtype": "account_receivable",
+    "parentName": "Assets",
+    "description": "Amounts owed to the business by customers for goods or services delivered",
+    "keywords": ["receivable", "ar", "owed", "due from customers", "trade receivable"]
+  },
+  {
+    "name": "Accrued Revenue",
+    "accountType": "asset",
+    "subtype": "accrued_revenue",
+    "parentName": "Assets",
+    "description": "Revenue earned but not yet billed or received",
+    "keywords": ["accrued", "earned revenue", "unbilled"]
+  },
+  {
+    "name": "Petty Cash",
+    "accountType": "asset",
+    "subtype": "bank_accounts",
+    "parentName": "Assets",
+    "description": "Small cash fund for minor expenses",
+    "keywords": ["petty", "cash on hand", "small cash"]
+  },
+  {
+    "name": "Checking Account",
+    "accountType": "asset",
+    "subtype": "bank_accounts",
+    "parentName": "Assets",
+    "description": "Primary business checking account",
+    "keywords": ["checking", "bank", "demand deposit"]
+  },
+  {
+    "name": "Savings Account",
+    "accountType": "asset",
+    "subtype": "bank_accounts",
+    "parentName": "Assets",
+    "description": "Business savings or money market account",
+    "keywords": ["savings", "money market", "deposit"]
+  },
+  {
+    "name": "Furniture & Fixtures",
+    "accountType": "asset",
+    "subtype": "fixed_assets",
+    "parentName": "Assets",
+    "description": "Office furniture, fixtures, and fittings",
+    "keywords": ["furniture", "fixtures", "fittings", "office equipment"]
+  },
+  {
+    "name": "Machinery & Equipment",
+    "accountType": "asset",
+    "subtype": "fixed_assets",
+    "parentName": "Assets",
+    "description": "Production machinery, tools, and heavy equipment",
+    "keywords": ["machinery", "equipment", "tools", "plant"]
+  },
+  {
+    "name": "Vehicles",
+    "accountType": "asset",
+    "subtype": "fixed_assets",
+    "parentName": "Assets",
+    "description": "Company-owned cars, trucks, and transport vehicles",
+    "keywords": ["vehicles", "cars", "trucks", "auto", "fleet"]
+  },
+  {
+    "name": "Buildings",
+    "accountType": "asset",
+    "subtype": "fixed_assets",
+    "parentName": "Assets",
+    "description": "Owned buildings and structures",
+    "keywords": ["buildings", "real estate", "property", "structures"]
+  },
+  {
+    "name": "Leasehold Improvements",
+    "accountType": "asset",
+    "subtype": "fixed_assets",
+    "parentName": "Assets",
+    "description": "Improvements made to leased premises",
+    "keywords": ["leasehold", "improvements", "tenant", "build out"]
+  },
+  {
+    "name": "Goodwill",
+    "accountType": "asset",
+    "subtype": "goodwill",
+    "parentName": "Assets",
+    "description": "Premium paid in an acquisition over the fair value of identifiable net assets",
+    "keywords": ["goodwill", "acquisition premium", "intangible"]
+  },
+  {
+    "name": "Patents",
+    "accountType": "asset",
+    "subtype": "intangible_assets",
+    "parentName": "Assets",
+    "description": "Patents and patent applications owned by the business",
+    "keywords": ["patents", "intellectual property", "ip"]
+  },
+  {
+    "name": "Trademarks",
+    "accountType": "asset",
+    "subtype": "intangible_assets",
+    "parentName": "Assets",
+    "description": "Registered trademarks and brand assets",
+    "keywords": ["trademarks", "brand", "trade name"]
+  },
+  {
+    "name": "Inventory",
+    "accountType": "asset",
+    "subtype": "inventory",
+    "parentName": "Assets",
+    "description": "Goods held for sale in the ordinary course of business",
+    "keywords": ["inventory", "stock", "merchandise", "goods"]
+  },
+  {
+    "name": "Raw Materials",
+    "accountType": "asset",
+    "subtype": "inventory",
+    "parentName": "Assets",
+    "description": "Materials used in the production of goods",
+    "keywords": ["raw materials", "supplies", "production materials"]
+  },
+  {
+    "name": "Short-Term Investments",
+    "accountType": "asset",
+    "subtype": "investments",
+    "parentName": "Assets",
+    "description": "Marketable securities and short-term investment holdings",
+    "keywords": ["investments", "securities", "certificates of deposit", "cd"]
+  },
+  {
+    "name": "Prepaid Insurance",
+    "accountType": "asset",
+    "subtype": "prepaid_expenses",
+    "parentName": "Assets",
+    "description": "Insurance premiums that have been paid in advance",
+    "keywords": ["prepaid insurance", "insurance prepaid", "advance insurance"]
+  },
+  {
+    "name": "Prepaid Rent",
+    "accountType": "asset",
+    "subtype": "prepaid_expenses",
+    "parentName": "Assets",
+    "description": "Rent payments made in advance of the rental period",
+    "keywords": ["prepaid rent", "advance rent"]
+  },
+  {
+    "name": "Security Deposits",
+    "accountType": "asset",
+    "subtype": "other_current_assets",
+    "parentName": "Assets",
+    "description": "Refundable deposits paid for leases, utilities, and services",
+    "keywords": ["security deposit", "deposit", "refundable"]
+  },
+  {
+    "name": "Shareholder Loans Receivable",
+    "accountType": "asset",
+    "subtype": "shareholder_loans",
+    "parentName": "Assets",
+    "description": "Loans made to shareholders or officers of the company",
+    "keywords": ["shareholder loan", "officer loan", "loan receivable"]
+  },
+  {
+    "name": "Accounts Payable",
+    "accountType": "liability",
+    "subtype": "accounts_payable",
+    "parentName": "Liabilities",
+    "description": "Amounts owed to suppliers and vendors for goods or services received",
+    "keywords": ["payable", "ap", "owed to vendors", "trade payable"]
+  },
+  {
+    "name": "Accrued Wages",
+    "accountType": "liability",
+    "subtype": "accrued_expenses",
+    "parentName": "Liabilities",
+    "description": "Wages and salaries earned by employees but not yet paid",
+    "keywords": ["accrued wages", "accrued salaries", "wages payable"]
+  },
+  {
+    "name": "Accrued Interest",
+    "accountType": "liability",
+    "subtype": "accrued_expenses",
+    "parentName": "Liabilities",
+    "description": "Interest expense incurred but not yet paid",
+    "keywords": ["accrued interest", "interest payable"]
+  },
+  {
+    "name": "Credit Card Payable",
+    "accountType": "liability",
+    "subtype": "credit_cards",
+    "parentName": "Liabilities",
+    "description": "Outstanding balances on company credit cards",
+    "keywords": ["credit card", "visa", "mastercard", "amex"]
+  },
+  {
+    "name": "Deferred Revenue",
+    "accountType": "liability",
+    "subtype": "deferred_revenue",
+    "parentName": "Liabilities",
+    "description": "Payments received for goods or services not yet delivered",
+    "keywords": ["deferred revenue", "unearned revenue", "prepaid income", "advance payment"]
+  },
+  {
+    "name": "Customer Deposits",
+    "accountType": "liability",
+    "subtype": "deferred_revenue",
+    "parentName": "Liabilities",
+    "description": "Deposits received from customers for future work",
+    "keywords": ["customer deposit", "advance deposit", "retainer"]
+  },
+  {
+    "name": "Line of Credit",
+    "accountType": "liability",
+    "subtype": "short_term_debt",
+    "parentName": "Liabilities",
+    "description": "Revolving credit facility for short-term borrowing",
+    "keywords": ["line of credit", "loc", "revolving credit"]
+  },
+  {
+    "name": "Notes Payable (Short-Term)",
+    "accountType": "liability",
+    "subtype": "short_term_debt",
+    "parentName": "Liabilities",
+    "description": "Short-term promissory notes due within one year",
+    "keywords": ["notes payable", "short term note", "promissory note"]
+  },
+  {
+    "name": "Mortgage Payable",
+    "accountType": "liability",
+    "subtype": "long_term_debt",
+    "parentName": "Liabilities",
+    "description": "Long-term mortgage on business property",
+    "keywords": ["mortgage", "real estate loan", "property loan"]
+  },
+  {
+    "name": "Bank Loan",
+    "accountType": "liability",
+    "subtype": "long_term_debt",
+    "parentName": "Liabilities",
+    "description": "Term loan from a bank or financial institution",
+    "keywords": ["bank loan", "term loan", "business loan"]
+  },
+  {
+    "name": "Convertible Notes",
+    "accountType": "liability",
+    "subtype": "convertible_notes",
+    "parentName": "Liabilities",
+    "description": "Debt instruments that convert into equity at a future event",
+    "keywords": ["convertible", "convertible note", "convertible debt"]
+  },
+  {
+    "name": "Payroll Tax Payable",
+    "accountType": "liability",
+    "subtype": "payroll_liabilities",
+    "parentName": "Liabilities",
+    "description": "Payroll taxes withheld or owed to tax authorities",
+    "keywords": ["payroll tax", "withholding", "fica", "employment tax"]
+  },
+  {
+    "name": "Sales Tax Payable",
+    "accountType": "liability",
+    "subtype": "other_current_liabilities",
+    "parentName": "Liabilities",
+    "description": "Sales tax collected from customers pending remittance",
+    "keywords": ["sales tax", "vat", "gst", "tax payable", "collected tax"]
+  },
+  {
+    "name": "Income Tax Payable",
+    "accountType": "liability",
+    "subtype": "other_current_liabilities",
+    "parentName": "Liabilities",
+    "description": "Estimated income taxes owed to government",
+    "keywords": ["income tax", "tax payable", "corporate tax"]
+  },
+  {
+    "name": "Paid in Capital",
+    "accountType": "equity",
+    "subtype": "additional_paid_in_capital",
+    "parentName": "Equity",
+    "description": "Capital contributed by owners or investors above par value",
+    "keywords": [
+      "paid in capital",
+      "additional paid in",
+      "apic",
+      "capital contribution",
+      "contributed capital"
+    ]
+  },
+  {
+    "name": "Owner's Contributions",
+    "accountType": "equity",
+    "subtype": "owners_equity",
+    "parentName": "Equity",
+    "description": "Contributions made by the owner(s) to the business",
+    "keywords": ["owner contribution", "capital contribution", "investment by owner"]
+  },
+  {
+    "name": "Owner's Draws",
+    "accountType": "equity",
+    "subtype": "owners_equity",
+    "parentName": "Equity",
+    "description": "Draws made by the owner(s) from the business",
+    "keywords": ["owner draws", "drawings", "withdrawal", "distribution to owner"]
+  },
+  {
+    "name": "Common Stock",
+    "accountType": "equity",
+    "subtype": "common_stock",
+    "parentName": "Equity",
+    "description": "Par value of common shares issued",
+    "keywords": ["common stock", "shares", "ordinary shares", "stock issued"]
+  },
+  {
+    "name": "Preferred Stock",
+    "accountType": "equity",
+    "subtype": "preferred_stock",
+    "parentName": "Equity",
+    "description": "Par value of preferred shares issued",
+    "keywords": ["preferred stock", "preference shares"]
+  },
+  {
+    "name": "Retained Earnings",
+    "accountType": "equity",
+    "subtype": "retained_earnings",
+    "parentName": "Equity",
+    "description": "Accumulated net income retained in the business",
+    "keywords": ["retained earnings", "accumulated profit", "undistributed earnings"]
+  },
+  {
+    "name": "Treasury Stock",
+    "accountType": "equity",
+    "subtype": "treasury_stock",
+    "parentName": "Equity",
+    "description": "Shares repurchased by the company from shareholders",
+    "keywords": ["treasury stock", "buyback", "repurchased shares"]
+  },
+  {
+    "name": "SAFEs",
+    "accountType": "equity",
+    "subtype": "safes",
+    "parentName": "Equity",
+    "description": "Simple Agreement for Future Equity instruments",
+    "keywords": ["safe", "safes", "simple agreement", "future equity"]
+  },
+  {
+    "name": "Dividends Paid",
+    "accountType": "equity",
+    "subtype": "owners_equity",
+    "parentName": "Equity",
+    "description": "Distributions of earnings to shareholders",
+    "keywords": ["dividends", "distribution", "shareholder distribution"]
+  },
+  {
+    "name": "Sales Revenue",
+    "accountType": "revenue",
+    "subtype": "sales_revenue",
+    "parentName": "Revenue",
+    "description": "Revenue from the sale of goods or products",
+    "keywords": ["sales", "product sales", "goods sold", "merchandise sales"]
+  },
+  {
+    "name": "Service Revenue",
+    "accountType": "revenue",
+    "subtype": "sales_revenue",
+    "parentName": "Revenue",
+    "description": "Revenue from providing professional or consulting services",
+    "keywords": ["service", "consulting", "professional services", "fees earned"]
+  },
+  {
+    "name": "Subscription Revenue",
+    "accountType": "revenue",
+    "subtype": "subscription_revenue",
+    "parentName": "Revenue",
+    "description": "Recurring revenue from subscription-based services",
+    "keywords": ["subscription", "recurring", "saas", "membership"]
+  },
+  {
+    "name": "Partner Revenue",
+    "accountType": "revenue",
+    "subtype": "partner_revenue",
+    "parentName": "Revenue",
+    "description": "Revenue earned from partnership agreements or referrals",
+    "keywords": ["partner", "affiliate", "referral", "commission income"]
+  },
+  {
+    "name": "Transaction Revenue",
+    "accountType": "revenue",
+    "subtype": "transaction_revenue",
+    "parentName": "Revenue",
+    "description": "Revenue from per-transaction fees or processing charges",
+    "keywords": ["transaction", "processing", "per-transaction"]
+  },
+  {
+    "name": "Refunds & Discounts",
+    "accountType": "revenue",
+    "subtype": "refunds_discounts",
+    "parentName": "Revenue",
+    "description": "Contra-revenue from returns, refunds, and sales discounts",
+    "keywords": ["refund", "discount", "return", "allowance", "credit memo"]
+  },
+  {
+    "name": "Cost of Goods Sold",
+    "accountType": "cost_of_revenue",
+    "subtype": "cost_of_goods",
+    "parentName": "Cost of Goods Sold",
+    "description": "Direct costs of producing goods sold by the business",
+    "keywords": ["cogs", "cost of goods", "direct cost", "product cost"]
+  },
+  {
+    "name": "Cost of Labor",
+    "accountType": "cost_of_revenue",
+    "subtype": "cost_of_labor",
+    "parentName": "Cost of Goods Sold",
+    "description": "Direct labor costs attributable to production or service delivery",
+    "keywords": ["cost of labor", "direct labor", "production wages"]
+  },
+  {
+    "name": "Hosting & Infrastructure",
+    "accountType": "cost_of_revenue",
+    "subtype": "hosting_fees",
+    "parentName": "Cost of Goods Sold",
+    "description": "Server hosting, cloud infrastructure, and data center costs",
+    "keywords": ["hosting", "aws", "cloud", "infrastructure", "server", "data center"]
+  },
+  {
+    "name": "Payment Processing Fees",
+    "accountType": "cost_of_revenue",
+    "subtype": "payment_processing_fees",
+    "parentName": "Cost of Goods Sold",
+    "description": "Fees from payment processors like Stripe, PayPal, Square",
+    "keywords": ["payment processing", "stripe", "paypal", "square", "merchant fees"]
+  },
+  {
+    "name": "Shipping & Freight",
+    "accountType": "cost_of_revenue",
+    "subtype": "other_cost_of_revenue",
+    "parentName": "Cost of Goods Sold",
+    "description": "Shipping, freight, and delivery costs for sold products",
+    "keywords": ["shipping", "freight", "delivery", "postage"]
+  },
+  {
+    "name": "Advertising & Marketing",
+    "accountType": "expense",
+    "subtype": "sales_marketing",
+    "parentName": "Operating Expenses",
+    "description": "Advertising, digital marketing, and promotional expenses",
+    "keywords": ["advertising", "marketing", "ads", "promotion", "branding", "social media"]
+  },
+  {
+    "name": "Bad Debt Expense",
+    "accountType": "expense",
+    "subtype": "bad_debt_expense",
+    "parentName": "Operating Expenses",
+    "description": "Uncollectible accounts written off as losses",
+    "keywords": ["bad debt", "write off", "uncollectible"]
+  },
+  {
+    "name": "Bank Service Charges",
+    "accountType": "expense",
+    "subtype": "bank_fees",
+    "parentName": "Operating Expenses",
+    "description": "Monthly fees, wire transfer charges, and other bank fees",
+    "keywords": ["bank fees", "service charge", "wire fee", "bank charge"]
+  },
+  {
+    "name": "Software & Cloud Services",
+    "accountType": "expense",
+    "subtype": "business_application_software",
+    "parentName": "Operating Expenses",
+    "description": "SaaS subscriptions, software licenses, and cloud tools",
+    "keywords": ["software", "saas", "cloud", "license", "subscription", "app"]
+  },
+  {
+    "name": "Rent Expense",
+    "accountType": "expense",
+    "subtype": "facilities",
+    "parentName": "Operating Expenses",
+    "description": "Office or warehouse rent payments",
+    "keywords": ["rent", "lease", "office space"]
+  },
+  {
+    "name": "Utilities",
+    "accountType": "expense",
+    "subtype": "facilities",
+    "parentName": "Operating Expenses",
+    "description": "Electricity, water, gas, and internet service expenses",
+    "keywords": ["utilities", "electric", "water", "gas", "internet", "phone"]
+  },
+  {
+    "name": "Office Supplies",
+    "accountType": "expense",
+    "subtype": "supplies_and_materials",
+    "parentName": "Operating Expenses",
+    "description": "Paper, pens, toner, and other consumable office supplies",
+    "keywords": ["office supplies", "stationery", "consumables"]
+  },
+  {
+    "name": "Insurance Expense",
+    "accountType": "expense",
+    "subtype": "insurance",
+    "parentName": "Operating Expenses",
+    "description": "Business insurance premiums (liability, property, D&O, etc.)",
+    "keywords": ["insurance", "liability insurance", "property insurance", "premium"]
+  },
+  {
+    "name": "Legal Fees",
+    "accountType": "expense",
+    "subtype": "professional_fees",
+    "parentName": "Operating Expenses",
+    "description": "Attorney fees, legal consultations, and filing costs",
+    "keywords": ["legal", "attorney", "lawyer", "law firm"]
+  },
+  {
+    "name": "Accounting Fees",
+    "accountType": "expense",
+    "subtype": "professional_fees",
+    "parentName": "Operating Expenses",
+    "description": "CPA, bookkeeping, and audit service fees",
+    "keywords": ["accounting", "cpa", "bookkeeping", "audit", "tax preparation"]
+  },
+  {
+    "name": "Consulting Fees",
+    "accountType": "expense",
+    "subtype": "professional_fees",
+    "parentName": "Operating Expenses",
+    "description": "Fees for business consultants and advisory services",
+    "keywords": ["consulting", "consultant", "advisory"]
+  },
+  {
+    "name": "Salaries & Wages",
+    "accountType": "expense",
+    "subtype": "payroll_expenses",
+    "parentName": "Operating Expenses",
+    "description": "Employee salaries, wages, and compensation",
+    "keywords": ["salary", "wages", "compensation", "payroll", "pay"]
+  },
+  {
+    "name": "Employee Benefits",
+    "accountType": "expense",
+    "subtype": "payroll_expenses",
+    "parentName": "Operating Expenses",
+    "description": "Health insurance, 401(k) match, and other employee benefits",
+    "keywords": ["benefits", "health insurance", "401k", "retirement", "dental", "vision"]
+  },
+  {
+    "name": "Payroll Taxes",
+    "accountType": "expense",
+    "subtype": "payroll_expenses",
+    "parentName": "Operating Expenses",
+    "description": "Employer portion of FICA, FUTA, SUTA, and other payroll taxes",
+    "keywords": ["payroll tax", "fica", "futa", "suta", "employer tax"]
+  },
+  {
+    "name": "Contractor Payments",
+    "accountType": "expense",
+    "subtype": "payroll_expenses",
+    "parentName": "Operating Expenses",
+    "description": "Payments to independent contractors and freelancers",
+    "keywords": ["contractor", "freelancer", "1099", "subcontractor"]
+  },
+  {
+    "name": "Meals & Entertainment",
+    "accountType": "expense",
+    "subtype": "travel_entertainment",
+    "parentName": "Operating Expenses",
+    "description": "Business meals, client entertainment, and team events",
+    "keywords": ["meals", "entertainment", "dining", "restaurant", "client dinner"]
+  },
+  {
+    "name": "Travel Expense",
+    "accountType": "expense",
+    "subtype": "travel_entertainment",
+    "parentName": "Operating Expenses",
+    "description": "Airfare, hotels, car rentals, and other business travel costs",
+    "keywords": ["travel", "airfare", "hotel", "car rental", "transportation"]
+  },
+  {
+    "name": "Vehicle Expenses",
+    "accountType": "expense",
+    "subtype": "travel_entertainment",
+    "parentName": "Operating Expenses",
+    "description": "Gas, maintenance, and insurance for business vehicles",
+    "keywords": ["vehicle", "gas", "mileage", "auto", "car expense"]
+  },
+  {
+    "name": "Repairs & Maintenance",
+    "accountType": "expense",
+    "subtype": "general_operations",
+    "parentName": "Operating Expenses",
+    "description": "Repairs and maintenance for equipment, office, and facilities",
+    "keywords": ["repairs", "maintenance", "fix", "service"]
+  },
+  {
+    "name": "Printing & Reproduction",
+    "accountType": "expense",
+    "subtype": "general_operations",
+    "parentName": "Operating Expenses",
+    "description": "Printing services, copying, and document reproduction",
+    "keywords": ["printing", "copies", "reproduction"]
+  },
+  {
+    "name": "Dues & Subscriptions",
+    "accountType": "expense",
+    "subtype": "general_operations",
+    "parentName": "Operating Expenses",
+    "description": "Professional memberships, industry dues, and subscriptions",
+    "keywords": ["dues", "membership", "association", "subscription"]
+  },
+  {
+    "name": "Training & Education",
+    "accountType": "expense",
+    "subtype": "general_operations",
+    "parentName": "Operating Expenses",
+    "description": "Employee training, courses, certifications, and education",
+    "keywords": ["training", "education", "courses", "certification", "conference"]
+  },
+  {
+    "name": "Charitable Contributions",
+    "accountType": "expense",
+    "subtype": "general_operations",
+    "parentName": "Operating Expenses",
+    "description": "Donations to charitable organizations",
+    "keywords": ["charity", "donation", "contribution", "philanthropy"]
+  },
+  {
+    "name": "Interest Income",
+    "accountType": "other_income",
+    "subtype": "interests_dividends",
+    "parentName": "Other Income",
+    "description": "Interest earned on bank accounts, loans, and investments",
+    "keywords": ["interest income", "interest earned", "bank interest"]
+  },
+  {
+    "name": "Dividend Income",
+    "accountType": "other_income",
+    "subtype": "interests_dividends",
+    "parentName": "Other Income",
+    "description": "Dividends received from equity investments",
+    "keywords": ["dividend income", "dividends received", "investment income"]
+  },
+  {
+    "name": "Credit Card Rewards",
+    "accountType": "other_income",
+    "subtype": "credit_card_rewards",
+    "parentName": "Other Income",
+    "description": "Cash back and rewards points redeemed from credit cards",
+    "keywords": ["credit card rewards", "cash back", "points", "rewards"]
+  },
+  {
+    "name": "Gain on Sale of Assets",
+    "accountType": "other_income",
+    "subtype": "other_miscellaneous_income",
+    "parentName": "Other Income",
+    "description": "Profit from selling fixed assets above book value",
+    "keywords": ["gain on sale", "asset sale", "disposal gain"]
+  },
+  {
+    "name": "Rental Income",
+    "accountType": "other_income",
+    "subtype": "other_miscellaneous_income",
+    "parentName": "Other Income",
+    "description": "Income from renting out business property or equipment",
+    "keywords": ["rental income", "lease income", "sublease"]
+  },
+  {
+    "name": "Depreciation Expense",
+    "accountType": "other_expense",
+    "subtype": "depreciation_amortization",
+    "parentName": "Other Expenses",
+    "description": "Depreciation of tangible fixed assets over their useful life",
+    "keywords": ["depreciation", "depreciate", "fixed asset depreciation"]
+  },
+  {
+    "name": "Amortization Expense",
+    "accountType": "other_expense",
+    "subtype": "depreciation_amortization",
+    "parentName": "Other Expenses",
+    "description": "Amortization of intangible assets over their useful life",
+    "keywords": ["amortization", "amortize", "intangible amortization"]
+  },
+  {
+    "name": "Interest Expense",
+    "accountType": "other_expense",
+    "subtype": "interest_expense",
+    "parentName": "Other Expenses",
+    "description": "Interest paid on loans, credit lines, and other debt",
+    "keywords": ["interest expense", "loan interest", "finance charges"]
+  },
+  {
+    "name": "Income Tax Expense",
+    "accountType": "other_expense",
+    "subtype": "taxes",
+    "parentName": "Other Expenses",
+    "description": "Federal, state, and local income tax expense",
+    "keywords": ["income tax", "tax expense", "corporate tax", "federal tax"]
+  },
+  {
+    "name": "Property Tax",
+    "accountType": "other_expense",
+    "subtype": "taxes",
+    "parentName": "Other Expenses",
+    "description": "Taxes on owned real estate and business property",
+    "keywords": ["property tax", "real estate tax", "ad valorem"]
+  },
+  {
+    "name": "Penalties & Fines",
+    "accountType": "other_expense",
+    "subtype": "other_miscellaneous_expenses",
+    "parentName": "Other Expenses",
+    "description": "Penalties, fines, and late fees from government or regulatory bodies",
+    "keywords": ["penalties", "fines", "late fees", "violation"]
+  },
+  {
+    "name": "Loss on Sale of Assets",
+    "accountType": "other_expense",
+    "subtype": "other_miscellaneous_expenses",
+    "parentName": "Other Expenses",
+    "description": "Loss from selling fixed assets below book value",
+    "keywords": ["loss on sale", "asset loss", "disposal loss"]
+  },
+  {
+    "name": "Foreign Exchange Loss",
+    "accountType": "other_expense",
+    "subtype": "other_miscellaneous_expenses",
+    "parentName": "Other Expenses",
+    "description": "Losses from foreign currency exchange rate fluctuations",
+    "keywords": ["forex", "exchange loss", "currency loss", "fx"]
+  }
+]

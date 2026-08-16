@@ -1,0 +1,76 @@
+---
+title: "Tutorial: Generating a Financial Package"
+description: Create a comprehensive report package for accountants and stakeholders
+---
+
+## Overview
+
+The **Financial Package** is a ZIP archive containing all your key financial reports for a specific period. This tutorial shows you how to generate one for your accountant, auditor, or investors.
+
+**Time required:** 2 minutes
+
+## Step-by-Step
+
+<Steps>
+  <Step title="Navigate to the Ledger">
+    Click **Ledger** in the sidebar. This is where the export function lives.
+  </Step>
+  <Step title="Set Your Date Range">
+    Use the **Smart Date Filter** at the top to select the reporting period:
+    - Click on the date range display
+    - Select a preset (e.g., "Last Quarter", "Last Year") or enter custom dates
+    - The date range shown here determines what's included in the package
+  </Step>
+  <Step title="Open the Export Menu">
+    Click the **⋯** (three dots) menu button in the top-right area of the Ledger.
+  </Step>
+  <Step title="Select Download Financial Package">
+    Click **"Download Financial Package…"** from the dropdown menu.
+  </Step>
+  <Step title="Choose Reports to Include">
+    A dialog appears showing 5 available reports:
+
+    | Report | Format | Recommended |
+    |---|---|---|
+    | ✅ Transaction List | CSV | Always include for audit trail |
+    | ✅ Trial Balance | XLSX | Include to verify books balance |
+    | ✅ Profit & Loss | XLSX | Essential — shows profitability |
+    | ✅ Balance Sheet | XLSX | Essential — shows financial position |
+    | ✅ Cash Flow Statement | XLSX | Important for investor reporting |
+
+    Uncheck any reports you don't need, or leave all checked for a complete package.
+
+  </Step>
+  <Step title="Click Download ZIP">
+    Click the green **Download ZIP** button. The server generates all reports and downloads a ZIP file.
+  </Step>
+  <Step title="Share with Your Accountant">
+    Send the downloaded ZIP file to your accountant, auditor, or stakeholders via email.
+  </Step>
+</Steps>
+
+## What's in the Package
+
+```
+Financial-Package-Q1-2026.zip
+├── transactions.csv          ← Detailed transaction list
+├── trial-balance.xlsx        ← Account balance verification
+├── profit-loss.xlsx          ← Income statement
+├── balance-sheet.xlsx        ← Financial position snapshot
+└── cash-flow.xlsx            ← Cash movement summary
+```
+
+## Common Scenarios
+
+| Audience                      | Reports to Include              | Date Range                 |
+| ----------------------------- | ------------------------------- | -------------------------- |
+| **Monthly accountant review** | All 5 reports                   | Last Month                 |
+| **Quarterly board meeting**   | P&L + Balance Sheet + Cash Flow | This Quarter               |
+| **Tax filing preparation**    | All 5 reports                   | Last Year                  |
+| **Investor update**           | P&L + Cash Flow                 | Year-to-Date               |
+| **Audit preparation**         | All 5 reports                   | Custom (full audit period) |
+
+<Tip>
+  If your accountant prefers a specific format or additional data, you can also export individual
+  reports or CSV files separately from the Ledger.
+</Tip>

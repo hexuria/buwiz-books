@@ -1,0 +1,49 @@
+---
+title: Category Manager
+description: Manage your Chart of Accounts and ledger categories
+---
+
+## Overview
+
+The **Category Manager** (Chart of Accounts) is where you define and organize the account categories used to classify every transaction in your ledger.
+
+<img src="/images/accounts/overview.png" alt="Category Manager" />
+
+## Account Structure
+
+Buwiz Books uses a hierarchical account structure with **8 root account types**:
+
+| Root Type              | Code Range  | Normal Balance | Purpose                                         |
+| ---------------------- | ----------- | -------------- | ----------------------------------------------- |
+| **Assets**             | 10000–19999 | Debit          | Cash, receivables, equipment, investments       |
+| **Liabilities**        | 20000–29999 | Credit         | Payables, loans, credit cards, accrued expenses |
+| **Equity**             | 30000–39999 | Credit         | Owner's equity, retained earnings               |
+| **Revenue**            | 40000–49999 | Credit         | Sales, service income, fees                     |
+| **Cost of Revenue**    | 50000–59999 | Debit          | Direct costs of goods/services sold             |
+| **Operating Expenses** | 60000–69999 | Debit          | Rent, salaries, utilities, office supplies      |
+| **Other Income**       | 80000–89999 | Credit         | Interest earned, gains on investments           |
+| **Other Expenses**     | 90000–99999 | Debit          | Interest paid, losses, non-operating costs      |
+
+## Navigating the Category Manager
+
+- **Search** — Use the lookup field to quickly find accounts by name or number
+- **Filter by Status** — Toggle between Active and Inactive accounts
+- **Filter by Type** — Click account type icons on the right panel to filter by category type
+
+## Account Details
+
+Each account displays:
+
+- **Account Name** — Descriptive name (e.g., "Mercury Checking 1231")
+- **Account Number** — Auto-generated hierarchical number
+- **Description** — Purpose of the account
+- **Connections** — Linked bank accounts or financial institutions
+
+<CardGroup cols={2}>
+  <Card title="Managing Categories" icon="folder-tree" href="/accounts/managing-categories">
+    Create, edit, and organize your accounts
+  </Card>
+  <Card title="Account Types" icon="tags" href="/accounts/account-types">
+    Understanding the 8 root account types
+  </Card>
+</CardGroup>

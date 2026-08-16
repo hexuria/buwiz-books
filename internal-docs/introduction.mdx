@@ -1,0 +1,21 @@
+---
+title: "Internal Engineering Docs"
+description: "Welcome to the internal engineering and operational documentation for the Buwiz Books platform."
+---
+
+This documentation is exclusively for the development team. It covers system architecture, infrastructure provisioning, and internal deployment logic. Unlike the public-facing `docs/` workspace, this `internal-docs/` workspace is strictly meant to be reviewed internally.
+
+## Local preview
+
+To review these internal docs, run the following command from the repository root:
+
+```bash
+make internal-docs-dev
+```
+
+This will spawn a Mintlify server on `http://localhost:3001` (mapped to avoid port clashes with our public documentation which runs on `3000`).
+
+## Sections
+
+- **Infrastructure**: Information about our database syncs, Cloud Run instances, and DNS routing via Cloudflare.
+- **Architecture**: In-depth explanations of our double-entry ledger logic and dimensional mapping.

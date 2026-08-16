@@ -1,0 +1,44 @@
+---
+title: Connections Overview
+description: Connect third-party services to automate payments and sync financial data
+---
+
+## What are Connections?
+
+The **Connections Hub** is where you link external services to your organization. It has two purposes:
+
+1. **Payment Gateways** — Accept online payments from customers (Stripe, PayPal)
+2. **Bank Accounts & Cards** — Display your company-owned bank details on invoice payment links for manual wire/bank transfers
+
+Navigate to Connections at:
+
+```
+Organization → Connections
+```
+
+Or directly: `https://your-domain.com/organization/{orgId}/connections`
+
+---
+
+## Tabs
+
+| Tab                  | Purpose                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| **Payment Gateways** | Configure Stripe and PayPal for online payments                |
+| **Banks & Cards**    | Show company bank accounts on payment links for wire transfers |
+
+---
+
+## How it connects to Invoices
+
+When a customer opens an invoice payment link:
+
+- If **Stripe** is connected → customer sees a "Pay with Card" button
+- If **PayPal** is connected → customer sees a "Pay with PayPal" button
+- If **company bank accounts** are marked as visible → customer sees wire transfer instructions
+
+<Note>
+  A bank account only appears in Connections if it is marked as **Company-owned** in Entities →
+  Banks & Cards. Third-party accounts (e.g. vendor bank accounts you've recorded) are intentionally
+  excluded.
+</Note>

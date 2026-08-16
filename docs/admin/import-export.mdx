@@ -1,0 +1,64 @@
+---
+title: Import & Export
+description: Bulk data import and export for migration and backup
+---
+
+## Import Capabilities
+
+<img src="/images/admin/import-export.png" alt="Import and Export capabilities" />
+
+| Data Type             | Format  | Where                              |
+| --------------------- | ------- | ---------------------------------- |
+| **Chart of Accounts** | CSV     | Settings → Import/Export           |
+| **Transactions**      | CSV     | Ledger → ⋯ Menu → Import           |
+| **Vendors**           | CSV     | Settings → Import/Export           |
+| **Customers**         | CSV     | Settings → Import/Export           |
+| **Bank Statements**   | CSV/PDF | Reconciliations → Upload Statement |
+
+## Export Capabilities
+
+| Data Type             | Format           | Where                                        |
+| --------------------- | ---------------- | -------------------------------------------- |
+| **Transactions**      | CSV              | Ledger → ⋯ Menu → Export CSV                 |
+| **Financial Reports** | XLSX             | Financials → Export or Financial Package     |
+| **Financial Package** | ZIP (CSV + XLSX) | Ledger → ⋯ Menu → Download Financial Package |
+| **Chart of Accounts** | CSV              | Settings → Import/Export                     |
+
+## CSV Format Requirements
+
+### Transactions CSV
+
+```csv
+Date,Description,Amount,Category,Party,Department,Location
+2026-01-15,Office rent,$2200.00,Rent Expense,WeWork,,Main Office
+2026-01-15,Consulting revenue,-$5000.00,Consulting Revenue,Acme Corp,Sales,
+```
+
+### Chart of Accounts CSV
+
+```csv
+Name,Type,ParentName,Description
+Bank Accounts,asset,,Operating cash accounts
+Mercury Checking,asset,Bank Accounts,Primary checking account
+Accounts Payable,liability,,Vendor obligations
+```
+
+## Migration Guide
+
+When migrating from another accounting system:
+
+<Steps>
+  <Step title="Export from Old System">
+    Export your chart of accounts and transaction history as CSV files.
+  </Step>
+  <Step title="Import Chart of Accounts">
+    Import the CoA first — this creates the account structure before transactions reference them.
+  </Step>
+  <Step title="Import Transactions">
+    Import transactions in chronological order (oldest first).
+  </Step>
+  <Step title="Import Entities">Import vendors and customers to link to transactions.</Step>
+  <Step title="Verify">
+    Run a Trial Balance and compare against your old system to ensure everything migrated correctly.
+  </Step>
+</Steps>

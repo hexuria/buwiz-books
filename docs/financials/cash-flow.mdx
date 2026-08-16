@@ -1,0 +1,80 @@
+---
+title: Cash Flow Statement
+description: Track how cash moves through your business
+---
+
+## What is a Cash Flow Statement?
+
+The **Cash Flow Statement** shows how cash entered and left your business during a period. Unlike the P&L (which uses accrual accounting), cash flow tracks the actual movement of money.
+
+<img src="/images/financials/cash-flow.png" alt="Cash Flow Statement" />
+
+## Three Sections
+
+### Operating Activities
+
+Cash generated or spent through normal business operations:
+
+- Cash received from customers
+- Cash paid to vendors and employees
+- Changes in receivables, payables, and other working capital
+
+### Investing Activities
+
+Cash used for or generated from long-term investments:
+
+- Purchasing equipment or property
+- Selling investments
+- Capital expenditures
+
+### Financing Activities
+
+Cash from or to owners and lenders:
+
+- Loan proceeds or repayments
+- Owner contributions or distributions
+- Equity transactions
+
+## Report Structure
+
+```
+OPERATING ACTIVITIES
+  Revenue Collections            $XX,XXX
+  Expense Payments             ($XX,XXX)
+  ─────────────────────────────
+  Net Cash from Operations       $XX,XXX
+
+INVESTING ACTIVITIES
+  Asset Purchases              ($XX,XXX)
+  Asset Sales                    $XX,XXX
+  ─────────────────────────────
+  Net Cash from Investing       ($XX,XXX)
+
+FINANCING ACTIVITIES
+  Equity Changes                 $XX,XXX
+  Loan Activity                ($XX,XXX)
+  ─────────────────────────────
+  Net Cash from Financing        $XX,XXX
+
+  ═══════════════════════════════
+  NET CHANGE IN CASH             $XX,XXX
+  Beginning Cash                 $XX,XXX
+  ENDING CASH                    $XX,XXX
+```
+
+## How It's Calculated
+
+Buwiz Books uses the **indirect method** to derive cash flow from your ledger entries:
+
+| Account Type                                 | Section    | Logic                                |
+| -------------------------------------------- | ---------- | ------------------------------------ |
+| Revenue, Cost of Revenue, Operating Expenses | Operating  | Net of income statement items        |
+| Other Income, Other Expenses                 | Operating  | Non-operating but through operations |
+| Fixed Assets, Investments                    | Investing  | Changes in long-term assets          |
+| Equity, Long-term Liabilities                | Financing  | Changes in capital structure         |
+| Bank/Cash accounts                           | Net Change | Beginning vs ending balances         |
+
+<Tip>
+  A business can be **profitable** (positive net income) but **cash-poor** if revenue is tied up in
+  receivables. The Cash Flow Statement reveals this disconnect.
+</Tip>

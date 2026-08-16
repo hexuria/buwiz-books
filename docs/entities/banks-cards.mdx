@@ -1,0 +1,46 @@
+---
+title: Banks & Cards
+description: Manage your financial institution accounts
+---
+
+## Overview
+
+The **Banks & Cards** section tracks your business's financial accounts — checking accounts, savings accounts, credit cards, and other financial instruments.
+
+<img src="/images/entities/banks.png" alt="Banks list" />
+
+## Adding a Bank Account
+
+<Steps>
+  <Step title="Navigate to Entities → Banks & Cards">
+    Click **Banks & Cards** in the Entities section of the sidebar.
+  </Step>
+  <Step title="Click + New Bank">Click the add button to create a new bank entity.</Step>
+  <Step title="Enter Details">
+    - **Bank Name** — Financial institution name (e.g., "Mercury Bank") - **Account Type** —
+    Checking, Savings, Credit Card, etc. - **Account Number** — Last 4 digits for identification -
+    **Connected Category** — Link to the corresponding account in your Chart of Accounts
+  </Step>
+</Steps>
+
+## Bank Detail Panel
+
+Click any bank to open its detail panel showing:
+
+- **Account Information** — Name, type, connected category
+- **Current Balance** — Real-time balance from your ledger
+- **Recent Transactions** — Latest entries for this account
+- **View Insights** — Navigate to the transaction analysis view for this entity
+
+## Account Connections
+
+Banks can be connected to their corresponding Chart of Accounts entry:
+
+- A "Mercury Checking 1231" bank entity links to the "Mercury Checking 1231" asset account
+- This connection enables the reconciliation workflow
+- Transactions imported from the bank are matched against entries in the connected account
+
+<Tip>
+  Always ensure your bank entities have the correct category connection. This is essential for
+  reconciliation to work properly.
+</Tip>

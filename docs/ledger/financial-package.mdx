@@ -1,0 +1,73 @@
+---
+title: Financial Package
+description: Download a comprehensive set of financial reports as a ZIP archive
+---
+
+## Overview
+
+The **Financial Package** feature generates a professional-grade ZIP archive containing all your key financial reports for a given period. This is ideal for sending to accountants, auditors, or stakeholders.
+
+<img src="/images/ledger/financial-package.png" alt="Download Financial Package dialog" />
+
+## How to Download
+
+<Steps>
+  <Step title="Set Your Date Range">
+    In the **Ledger**, use the Smart Date Filter to select the period you want reports for (e.g., "This Quarter", "Last Year", or a custom range).
+  </Step>
+  <Step title="Open the Menu">
+    Click the **⋯ menu** button in the top-right of the Ledger header.
+  </Step>
+  <Step title="Select Download Financial Package">
+    Click **"Download Financial Package…"** from the dropdown.
+  </Step>
+  <Step title="Choose Reports">
+    A modal appears showing all available reports. By default, all 5 are selected:
+
+    - ✅ **Transaction List** (CSV)
+    - ✅ **Trial Balance** (XLSX)
+    - ✅ **Profit & Loss** (XLSX)
+    - ✅ **Balance Sheet** (XLSX)
+    - ✅ **Cash Flow Statement** (XLSX)
+
+    Uncheck any reports you don't need.
+
+  </Step>
+  <Step title="Download">
+    Click **Download ZIP**. The package generates server-side and downloads automatically.
+  </Step>
+</Steps>
+
+## Package Contents
+
+The ZIP file contains:
+
+```
+Financial-Package-Apr-2026.zip
+├── transactions.csv
+├── trial-balance.xlsx
+├── profit-loss.xlsx
+├── balance-sheet.xlsx
+└── cash-flow.xlsx
+```
+
+Each XLSX file includes:
+
+- **Report header** with organization name and date range
+- **Formatted data** with proper currency formatting
+- **Column headers** matching the on-screen report layout
+
+## Use Cases
+
+| Scenario                 | Recommended Reports                       |
+| ------------------------ | ----------------------------------------- |
+| **Monthly close review** | All 5 reports                             |
+| **Tax filing**           | P&L + Balance Sheet + Transaction List    |
+| **Audit preparation**    | All 5 reports + detailed transaction list |
+| **Investor update**      | P&L + Balance Sheet + Cash Flow           |
+| **Bookkeeper handoff**   | Transaction List + Trial Balance          |
+
+<Tip>
+  The date range shown in the modal header (e.g., "Apr 1, 2026 — Jun 30, 2026") is derived from the
+  Smart Date Filter. Change the filter first, then open the package dialog.
+</Tip>

@@ -1,0 +1,55 @@
+---
+title: Creating Bills
+description: Enter new vendor bills into the system
+---
+
+<img src="/images/bills/creating-bills.png" alt="Creating Bills" />
+
+## Creating a New Bill
+
+<Steps>
+  <Step title="Click + New Bill">From the Bills page, click the **+ New Bill** button.</Step>
+  <Step title="Select Vendor">
+    Choose the vendor from the dropdown or create a new vendor inline.
+  </Step>
+  <Step title="Enter Bill Details">
+    | Field | Required | Description | |---|---|---| | **Vendor** | ✅ | Who the bill is from | |
+    **Bill Number** | ✅ | The vendor's invoice number | | **Bill Date** | ✅ | When the bill was
+    issued | | **Due Date** | ✅ | When payment is expected | | **Currency** | ✅ | Payment currency
+    |
+  </Step>
+  <Step title="Add Line Items">
+    Add one or more line items: - **Description** — What was purchased - **Category** — Account to
+    charge (e.g., Office Supplies, Rent) - **Amount** — Dollar amount for this line - **Department**
+    / **Location** — Optional dimensional tags
+  </Step>
+  <Step title="Attach Documents">
+    Upload the original vendor invoice (PDF or image) for record-keeping.
+  </Step>
+  <Step title="Save">
+    Click **Save as Draft** to save for later, or **Post** to finalize and create the corresponding
+    journal entry.
+  </Step>
+</Steps>
+
+## AI-Assisted Bill Entry
+
+Instead of manually entering details, you can:
+
+1. Click **Scan Bill** or drag-and-drop a PDF/image
+2. AI extracts: vendor name, bill number, date, due date, line items, and amounts
+3. Review and confirm the extracted data
+4. Save — all fields are pre-filled
+
+See [AI Bill Scanning](/bills/ai-bill-scanning) for details.
+
+## Journal Entry Generated
+
+When a bill is posted, Buwiz Books automatically creates a journal entry:
+
+| Line | Account                         | Debit   | Credit  |
+| ---- | ------------------------------- | ------- | ------- |
+| 1    | Expense Account (per line item) | $500.00 | —       |
+| 2    | Accounts Payable                | —       | $500.00 |
+
+This increases your liability (AP) and records the expense simultaneously.

@@ -1,0 +1,53 @@
+---
+title: Customer Payment Portal
+description: Customers can view and pay invoices online
+---
+
+<img src="/images/invoices/payment-portal.png" alt="Payment Portal" />
+
+## Overview
+
+The **Payment Portal** is a self-service web page where your customers can view their invoices and make payments. No login is required — each invoice has a unique, secure link.
+
+## Customer Experience
+
+When a customer receives an invoice email and clicks **"View & Pay"**:
+
+1. They see the full invoice details — line items, amounts, due date
+2. They can download a PDF copy
+3. They can submit payment information
+4. Upon payment, they receive a confirmation receipt
+
+## Link Structure
+
+Each invoice generates a unique payment URL:
+
+```
+https://your-domain.com/invoices/pay/{invoiceId}
+```
+
+This link is:
+
+- **Unique per invoice** — cannot be guessed
+- **No login required** — customers don't need an account
+- **Read-only** — customers cannot edit the invoice
+
+## Payment Recording
+
+When a customer pays through the portal:
+
+- The payment is automatically recorded against the invoice
+- The invoice status updates to **Paid** (or **Partially Paid**)
+- A journal entry is created:
+
+| Line | Account             | Debit     | Credit    |
+| ---- | ------------------- | --------- | --------- |
+| 1    | Bank Account        | $2,000.00 | —         |
+| 2    | Accounts Receivable | —         | $2,000.00 |
+
+## Security
+
+<Note>
+  Payment portal links use cryptographic tokens. They cannot be enumerated or accessed without the
+  specific link. The portal only shows the individual invoice — no access to other financial data.
+</Note>

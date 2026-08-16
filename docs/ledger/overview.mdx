@@ -1,0 +1,90 @@
+---
+title: Ledger Overview
+description: The General Ledger is the heart of your accounting system
+---
+
+## What is the Ledger?
+
+The **Ledger** is the central transaction register in Buwiz Books. Every financial event — purchases, sales, payments, transfers, and adjustments — is recorded here as a double-entry journal entry.
+
+<img
+  src="/images/ledger/ledger-full-view.png"
+  alt="Buwiz Books General Ledger showing grouped transactions with account sidebar"
+/>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Double-Entry Bookkeeping" icon="scale-balanced">
+    Every transaction has balanced debits and credits, ensuring your books always stay in balance.
+  </Card>
+  <Card title="AI-Powered Date Filter" icon="calendar">
+    Use preset date ranges or type natural language queries like "last quarter" or "Q3 2025" — the
+    AI resolves them automatically.
+  </Card>
+  <Card title="Account Grouping" icon="layer-group">
+    Transactions are grouped by account category with running balances, making it easy to see
+    activity per account.
+  </Card>
+  <Card title="Inline Editing" icon="pen-to-square">
+    Switch between **View** and **Edit** mode to quickly update transactions without leaving the
+    ledger.
+  </Card>
+</CardGroup>
+
+## Ledger Layout
+
+The ledger is divided into these sections:
+
+### Header Bar
+
+- **Smart Date Filter** — AI-powered date range picker with presets and natural language input ([learn more](/ledger/viewing-transactions))
+- **View / Edit Toggle** — Switch between read-only and inline editing modes
+- **+ Add Transaction** — [Create a new journal entry](/ledger/creating-transactions)
+- **⋯ Menu** — Access import, export, and [financial package download](/ledger/financial-package) options
+
+### Account Sidebar (Left)
+
+A hierarchical tree of your Chart of Accounts showing:
+
+- Account name and number
+- Transaction count per account
+- Accounts grouped under **Assets**, **Liabilities**, and **Equity** roots
+- Click any account to filter the ledger to that account's transactions
+
+### Transaction List (Center)
+
+Transactions grouped by account, showing:
+
+- **Date** — When the transaction was posted
+- **Party** — The vendor, customer, or entity involved (with colored avatar)
+- **Source** — Whether the transaction was manual (M) or bank-imported
+- **Category** — Which account the entry is under
+- **Department / Location** — Dimensional tags, if assigned
+- **Debit / Credit** — The entry amount, color-coded
+- **Balance** — Running balance for the account
+
+### View Modes
+
+| Mode          | Icon | Description                                               |
+| ------------- | ---- | --------------------------------------------------------- |
+| **Grouped**   | ☰   | Transactions grouped under account headers with subtotals |
+| **Flat List** | ≡    | All transactions in a single chronological list           |
+| **Compact**   | ▤    | Compressed view for scanning large datasets               |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="View & Filter Transactions" icon="eye" href="/ledger/viewing-transactions">
+    Learn about the Smart Date Filter and AI-powered search
+  </Card>
+  <Card title="Create Transactions" icon="plus" href="/ledger/creating-transactions">
+    Add new journal entries, payments, and transfers
+  </Card>
+  <Card title="Export & Financial Package" icon="download" href="/ledger/financial-package">
+    Download professional financial reports
+  </Card>
+  <Card title="Matching Transactions" icon="link" href="/ledger/matching-transactions">
+    Link bank-imported transactions to ledger entries
+  </Card>
+</CardGroup>

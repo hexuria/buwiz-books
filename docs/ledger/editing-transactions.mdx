@@ -1,0 +1,69 @@
+---
+title: Editing Transactions
+description: Modify, void, or delete existing journal entries
+---
+
+<img src="/images/ledger/editing-transactions.png" alt="Editing Transactions" />
+
+## Editing a Transaction
+
+There are two ways to edit a transaction:
+
+### Method 1: Transaction Detail View
+
+1. Click on any transaction in the Ledger
+2. The detail sidebar opens with all entry information
+3. Click **Edit** to modify the entry
+4. Update the fields as needed
+5. Click **Save** to apply changes
+
+### Method 2: Inline Edit Mode
+
+1. Toggle to **✏️ Edit** mode using the button in the ledger header
+2. Click directly on editable fields (date, description, amount, category)
+3. Changes save automatically
+
+## What You Can Edit
+
+| Field           | Editable? | Notes                                           |
+| --------------- | --------- | ----------------------------------------------- |
+| **Date**        | ✅        | Changes when the transaction appears in reports |
+| **Description** | ✅        | Update the memo / narrative                     |
+| **Amounts**     | ✅        | Modify line item amounts (must stay balanced)   |
+| **Categories**  | ✅        | Re-classify to different accounts               |
+| **Party**       | ✅        | Change the vendor/customer assignment           |
+| **Department**  | ✅        | Add or change department tag                    |
+| **Location**    | ✅        | Add or change location tag                      |
+| **Documents**   | ✅        | Attach or remove supporting files               |
+
+## Voiding a Transaction
+
+Instead of deleting, you can **void** a transaction. Voiding creates a reversing entry that zeros out the original, preserving a full audit trail.
+
+<Note>
+  Voided transactions remain visible in the ledger with a "Voided" badge but do not affect balances
+  or reports.
+</Note>
+
+## Deleting a Transaction
+
+<Warning>
+  Deleting a transaction permanently removes it. This action cannot be undone. Consider voiding
+  instead for better audit compliance.
+</Warning>
+
+To delete:
+
+1. Open the transaction detail view
+2. Click the **⋯** menu
+3. Select **Delete**
+4. Confirm the deletion
+
+## Locked Periods
+
+If a period has been locked (via **Settings → Period Close**), transactions within that period cannot be edited or deleted.
+
+<Info>
+  Only organization administrators can unlock periods. This ensures financial data integrity for
+  closed reporting periods.
+</Info>

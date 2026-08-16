@@ -1,0 +1,46 @@
+node_modules
+.git
+.gitignore
+.output
+.nitro
+.tanstack
+.vinxi
+.wrangler
+.vscode
+.agent
+.stow
+.examples
+.DS_Store
+
+# Test artifacts
+coverage
+.vitest
+playwright-report
+test-results
+tests
+
+# Local files
+*.local
+local.db
+.env
+todos
+todos.json
+
+# Documentation / non-runtime
+COA
+EPICS
+docs
+Hugo's Demo Client*
+*.md
+!README.md
+
+# Build artifacts
+dist
+dist-ssr
+
+# Scripts not needed at runtime
+scripts/backup-*.sql
+test-statement-*.pdf
+reproduce_delete.ts
+fetch-buckets.ts
+test-bucket.ts

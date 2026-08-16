@@ -1,0 +1,128 @@
+---
+title: Category Mappings
+description: Configure default ledger categories for connected services, bills, invoices, and parties
+---
+
+## What are Category Mappings?
+
+<img src="/images/admin/mappings.png" alt="Category Mappings" />
+
+**Category Mappings** allow you to connect external data sources and system primitives to specific accounts in your Category Manager. This ensures that when financial transactions are recorded (like a bank feed sync, a paid invoice, or a created bill), they are automatically booked to the correct ledger accounts without manual intervention.
+
+To manage mappings, navigate to **Mappings** from the bottom of the main sidebar.
+
+## Tabs Overview
+
+The Mappings page is divided into five main sections:
+
+### 1. Banks & Cards
+
+Map connected bank accounts and credit cards to their corresponding **Asset** or **Liability** accounts.
+
+- **Example**: Map your "Mercury Checking" connection to the `11000 - Bank Accounts` category.
+- When journal entries are created for deposits or withdrawals from Mercury, they'll post directly to this category.
+
+### 2. Bills
+
+Fifteen rows drive where bill line items land. **Accounts Payable** and **Default Expense** are the
+two that everything falls back on; the rest let a bill line pick a specific expense account by
+category instead.
+
+| Row                                  | What posts here                                                |
+| ------------------------------------ | -------------------------------------------------------------- |
+| **Accounts Payable**                 | The liability where outstanding bills are tracked until paid   |
+| **Default Expense**                  | Fallback for any line item without a more specific category    |
+| **Facilities**                       | Rent, utilities, building costs                                |
+| **General Operations**               | Day-to-day operating costs that fit nowhere more specific      |
+| **Insurance**                        | Business insurance premiums                                    |
+| **Supplies & Materials**             | Consumables and materials                                      |
+| **Professional Fees**                | Legal, accounting, consulting                                  |
+| **Business Applications & Software** | Software subscriptions and licences                            |
+| **Payment Processing Fees**          | Merchant and processor fees                                    |
+| **Hosting Fees**                     | Infrastructure and hosting                                     |
+| **Cost of Goods**                    | Direct costs of goods sold                                     |
+| **Taxes**                            | Tax expense                                                    |
+| **Interest Expense**                 | Interest paid on debt                                          |
+| **Other Miscellaneous Expenses**     | Non-operating odds and ends                                    |
+| **Other Current Liabilities**        | Bill amounts that settle to a liability rather than an expense |
+
+### 3. Invoices
+
+Five rows configure how invoice revenue flows into your ledger. The last three are what make
+discounted and taxed invoices post correctly — an invoice carrying sales tax or a discount **cannot
+be posted** while its row is unmapped.
+
+| Row                     | What posts here                                                         |
+| ----------------------- | ----------------------------------------------------------------------- |
+| **Accounts Receivable** | The asset where outstanding invoices sit until they are paid            |
+| **Default Revenue**     | Fallback revenue category for invoice line items                        |
+| **Sales Tax Payable**   | The liability credited for tax charged on an invoice                    |
+| **Refunds & Discounts** | The contra-revenue account debited for invoice discounts                |
+| **Payment Clearing**    | The clearing account a payment passes through before it lands in a bank |
+
+### 4. Connections
+
+Manage third-party integrations (like Payroll processors or external Expense management tools) and map them to their respective categories.
+
+- **Example**: Map an external "Gusto" payroll connection to your `Salaries & Wages` expense category.
+- **Example**: Map "Stripe" to your `Payment Processor Fees` category.
+
+### 5. Parties
+
+Set default category assignments for transactions associated with specific Vendors or Customers.
+
+_Note: Party-level mappings currently override general system defaults, ensuring that a transaction from "AWS" always hits "Software Subscriptions" regardless of the source._
+
+---
+
+## Filling Everything at Once
+
+You do not have to set 26 rows by hand. Applying a chart-of-accounts template from the
+**Category Manager** creates the accounts **and** writes every Bills, Invoices, and Banks & Cards
+mapping in the same step — see [Managing Categories](/accounts/managing-categories).
+
+This is the recommended way to start. Hand-mapping is for adjusting individual rows afterwards, or
+for the Connections and Parties tabs, which depend on your own integrations and are not covered by a
+template.
+
+### Spotting unmapped rows
+
+A row with no resolvable account is what makes a bill or invoice fail at posting time, so each tab
+shows an amber banner counting them:
+
+> **3 of 15 still have no account**
+> Insurance, Hosting Fees, Taxes. Anything that posts through these will fail until they are set —
+> applying a chart-of-accounts template fills them all in.
+
+The banner disappears once every row on that tab resolves to an active account.
+
+<Warning>
+  A mapping only counts if it points at an **active** account of the right type. Deactivating an
+  account that a mapping depends on puts that row back into the unmapped banner.
+</Warning>
+
+---
+
+## Creating and Editing Mappings
+
+### How to map an item:
+
+1. Select the relevant tab (e.g., **Banks & Cards**).
+2. Locate the item you want to map (e.g., your connected checking account).
+3. Click the dropdown beneath the item to open the category combobox.
+4. Search for the desired Ledger Category and select it.
+5. The change is saved automatically and applies immediately to future transactions.
+
+### Creating Categories Inline
+
+If the category you need doesn't exist yet, you can create it directly from the Mappings page:
+
+1. Under the unmapped item, instead of opening the combobox, click **Create "Suggested Name"**.
+2. Buwiz Books will immediately create the required category under the correct account type (e.g., an Asset for a bank account) and automatically map the connection to it.
+
+---
+
+<Note>
+  Mappings do **not** retroactively change past transactions. They only apply to new transactions
+  generated after the rule is configured.
+</Note>

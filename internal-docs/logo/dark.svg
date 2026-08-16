@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="170" height="30" viewBox="0 0 170 30">
+  <rect x="2" y="4" width="22" height="22" rx="5" fill="#2ecc71"/>
+  <text x="8" y="21" font-family="system-ui,-apple-system,sans-serif" font-weight="700" font-size="16" fill="white">B</text>
+  <text x="30" y="21" font-family="system-ui,-apple-system,sans-serif" font-weight="600" font-size="18" fill="white">Buwiz Books</text>
+</svg>

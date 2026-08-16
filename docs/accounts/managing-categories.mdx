@@ -1,0 +1,133 @@
+---
+title: Managing Categories
+description: Create, edit, and organize account categories
+---
+
+<img src="/images/accounts/managing-categories.png" alt="Managing Categories" />
+
+## Starting from a Template
+
+The fastest way to a working chart is to apply a template. On an empty Category Manager, click
+**Start from a template**; otherwise open the **⋯** menu and choose **Apply a template…**. Then pick
+one:
+
+| Template                    | Accounts | Best for                                        |
+| --------------------------- | -------- | ----------------------------------------------- |
+| **General small business**  | 79       | Start here if none of the others fit            |
+| **SaaS / startup**          | 87       | Subscription revenue, deferred revenue, hosting |
+| **Freelancer / consultant** | 39       | Solo services — the leanest chart               |
+| **Retail / e-commerce**     | 86       | Inventory, cost of goods, merchant fees         |
+
+A template does two things: it builds the chart, **and** it fills in every
+[category mapping](/admin/mappings), so bills and invoices post correctly from your first
+transaction. Setting those 26 mappings by hand is otherwise the slowest part of setup.
+
+### The preview
+
+Nothing is written until you confirm. The preview tells you exactly what will happen — how many
+accounts will be **created**, how many existing ones will be **reused**, and how many mappings will
+be filled.
+
+Applying a template is **additive and safe on a chart you have already started**:
+
+- Accounts are matched by account number first, then by name and type. A match is reused, never
+  duplicated and never overwritten.
+- Your names, descriptions, and account numbers are left alone.
+- Only genuinely missing accounts are created.
+- An account missing a subtype may have one filled in, since mappings and the cash-flow statement
+  depend on it.
+
+<Note>
+  Applying a second template later is fine — it tops up whatever the first one didn't cover rather
+  than replacing your chart.
+</Note>
+
+## Extending the Chart with AI
+
+A template covers the common cases; the **⋯ → Customize with AI…** option covers your specific
+business. Describe what you do ("we run a specialty coffee shop with a small wholesale roasting arm") and the assistant
+drafts additional categories on top of your existing chart.
+
+Two properties are worth knowing:
+
+- **It only adds.** It never renames, re-types, or removes an existing account.
+- **Nothing is applied automatically.** The result is a draft proposal. You review it under
+  **AI Proposals** and choose what to keep — your chart is unchanged until you approve.
+
+<Tip>
+  Apply a template first. The assistant extends an existing chart rather than creating one from
+  nothing, so it produces better suggestions with a baseline to work from.
+</Tip>
+
+## Creating a New Category
+
+<Steps>
+  <Step title="Click + New Category">
+    Click the green **+ New Category** button in the top-right corner of the Category Manager.
+  </Step>
+  <Step title="Fill in Details">
+    | Field | Required | Description | |---|---|---| | **Name** | ✅ | Account name | | **Type** |
+    ✅ | Select from the 8 root types | | **Parent** | Optional | Place under a parent category | |
+    **Description** | Optional | Explain the account's purpose |
+  </Step>
+  <Step title="Save">
+    Click **Create** to add the category. An account number is auto-generated based on the parent
+    and type.
+  </Step>
+</Steps>
+
+## Editing a Category
+
+1. Click on any account in the Category Manager list
+2. Modify the name, description, or parent assignment
+3. Click **Save** to apply changes
+
+<Warning>
+  Changing an account's type after transactions have been recorded against it may affect your
+  financial reports. Proceed with caution.
+</Warning>
+
+## Organizing Hierarchy
+
+Accounts are organized in a tree structure:
+
+```
+Assets (10000)
+├── Bank Accounts (11000)
+│   └── Mercury Checking 1231 (11200)
+├── Asset Clearing (11500)
+├── Accounts Receivable (12000)
+│   └── Accounts Receivable - Gross (12010)
+├── Prepaid Expenses (13000)
+├── Inventory (13500)
+└── Fixed Assets (16000)
+    └── Computer Assets (16100)
+```
+
+To move an account under a different parent:
+
+1. Edit the account
+2. Change the **Parent** dropdown to the new parent category
+3. Save — the account number will be re-generated
+
+## Deactivating Accounts
+
+Instead of deleting an account, you can deactivate it:
+
+1. Edit the account
+2. Set status to **Inactive**
+3. The account will be hidden from dropdowns but preserved for historical transactions
+
+<Note>
+  Accounts with existing transactions cannot be deleted. Deactivate them instead to keep your audit
+  trail intact.
+</Note>
+
+## Importing a Chart of Accounts
+
+You can bulk-import accounts from a CSV file:
+
+1. Go to **Settings → Import/Export**
+2. Select **Import Chart of Accounts**
+3. Upload a CSV with columns: `name`, `type`, `parentName` (optional), `description` (optional)
+4. Review the preview and confirm

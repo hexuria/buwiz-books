@@ -1,0 +1,1640 @@
+/**
+ * Bills API Server Functions
+ * ABAC-protected CRUD + workflow transitions for Bill Pay (Accounts Payable)
+ */
+import { createServerFn } from "@tanstack/react-start";
+import type { DbExecutor } from "../../db";
+
+import { bills, billLineItems } from "../../db/schema/bills";
+import { parties } from "../../db/schema/parties";
+import { accounts } from "../../db/schema/accounts";
+import { journalHeaders, journalLines } from "../../db/schema/journals";
+import { activityLogs } from "../../db/schema/activity-logs";
+import { eq, desc, and, asc } from "drizzle-orm";
+import { z } from "zod";
+import { createLogger } from "../../lib/logger";
+import { insertActivityLog } from "../../lib/insert-activity-log";
+import { allocateJournalTransactionNumber } from "../../lib/sequence";
+import { isDateInLockedPeriod, getClosedThrough, isDateLocked } from "../../lib/period-close";
+import { statementLines, reconciliations } from "../../db/schema/reconciliations";
+import { inArray } from "drizzle-orm";
+import { isR2Configured, getPresignedDownloadUrl } from "../../lib/storage";
+import { documents, documentAttachments } from "../../db/schema/documents";
+import { ensureDocument } from "../../lib/documents/ensure-document";
+import {
+  assertIdempotencyPayloadMatches,
+  idempotencyPayloadHash,
+  scopedIdempotencyUuid,
+} from "../../lib/idempotency";
+import { centsToMoney, moneyToCents } from "../../lib/money";
+import {
+  beginAccountingOperation,
+  completeAccountingOperation,
+} from "../../lib/operational-idempotency";
+import { recordManualBillPayment } from "../../lib/manual-bill-payment";
+import {
+  withMutationPermissionOrgContext,
+  withPermissionOrgContext,
+  withSessionOrgContext,
+} from "../../lib/server-context";
+import { extractBoundingBoxes } from "./-ai-bill-ocr";
+import { generateThumbnail } from "@/services/thumbnail-generator";
+import { createTransactionCandidate } from "@/lib/inbox/service";
+import { requireMappedAccountId } from "../../lib/coa/resolve-mapped-account";
+import {
+  inboxItems,
+  integrationSources,
+  reviewFindings,
+  sourceRecordDocuments,
+  sourceRecords,
+  transactionCandidates,
+  workflowEvents,
+} from "@/db/schema/inbox";
+
+const logger = createLogger("api.bills");
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const BILL_STATUSES = [
+  "draft",
+  "in_review",
+  "pending_approval",
+  "approved",
+  "awaiting_payment",
+  "scheduled",
+  "partial",
+  "paid",
+  "voided",
+] as const;
+
+/** Valid state transitions for the bill workflow
+ *
+ * Simplified flow:
+ *   Upload → In Review → (optional) Pending Approval → Awaiting Payment → Paid
+ *
+ * Key shortcuts:
+ *   - Owner can pay directly from in_review (skip approval entirely)
+ *   - Self-approve from in_review goes straight to awaiting_payment
+ *   - "Approve" from pending_approval goes to awaiting_payment (no separate "approved" step)
+ */
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  draft: ["in_review", "voided"],
+  in_review: ["pending_approval", "awaiting_payment", "paid", "partial", "voided"],
+  pending_approval: ["awaiting_payment", "in_review", "voided"],
+  approved: ["awaiting_payment", "in_review"], // legacy — treat as alias for awaiting_payment
+  awaiting_payment: ["scheduled", "paid", "partial"],
+  scheduled: ["paid", "partial"],
+  partial: ["paid", "partial", "voided"], // additional partial payments
+  paid: ["voided"], // allow voiding paid bills for corrections
+  voided: [],
+};
+
+const JOURNAL_PRODUCING_BILL_STATUSES = new Set(["awaiting_payment", "scheduled"]);
+
+// ============================================================================
+// Schemas
+// ============================================================================
+
+const listBillsSchema = z.object({
+  status: z.enum(BILL_STATUSES).optional(),
+  vendorId: z.string().uuid().optional(),
+  limit: z.number().int().min(1).max(250).optional().default(100),
+});
+
+const getBillSchema = z.object({
+  id: z.string().uuid(),
+});
+
+const createBillSchema = z.object({
+  idempotencyKey: z.string().uuid(),
+  vendorId: z.string().uuid(),
+  billNumber: z.string().optional(),
+  billDate: z.string(),
+  dueDate: z.string(),
+  memo: z.string().optional(),
+  documentUrl: z.string().optional(),
+  documentType: z.string().optional(),
+  status: z.enum(["draft", "in_review"]).optional().default("in_review"),
+  isRecurring: z.boolean().optional(),
+  recurringFrequency: z.string().optional(),
+  categoryConfidence: z.string().optional(),
+  classificationStatus: z.enum(["auto", "needs_review", "manual"]).optional(),
+  ocrBoundingBoxes: z
+    .array(
+      z.object({
+        fieldId: z.string(),
+        label: z.string(),
+        text: z.string().optional(),
+        bbox: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+        page: z.number(),
+      }),
+    )
+    .optional(),
+  lineItems: z
+    .array(
+      z.object({
+        description: z.string().optional(),
+        amount: z.string(), // stored as decimal string
+        accountId: z.string().uuid(),
+        departmentId: z.string().uuid().optional(),
+        locationId: z.string().uuid().optional(),
+      }),
+    )
+    .min(1),
+});
+
+const updateBillSchema = z.object({
+  id: z.string().uuid(),
+  billNumber: z.string().optional(),
+  billDate: z.string().optional(),
+  dueDate: z.string().optional(),
+  memo: z.string().optional(),
+  amount: z.string().optional(),
+  approverId: z.string().optional(), // better-auth uses text IDs, not UUIDs
+});
+
+const transitionStatusSchema = z.object({
+  billId: z.string().uuid(),
+  newStatus: z.enum(BILL_STATUSES),
+  idempotencyKey: z.string().uuid().optional(),
+  paymentMethod: z.string().optional(),
+  paymentReference: z.string().optional(),
+  bankAccountId: z.string().uuid().optional(), // Required when newStatus === 'paid' or 'partial'
+  paymentAmount: z.string().or(z.number()).optional(), // For partial payments — omit for full balance
+});
+
+const deleteBillSchema = z.object({
+  id: z.string().uuid(),
+});
+
+// ============================================================================
+// Types
+// ============================================================================
+
+export type BillListItem = typeof bills.$inferSelect & {
+  vendorName: string | null;
+};
+
+export type BillDetail = typeof bills.$inferSelect & {
+  vendorName: string | null;
+  vendorEmail: string | null;
+  vendorPhone: string | null;
+  previewImageUrl: string | null;
+  vendorBankRouting: string | null;
+  vendorBankAccount: string | null;
+  vendorMailingAddress: {
+    street?: string;
+    city?: string;
+    state?: string;
+    postalCode?: string;
+    country?: string;
+  } | null;
+  lineItems: Array<
+    typeof billLineItems.$inferSelect & {
+      accountName: string;
+      accountNumber: string | null;
+    }
+  >;
+};
+
+// ============================================================================
+// Server Functions
+// ============================================================================
+
+/**
+ * List bills with optional status/vendor filters
+ */
+export const listBills = createServerFn({ method: "GET" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withSessionOrgContext(async ({ orgId, db }) => {
+      const parsed = listBillsSchema.parse(rawData ?? {});
+      const { status, vendorId, limit } = parsed;
+
+      const conditions = [eq(bills.organizationId, orgId)];
+      if (status) {
+        conditions.push(eq(bills.status, status));
+      }
+      if (vendorId) {
+        conditions.push(eq(bills.vendorId, vendorId));
+      }
+
+      const rows = await db
+        .select({
+          id: bills.id,
+          organizationId: bills.organizationId,
+          vendorId: bills.vendorId,
+          billNumber: bills.billNumber,
+          billDate: bills.billDate,
+          dueDate: bills.dueDate,
+          status: bills.status,
+          amount: bills.amount,
+          amountPaid: bills.amountPaid,
+          balanceDue: bills.balanceDue,
+          memo: bills.memo,
+          approverId: bills.approverId,
+          approvedAt: bills.approvedAt,
+          scheduledPaymentDate: bills.scheduledPaymentDate,
+          paidAt: bills.paidAt,
+          paymentMethod: bills.paymentMethod,
+          paymentReference: bills.paymentReference,
+          isRecurring: bills.isRecurring,
+          recurringFrequency: bills.recurringFrequency,
+          categoryConfidence: bills.categoryConfidence,
+          classificationStatus: bills.classificationStatus,
+          ocrBoundingBoxes: bills.ocrBoundingBoxes,
+          journalHeaderId: bills.journalHeaderId,
+          documentUrl: bills.documentUrl,
+          documentType: bills.documentType,
+          createdAt: bills.createdAt,
+          updatedAt: bills.updatedAt,
+          vendorName: parties.name,
+        })
+        .from(bills)
+        .leftJoin(parties, eq(bills.vendorId, parties.id))
+        .where(conditions.length > 0 ? and(...conditions) : undefined)
+        .orderBy(desc(bills.dueDate))
+        .limit(limit);
+
+      return rows;
+    });
+  },
+);
+
+/**
+ * Get a single bill with line items and vendor info
+ */
+export const getBill = createServerFn({ method: "GET" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withPermissionOrgContext("bill", "view", async ({ orgId, db }) => {
+      const parsed = getBillSchema.parse(rawData);
+
+      const [bill] = await db
+        .select({
+          id: bills.id,
+          organizationId: bills.organizationId,
+          vendorId: bills.vendorId,
+          billNumber: bills.billNumber,
+          billDate: bills.billDate,
+          dueDate: bills.dueDate,
+          status: bills.status,
+          amount: bills.amount,
+          amountPaid: bills.amountPaid,
+          balanceDue: bills.balanceDue,
+          memo: bills.memo,
+          approverId: bills.approverId,
+          approvedAt: bills.approvedAt,
+          scheduledPaymentDate: bills.scheduledPaymentDate,
+          paidAt: bills.paidAt,
+          paymentMethod: bills.paymentMethod,
+          paymentReference: bills.paymentReference,
+          isRecurring: bills.isRecurring,
+          recurringFrequency: bills.recurringFrequency,
+          categoryConfidence: bills.categoryConfidence,
+          classificationStatus: bills.classificationStatus,
+          ocrBoundingBoxes: bills.ocrBoundingBoxes,
+          journalHeaderId: bills.journalHeaderId,
+          documentUrl: bills.documentUrl,
+          documentType: bills.documentType,
+          createdAt: bills.createdAt,
+          updatedAt: bills.updatedAt,
+          vendorName: parties.name,
+          vendorEmail: parties.email,
+          vendorPhone: parties.phone,
+          vendorBankRouting: parties.bankRoutingNumber,
+          vendorBankAccount: parties.bankAccountNumber,
+          vendorMailingAddress: parties.mailingAddress,
+        })
+        .from(bills)
+        .leftJoin(parties, eq(bills.vendorId, parties.id))
+        .where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)))
+        .limit(1);
+
+      if (!bill) {
+        throw new Error("Bill not found");
+      }
+
+      let resolvedDocumentUrl = bill.documentUrl;
+      if (bill.documentUrl?.startsWith("r2://") && isR2Configured()) {
+        const r2Path = bill.documentUrl.replace(/^r2:\/\/[^/]+\//, "");
+        resolvedDocumentUrl = await getPresignedDownloadUrl(r2Path, { expiresIn: 3600 });
+      } else if (bill.documentUrl?.startsWith("local://")) {
+        const localPath = bill.documentUrl.replace("local://", "");
+        resolvedDocumentUrl = `/uploads/${localPath.split("/").pop()}`;
+      }
+
+      let previewImageUrl: string | null = null;
+      if (isR2Configured()) {
+        const attachment = await db
+          .select({ previewImageR2Key: documents.previewImageR2Key })
+          .from(documentAttachments)
+          .innerJoin(documents, eq(documentAttachments.documentId, documents.id))
+          .where(
+            and(
+              eq(documentAttachments.linkableId, parsed.id),
+              eq(documentAttachments.linkableType, "bill"),
+            ),
+          )
+          .limit(1);
+
+        const previewKey = attachment[0]?.previewImageR2Key;
+        if (previewKey) {
+          previewImageUrl = await getPresignedDownloadUrl(previewKey, { expiresIn: 3600 });
+        }
+      }
+
+      const lineItems = await db
+        .select({
+          id: billLineItems.id,
+          billId: billLineItems.billId,
+          description: billLineItems.description,
+          amount: billLineItems.amount,
+          accountId: billLineItems.accountId,
+          departmentId: billLineItems.departmentId,
+          locationId: billLineItems.locationId,
+          sortOrder: billLineItems.sortOrder,
+          createdAt: billLineItems.createdAt,
+          accountName: accounts.name,
+          accountNumber: accounts.accountNumber,
+        })
+        .from(billLineItems)
+        .innerJoin(accounts, eq(billLineItems.accountId, accounts.id))
+        .where(eq(billLineItems.billId, parsed.id))
+        .orderBy(asc(billLineItems.sortOrder));
+
+      return { ...bill, documentUrl: resolvedDocumentUrl, previewImageUrl, lineItems };
+    });
+  },
+);
+
+/**
+ * Create a new bill with line items
+ */
+export const createBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "create",
+      { routeKey: "bill:create", limit: 30, windowMs: 60_000 },
+      async ({ orgId, userId, role, db }) => {
+        const parsed = createBillSchema.parse(rawData);
+
+        const totalAmount = parsed.lineItems.reduce(
+          (sum, l) => sum + Number.parseFloat(l.amount),
+          0,
+        );
+        const requestPayloadHash = idempotencyPayloadHash("bill-submission", {
+          vendorId: parsed.vendorId,
+          billNumber: parsed.billNumber,
+          billDate: parsed.billDate,
+          dueDate: parsed.dueDate,
+          memo: parsed.memo,
+          documentUrl: parsed.documentUrl,
+          documentType: parsed.documentType,
+          status: parsed.status,
+          isRecurring: parsed.isRecurring,
+          recurringFrequency: parsed.recurringFrequency,
+          categoryConfidence: parsed.categoryConfidence,
+          classificationStatus: parsed.classificationStatus,
+          ocrBoundingBoxes: parsed.ocrBoundingBoxes,
+          lineItems: parsed.lineItems,
+        });
+        const billId = scopedIdempotencyUuid(`bill:${orgId}`, parsed.idempotencyKey);
+
+        return db.transaction(async (tx) => {
+          const [bill] = await tx
+            .insert(bills)
+            .values({
+              id: billId,
+              organizationId: orgId,
+              vendorId: parsed.vendorId,
+              billNumber: parsed.billNumber,
+              billDate: parsed.billDate,
+              dueDate: parsed.dueDate,
+              memo: parsed.memo,
+              documentUrl: parsed.documentUrl,
+              documentType: parsed.documentType,
+              amount: totalAmount.toFixed(2),
+              balanceDue: totalAmount.toFixed(2),
+              status: parsed.status ?? "in_review",
+              isRecurring: parsed.isRecurring ?? false,
+              recurringFrequency: parsed.recurringFrequency,
+              categoryConfidence: parsed.categoryConfidence,
+              classificationStatus: parsed.classificationStatus ?? "manual",
+              ocrBoundingBoxes: parsed.ocrBoundingBoxes ?? null,
+            })
+            .onConflictDoNothing()
+            .returning();
+
+          if (!bill) {
+            const [existing] = await tx
+              .select()
+              .from(bills)
+              .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+              .limit(1);
+            if (!existing) {
+              throw new Error("Unable to persist bill submission");
+            }
+            const [existingRequest] = await tx
+              .select({ sourceRawData: sourceRecords.rawData })
+              .from(transactionCandidates)
+              .leftJoin(sourceRecords, eq(transactionCandidates.sourceRecordId, sourceRecords.id))
+              .where(
+                and(
+                  eq(transactionCandidates.organizationId, orgId),
+                  eq(transactionCandidates.requestIdempotencyKey, parsed.idempotencyKey),
+                ),
+              )
+              .limit(1);
+            assertIdempotencyPayloadMatches(
+              existingRequest?.sourceRawData?.requestPayloadHash,
+              requestPayloadHash,
+              "bill",
+            );
+            await tx
+              .insert(workflowEvents)
+              .values({
+                organizationId: orgId,
+                entityType: "bill",
+                entityId: existing.id,
+                action: "exact_replay_suppressed",
+                actorType: "user",
+                actorId: userId,
+                idempotencyKey: `exact-replay:bill:${existing.id}`,
+                data: {
+                  replayType: "request_idempotency",
+                  sourceChannel: "bills_expenses",
+                },
+              })
+              .onConflictDoNothing();
+            return { ...existing, deduplicated: true };
+          }
+
+          if (parsed.ocrBoundingBoxes && parsed.ocrBoundingBoxes.length > 0 && parsed.documentUrl) {
+            // Document URLs can be local://[documentId] or r2://...
+            // the store passes documentId directly into linkDocumentToBill, but we can't easily access the documentId from just the URL.
+            // Wait, bill-upload-store knows the documentId and calls linkDocumentToBill!
+            // Let's just update the documents table when we link the document.
+          }
+
+          if (parsed.lineItems.length > 0) {
+            await tx.insert(billLineItems).values(
+              parsed.lineItems.map((line, i) => ({
+                billId: bill.id,
+                description: line.description,
+                amount: line.amount,
+                accountId: line.accountId,
+                departmentId: line.departmentId,
+                locationId: line.locationId,
+                sortOrder: i,
+              })),
+            );
+          }
+
+          await insertActivityLog(
+            {
+              orgId,
+              entityType: "bill",
+              entityId: bill.id,
+              action: "created",
+              actorId: userId,
+              changes: {
+                vendorId: parsed.vendorId,
+                billNumber: parsed.billNumber ?? null,
+                billDate: parsed.billDate,
+                dueDate: parsed.dueDate,
+                totalAmount: totalAmount.toFixed(2),
+                status: parsed.status ?? "in_review",
+                lineItemCount: parsed.lineItems.length,
+              },
+            },
+            tx,
+          );
+
+          const apAccountId = await resolveApAccount(tx, orgId);
+          const inboxResult = await createTransactionCandidate(
+            { orgId, userId, role, db: tx },
+            {
+              transactionDate: bill.billDate,
+              transactionType: "journal",
+              memo: parsed.memo || `Bill ${bill.billNumber || bill.id}`,
+              referenceNumber: bill.billNumber,
+              partyId: bill.vendorId,
+              sourceChannel: "bills_expenses",
+              sourceProvider: "internal_bills",
+              requestIdempotencyKey: parsed.idempotencyKey,
+              requestPayloadHash,
+              externalId: bill.id,
+              candidateType: "bill",
+              lines: [
+                ...parsed.lineItems.map((line, index) => ({
+                  accountId: line.accountId,
+                  debit: line.amount,
+                  lineDescription: line.description,
+                  departmentId: line.departmentId,
+                  locationId: line.locationId,
+                  categoryConfidence: parsed.categoryConfidence,
+                  sortOrder: index,
+                })),
+                {
+                  accountId: apAccountId,
+                  credit: totalAmount.toFixed(2),
+                  lineDescription: `A/P: ${bill.billNumber || "Bill"}`,
+                  partyId: bill.vendorId,
+                  sortOrder: parsed.lineItems.length,
+                },
+              ],
+            },
+          );
+
+          return { ...bill, inboxItemId: inboxResult.inboxItem.id, deduplicated: false };
+        });
+      },
+    ) as any;
+  },
+);
+
+/**
+ * Update bill metadata
+ */
+export const updateBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "update",
+      { routeKey: "bill:update", limit: 45, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const parsed = updateBillSchema.parse(rawData);
+        const { id, ...updates } = parsed;
+
+        const [existing] = await db
+          .select()
+          .from(bills)
+          .where(and(eq(bills.id, id), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        if (!existing) {
+          throw new Error("Bill not found");
+        }
+
+        const updateFields: Record<string, any> = { updatedAt: new Date() };
+        if (updates.billNumber !== undefined) updateFields.billNumber = updates.billNumber;
+        if (updates.billDate !== undefined) updateFields.billDate = updates.billDate;
+        if (updates.dueDate !== undefined) updateFields.dueDate = updates.dueDate;
+        if (updates.memo !== undefined) updateFields.memo = updates.memo;
+        if (updates.amount !== undefined) {
+          updateFields.amount = updates.amount;
+          updateFields.balanceDue = (
+            Number.parseFloat(updates.amount) - Number.parseFloat(existing.amountPaid ?? "0")
+          ).toFixed(2);
+        }
+        if (updates.approverId !== undefined) updateFields.approverId = updates.approverId;
+
+        const [updated] = await db
+          .update(bills)
+          .set(updateFields)
+          .where(and(eq(bills.id, id), eq(bills.organizationId, orgId)))
+          .returning();
+
+        return updated;
+      },
+    );
+  },
+);
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/** Resolve the organization's Accounts Payable account via the configured mapping. */
+async function resolveApAccount(db: DbExecutor, orgId: string): Promise<string> {
+  return requireMappedAccountId(db, orgId, "bill", "accounts_payable");
+}
+
+async function linkBillDocumentToCandidate(
+  db: DbExecutor,
+  orgId: string,
+  billId: string,
+  documentId: string,
+) {
+  const [candidateSource] = await db
+    .select({
+      sourceRecordId: sourceRecords.id,
+      candidateId: transactionCandidates.id,
+      inboxItemId: inboxItems.id,
+      lockVersion: inboxItems.lockVersion,
+    })
+    .from(sourceRecords)
+    .innerJoin(integrationSources, eq(sourceRecords.sourceId, integrationSources.id))
+    .innerJoin(transactionCandidates, eq(transactionCandidates.sourceRecordId, sourceRecords.id))
+    .innerJoin(inboxItems, eq(inboxItems.candidateId, transactionCandidates.id))
+    .where(
+      and(
+        eq(sourceRecords.organizationId, orgId),
+        eq(sourceRecords.externalId, billId),
+        eq(integrationSources.provider, "internal_bills"),
+      ),
+    )
+    .limit(1);
+  if (!candidateSource) return;
+  await db
+    .insert(sourceRecordDocuments)
+    .values({
+      organizationId: orgId,
+      sourceRecordId: candidateSource.sourceRecordId,
+      documentId,
+      relationship: "invoice",
+    })
+    .onConflictDoNothing();
+  await db
+    .update(reviewFindings)
+    .set({
+      state: "resolved",
+      resolvedAt: new Date(),
+      resolutionNote: "Invoice attached to the bill source.",
+    })
+    .where(
+      and(
+        eq(reviewFindings.candidateId, candidateSource.candidateId),
+        eq(reviewFindings.ruleKey, "missing_invoice"),
+        eq(reviewFindings.state, "open"),
+      ),
+    );
+  await db
+    .update(inboxItems)
+    .set({
+      lockVersion: candidateSource.lockVersion + 1,
+      updatedAt: new Date(),
+    })
+    .where(eq(inboxItems.id, candidateSource.inboxItemId));
+}
+
+/**
+ * Generate a sequential transaction number for journal entries.
+ */
+async function generateBillTxnNumber(orgId: string, db: DbExecutor): Promise<string> {
+  return allocateJournalTransactionNumber(orgId, db);
+}
+
+/**
+ * Create the accrual journal entry when a bill enters awaiting_payment.
+ * DR Expense accounts (per line item), CR Accounts Payable (total)
+ * This recognizes the liability on the Balance Sheet.
+ */
+async function createApAccrualJournal(
+  db: DbExecutor,
+  orgId: string,
+  userId: string,
+  bill: typeof bills.$inferSelect,
+  billId: string,
+): Promise<string> {
+  // Idempotency: skip if journal already exists
+  if (bill.journalHeaderId) return bill.journalHeaderId;
+
+  // The accrual journal is dated on the bill date — refuse to post into a closed period.
+  const { locked, closedThrough } = await isDateInLockedPeriod(orgId, bill.billDate);
+  if (locked) {
+    throw new Error(
+      `Cannot post bill ${bill.billNumber || billId}: its bill date ${bill.billDate} falls in a period locked through ${closedThrough}.`,
+    );
+  }
+
+  const apAccountId = await resolveApAccount(db, orgId);
+
+  const lineItems = await db
+    .select({
+      description: billLineItems.description,
+      amount: billLineItems.amount,
+      accountId: billLineItems.accountId,
+      departmentId: billLineItems.departmentId,
+      locationId: billLineItems.locationId,
+      sortOrder: billLineItems.sortOrder,
+    })
+    .from(billLineItems)
+    .where(eq(billLineItems.billId, billId))
+    .orderBy(asc(billLineItems.sortOrder));
+
+  if (lineItems.length === 0) {
+    throw new Error("Bill has no line items — cannot create journal entry");
+  }
+
+  const totalAmount = lineItems.reduce((sum, l) => sum + Number.parseFloat(l.amount), 0);
+  const txnNumber = await generateBillTxnNumber(orgId, db);
+
+  const [header] = await db
+    .insert(journalHeaders)
+    .values({
+      organizationId: orgId,
+      transactionNumber: txnNumber,
+      transactionDate: bill.billDate,
+      transactionType: "journal",
+      source: "bill",
+      memo: `Bill Accrual: ${bill.billNumber || billId}`,
+      partyId: bill.vendorId,
+      totalAmount: totalAmount.toFixed(2),
+      status: "posted",
+      sourceDocumentId: billId,
+      sourceDocumentType: "bill",
+      createdBy: userId,
+      referenceNumber: bill.billNumber || null,
+      idempotencyKey: `bill-accrual:${billId}`,
+    })
+    .returning();
+
+  // DR Expense accounts (per line item), CR A/P (total)
+  const journalLineValues = [
+    ...lineItems.map((line, index) => ({
+      journalHeaderId: header.id,
+      accountId: line.accountId,
+      debit: line.amount,
+      credit: null as string | null,
+      lineDescription: line.description || "Bill line item",
+      partyId: bill.vendorId,
+      departmentId: line.departmentId,
+      locationId: line.locationId,
+      sortOrder: index,
+    })),
+    {
+      journalHeaderId: header.id,
+      accountId: apAccountId,
+      debit: null as string | null,
+      credit: totalAmount.toFixed(2),
+      lineDescription: `A/P: ${bill.billNumber || "Bill"}`,
+      partyId: bill.vendorId,
+      departmentId: null as string | null,
+      locationId: null as string | null,
+      sortOrder: lineItems.length,
+    },
+  ];
+
+  await db.insert(journalLines).values(journalLineValues);
+
+  await db.insert(activityLogs).values({
+    organizationId: orgId,
+    entityType: "transaction",
+    entityId: header.id,
+    action: "created",
+    actorId: userId,
+    changes: {
+      source: "bill_accrual",
+      billId,
+      billNumber: bill.billNumber,
+      totalAmount: totalAmount.toFixed(2),
+      transactionNumber: txnNumber,
+    },
+  });
+
+  return header.id;
+}
+
+/**
+ * Transition bill status with validation
+ */
+export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "update",
+      { routeKey: "bill:transition", limit: 30, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const parsed = transitionStatusSchema.parse(rawData);
+        const {
+          billId,
+          newStatus,
+          idempotencyKey,
+          paymentMethod,
+          paymentReference,
+          bankAccountId,
+          paymentAmount,
+        } = parsed;
+
+        if ((newStatus === "paid" || newStatus === "partial") && !bankAccountId) {
+          throw new Error("bankAccountId is required when recording a bill payment");
+        }
+        if ((newStatus === "paid" || newStatus === "partial") && !idempotencyKey) {
+          throw new Error(
+            "A caller-generated idempotencyKey is required for journal-producing bill transitions.",
+          );
+        }
+        if (newStatus === "paid" || newStatus === "partial") {
+          return recordManualBillPayment(db, {
+            organizationId: orgId,
+            userId,
+            billId,
+            requestedStatus: newStatus,
+            bankAccountId: bankAccountId!,
+            paymentAmount,
+            paymentMethod,
+            paymentReference,
+            idempotencyKey: idempotencyKey!,
+          });
+        }
+        const canonicalPaymentAmount =
+          paymentAmount == null
+            ? null
+            : centsToMoney(moneyToCents(paymentAmount, "Payment amount"));
+        if (
+          canonicalPaymentAmount != null &&
+          moneyToCents(canonicalPaymentAmount, "Payment amount") <= 0
+        ) {
+          throw new Error("Payment amount must be positive");
+        }
+
+        const [bill] = await db
+          .select()
+          .from(bills)
+          .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+          .limit(1)
+          .for("update");
+
+        if (!bill) {
+          throw new Error("Bill not found");
+        }
+        const requiresIdempotency =
+          JOURNAL_PRODUCING_BILL_STATUSES.has(newStatus) ||
+          (newStatus === "voided" && bill.journalHeaderId !== null);
+        if (requiresIdempotency && !idempotencyKey) {
+          throw new Error(
+            "A caller-generated idempotencyKey is required for journal-producing bill transitions.",
+          );
+        }
+
+        const operation = requiresIdempotency
+          ? await beginAccountingOperation(db, {
+              organizationId: orgId,
+              operationType: "bill-status-transition",
+              entityType: "bill",
+              entityId: billId,
+              idempotencyKey: idempotencyKey!,
+              payload: {
+                billId,
+                newStatus,
+                paymentMethod: paymentMethod ?? null,
+                paymentReference: paymentReference ?? null,
+                bankAccountId: bankAccountId ?? null,
+                paymentAmount: canonicalPaymentAmount,
+              },
+              actorId: userId,
+            })
+          : null;
+        if (operation?.replayed) {
+          return {
+            ...bill,
+            deduplicated: true,
+            operationId: operation.operation.id,
+            operationJournalHeaderId: operation.operation.journalHeaderId,
+          };
+        }
+
+        const allowed = VALID_TRANSITIONS[bill.status];
+        if (!allowed || !allowed.includes(newStatus)) {
+          throw new Error(`Cannot transition from "${bill.status}" to "${newStatus}"`);
+        }
+
+        const updateFields: Record<string, any> = {
+          status: newStatus,
+          updatedAt: new Date(),
+        };
+        let operationJournalHeaderId: string | null = null;
+
+        if (newStatus === "approved") {
+          updateFields.approvedAt = new Date();
+        }
+
+        if (newStatus === "awaiting_payment" || newStatus === "scheduled") {
+          const journalId = await createApAccrualJournal(db, orgId, userId, bill, billId);
+          updateFields.journalHeaderId = journalId;
+          operationJournalHeaderId = journalId;
+        }
+
+        if (newStatus === "voided") {
+          const linkedJournals = await db
+            .select()
+            .from(journalHeaders)
+            .where(
+              and(
+                eq(journalHeaders.sourceDocumentId, billId),
+                eq(journalHeaders.sourceDocumentType, "bill"),
+                eq(journalHeaders.organizationId, orgId),
+                eq(journalHeaders.status, "posted"),
+              ),
+            )
+            .orderBy(asc(journalHeaders.id))
+            .for("update");
+
+          if (linkedJournals.some((journal) => journal.duplicateOfHeaderId !== null)) {
+            throw new Error(
+              "Cannot void bill: a linked journal is a suppressed duplicate. Unmatch it first.",
+            );
+          }
+
+          for (const journal of linkedJournals) {
+            await db
+              .update(journalHeaders)
+              .set({ status: "voided", updatedAt: new Date() })
+              .where(eq(journalHeaders.id, journal.id));
+
+            const originalLines = await db
+              .select()
+              .from(journalLines)
+              .where(eq(journalLines.journalHeaderId, journal.id));
+
+            const reversalTxn = await generateBillTxnNumber(orgId, db);
+            const [reversalHeader] = await db
+              .insert(journalHeaders)
+              .values({
+                organizationId: orgId,
+                transactionNumber: reversalTxn,
+                transactionDate: new Date().toISOString().split("T")[0],
+                transactionType: journal.transactionType,
+                source: "system",
+                memo: `REVERSAL: ${journal.memo || journal.transactionNumber}`,
+                partyId: journal.partyId,
+                totalAmount: journal.totalAmount,
+                status: "posted",
+                sourceDocumentId: billId,
+                sourceDocumentType: "bill",
+                createdBy: userId,
+                referenceNumber: journal.referenceNumber,
+                idempotencyKey: `bill-void:${idempotencyKey}:${journal.id}`,
+              })
+              .returning();
+
+            if (originalLines.length > 0) {
+              await db.insert(journalLines).values(
+                originalLines.map((line, idx) => ({
+                  journalHeaderId: reversalHeader.id,
+                  accountId: line.accountId,
+                  debit: line.credit,
+                  credit: line.debit,
+                  lineDescription: `Reversal: ${line.lineDescription || ""}`,
+                  partyId: line.partyId,
+                  departmentId: line.departmentId,
+                  locationId: line.locationId,
+                  sortOrder: idx,
+                })),
+              );
+            }
+
+            await db.insert(activityLogs).values({
+              organizationId: orgId,
+              entityType: "transaction",
+              entityId: journal.id,
+              action: "voided",
+              actorId: userId,
+              changes: {
+                reason: "bill_voided",
+                billId,
+                reversalTransactionNumber: reversalTxn,
+              },
+            });
+          }
+        }
+
+        await db.insert(activityLogs).values({
+          organizationId: orgId,
+          entityType: "bill",
+          entityId: billId,
+          action: "status_changed",
+          actorId: userId,
+          changes: {
+            previousStatus: bill.status,
+            newStatus: updateFields.status,
+            ...(bankAccountId ? { bankAccountId } : {}),
+            ...(canonicalPaymentAmount != null ? { paymentAmount: canonicalPaymentAmount } : {}),
+          },
+        });
+
+        const [updated] = await db
+          .update(bills)
+          .set(updateFields)
+          .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+          .returning();
+
+        if (operation) {
+          await completeAccountingOperation(db, {
+            operationId: operation.operation.id,
+            journalHeaderId: operationJournalHeaderId,
+            result: {
+              billId,
+              previousStatus: bill.status,
+              status: updated.status,
+              amountPaid: updated.amountPaid,
+              balanceDue: updated.balanceDue,
+              billJournalHeaderId: updated.journalHeaderId,
+              operationJournalHeaderId,
+            },
+          });
+        }
+
+        return {
+          ...updated,
+          ...(operation
+            ? {
+                deduplicated: false,
+                operationId: operation.operation.id,
+                operationJournalHeaderId,
+              }
+            : {}),
+        };
+      },
+    );
+  },
+);
+
+/**
+ * Delete a bill — only allowed for draft/in_review bills.
+ * If the bill has posted journal entries, void them instead of deleting.
+ */
+export const deleteBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "delete",
+      { routeKey: "bill:delete", limit: 20, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const parsed = deleteBillSchema.parse(rawData);
+
+        const [existing] = await db
+          .select()
+          .from(bills)
+          .where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        if (!existing) {
+          throw new Error("Bill not found");
+        }
+
+        const linkedJournals = await db
+          .select()
+          .from(journalHeaders)
+          .where(
+            and(
+              eq(journalHeaders.sourceDocumentId, parsed.id),
+              eq(journalHeaders.sourceDocumentType, "bill"),
+              eq(journalHeaders.organizationId, orgId),
+              eq(journalHeaders.status, "posted"),
+            ),
+          )
+          .orderBy(asc(journalHeaders.id))
+          .for("update");
+
+        if (linkedJournals.length > 0) {
+          if (linkedJournals.some((journal) => journal.duplicateOfHeaderId !== null)) {
+            throw new Error(
+              "Cannot delete bill: a linked journal is a suppressed duplicate. Unmatch it first.",
+            );
+          }
+
+          // Voiding these journals changes the books — refuse when any falls in a
+          // closed period or is cleared by a finalized reconciliation.
+          const closedThrough = await getClosedThrough(orgId);
+          const inLocked = linkedJournals.find((j) =>
+            isDateLocked(j.transactionDate, closedThrough),
+          );
+          if (inLocked) {
+            throw new Error(
+              `Cannot delete bill: its journal dated ${inLocked.transactionDate} falls in a period locked through ${closedThrough}. Open the period first.`,
+            );
+          }
+
+          const journalIds = linkedJournals.map((j) => j.id);
+          const reconciled = await db
+            .select({ id: statementLines.id })
+            .from(statementLines)
+            .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
+            .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
+            .where(
+              and(
+                inArray(journalLines.journalHeaderId, journalIds),
+                eq(reconciliations.status, "finalized"),
+              ),
+            )
+            .limit(1);
+          if (reconciled.length > 0) {
+            throw new Error(
+              "Cannot delete bill: its journal is locked by a finalized reconciliation.",
+            );
+          }
+        }
+
+        for (const journal of linkedJournals) {
+          await db
+            .update(journalHeaders)
+            .set({ status: "voided", updatedAt: new Date() })
+            .where(eq(journalHeaders.id, journal.id));
+
+          await db.insert(activityLogs).values({
+            organizationId: orgId,
+            entityType: "transaction",
+            entityId: journal.id,
+            action: "voided",
+            actorId: userId,
+            changes: { reason: "bill_deleted", billId: parsed.id },
+          });
+        }
+
+        await db
+          .delete(documentAttachments)
+          .where(
+            and(
+              eq(documentAttachments.linkableId, parsed.id),
+              eq(documentAttachments.linkableType, "bill"),
+              eq(documentAttachments.organizationId, orgId),
+            ),
+          );
+
+        await db.delete(bills).where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)));
+
+        return { success: true };
+      },
+    );
+  },
+);
+
+// ============================================================================
+// Create Draft Bill (minimal placeholder before OCR)
+// ============================================================================
+
+const createDraftBillSchema = z.object({
+  filename: z.string().optional(),
+});
+
+/**
+ * Create a draft bill placeholder — used before OCR processing completes.
+ * Requires: bill:create permission
+ */
+export const createDraftBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "create",
+      { routeKey: "bill:create-draft", limit: 30, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const parsed = createDraftBillSchema.parse(rawData);
+
+        const [bill] = await db
+          .insert(bills)
+          .values({
+            organizationId: orgId,
+            billDate: new Date().toISOString().split("T")[0],
+            dueDate: new Date().toISOString().split("T")[0],
+            amount: "0.00",
+            balanceDue: "0.00",
+            status: "draft",
+            memo: parsed.filename ? `Uploading: ${parsed.filename}` : "Processing…",
+          })
+          .returning();
+
+        return bill;
+      },
+    );
+  },
+);
+
+// ============================================================================
+// Upload Bill Document (to R2 storage)
+// ============================================================================
+
+const MAX_BASE64_SIZE = Math.ceil(20 * 1024 * 1024 * 1.4); // ~20 MB file → ~28 MB base64
+
+const uploadBillDocumentSchema = z.object({
+  billId: z.string().uuid(),
+  filename: z.string().min(1),
+  contentType: z.string().min(1),
+  fileBase64: z.string().min(1).max(MAX_BASE64_SIZE, "File exceeds maximum allowed size"),
+});
+
+/**
+ * Upload a bill's document to R2 storage and link it.
+ * Falls back to a local storage path if R2 is not configured.
+ * Requires: bill:create permission
+ */
+export const uploadBillDocument = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "create",
+      { routeKey: "bill:upload", limit: 20, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const parsed = uploadBillDocumentSchema.parse(rawData);
+
+        const [bill] = await db
+          .select()
+          .from(bills)
+          .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        if (!bill) {
+          throw new Error("Bill not found");
+        }
+
+        const fileBuffer = Buffer.from(parsed.fileBase64, "base64");
+        const ensured = await ensureDocument(db, {
+          organizationId: orgId,
+          uploadedById: userId,
+          filename: parsed.filename,
+          contentType: parsed.contentType,
+          fileBuffer,
+          documentType: "bill",
+        });
+        const documentUrl = ensured.document.storagePath;
+
+        await db
+          .delete(documentAttachments)
+          .where(
+            and(
+              eq(documentAttachments.linkableId, parsed.billId),
+              eq(documentAttachments.linkableType, "bill"),
+              eq(documentAttachments.organizationId, orgId),
+            ),
+          );
+
+        const ext = parsed.filename.split(".").pop()?.toLowerCase() || "other";
+        const [updatedBill] = await db
+          .update(bills)
+          .set({
+            documentUrl,
+            documentType: ext === "pdf" ? "pdf" : "image",
+            ocrBoundingBoxes: null,
+            classificationStatus: "needs_review",
+            updatedAt: new Date(),
+          })
+          .where(eq(bills.id, parsed.billId))
+          .returning();
+
+        if (!updatedBill) {
+          logger.error("Failed to update bill after document upload", { billId: parsed.billId });
+          throw new Error("Failed to update bill with new document");
+        }
+
+        await db.insert(documentAttachments).values({
+          organizationId: orgId,
+          documentId: ensured.document.id,
+          linkableType: "bill",
+          linkableId: parsed.billId,
+        });
+
+        await linkBillDocumentToCandidate(db, orgId, parsed.billId, ensured.document.id);
+
+        if (!ensured.deduplicated) {
+          generateThumbnail(ensured.document.id, orgId).catch((err) =>
+            logger.error("Bill document thumbnail generation failed", {
+              error: err,
+              billId: parsed.billId,
+            }),
+          );
+        }
+
+        return {
+          success: true,
+          document: ensured.document,
+          documentUrl,
+          documentId: ensured.document.id,
+          deduplicated: ensured.deduplicated,
+        };
+      },
+    ) as any;
+  },
+);
+
+// ============================================================================
+// Upload Document for Bill (without bill ID — for parallel background upload)
+// ============================================================================
+
+const uploadDocForBillSchema = z.object({
+  filename: z.string().min(1),
+  contentType: z.string().min(1),
+  fileBase64: z.string().min(1).max(MAX_BASE64_SIZE, "File exceeds maximum allowed size"),
+});
+
+/**
+ * Upload a bill document to R2 without requiring a bill ID.
+ * Used by background processing: file is uploaded in parallel with AI OCR,
+ * then linked to the bill after it's created.
+ * Requires: bill:create permission
+ */
+export const uploadDocumentForBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "create",
+      { routeKey: "bill:upload-pending", limit: 20, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const parsed = uploadDocForBillSchema.parse(rawData);
+
+        const fileBuffer = Buffer.from(parsed.fileBase64, "base64");
+        const ensured = await ensureDocument(db, {
+          organizationId: orgId,
+          uploadedById: userId,
+          filename: parsed.filename,
+          contentType: parsed.contentType,
+          fileBuffer,
+          documentType: "bill",
+        });
+
+        if (!ensured.deduplicated) {
+          generateThumbnail(ensured.document.id, orgId).catch((err) =>
+            logger.error("Pending bill document thumbnail generation failed", {
+              error: err,
+              filename: parsed.filename,
+            }),
+          );
+        }
+
+        return {
+          success: true,
+          document: ensured.document,
+          documentUrl: ensured.document.storagePath,
+          documentId: ensured.document.id,
+          deduplicated: ensured.deduplicated,
+        };
+      },
+    ) as any;
+  },
+);
+
+// ============================================================================
+// Link Document to Bill (post-creation)
+// ============================================================================
+
+const linkDocToBillSchema = z.object({
+  billId: z.string().uuid(),
+  documentId: z.string().uuid(),
+});
+
+/**
+ * Link a previously uploaded document to a bill and update the bill's documentUrl.
+ * Used after background processing creates the bill.
+ * Requires: bill:create permission
+ */
+export const linkDocumentToBill = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "create",
+      { routeKey: "bill:link-document", limit: 20, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const parsed = linkDocToBillSchema.parse(rawData);
+
+        const [doc] = await db
+          .select()
+          .from(documents)
+          .where(and(eq(documents.id, parsed.documentId), eq(documents.organizationId, orgId)))
+          .limit(1);
+
+        if (!doc) {
+          throw new Error("Document not found");
+        }
+
+        const ext = doc.originalFilename?.split(".").pop()?.toLowerCase() || "other";
+
+        // Fetch the bill to get its OCR bounding boxes, to sync them to the document
+        const [bill] = await db
+          .select({ ocrBoundingBoxes: bills.ocrBoundingBoxes })
+          .from(bills)
+          .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        await db
+          .update(bills)
+          .set({
+            documentUrl: doc.storagePath,
+            documentType: ext === "pdf" ? "pdf" : "image",
+            updatedAt: new Date(),
+          })
+          .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)));
+
+        await db.insert(documentAttachments).values({
+          organizationId: orgId,
+          documentId: parsed.documentId,
+          linkableType: "bill",
+          linkableId: parsed.billId,
+        });
+        await linkBillDocumentToCandidate(db, orgId, parsed.billId, parsed.documentId);
+
+        // Sync bounding boxes to the document record
+        if (
+          bill?.ocrBoundingBoxes &&
+          Array.isArray(bill.ocrBoundingBoxes) &&
+          bill.ocrBoundingBoxes.length > 0
+        ) {
+          await db
+            .update(documents)
+            .set({ ocrBoundingBoxes: bill.ocrBoundingBoxes })
+            .where(and(eq(documents.id, parsed.documentId), eq(documents.organizationId, orgId)));
+        }
+
+        return { success: true };
+      },
+    );
+  },
+);
+
+// ============================================================================
+// Re-scan Bounding Boxes
+// ============================================================================
+
+/**
+ * Re-scan a bill's document to extract updated bounding boxes using the
+ * improved granular AI prompt. Fetches the document from R2, runs extraction,
+ * and updates the bill's ocrBoundingBoxes field.
+ */
+export const rescanBoundingBoxes = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "update",
+      { routeKey: "bill:rescan-bounding-boxes", limit: 20, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const { billId } = rawData as { billId: string };
+        if (!billId) throw new Error("billId is required");
+
+        const [bill] = await db
+          .select({
+            id: bills.id,
+            documentUrl: bills.documentUrl,
+            documentType: bills.documentType,
+          })
+          .from(bills)
+          .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        if (!bill || !bill.documentUrl) {
+          throw new Error("Bill not found or has no document");
+        }
+
+        let downloadUrl: string;
+        const docUrl = bill.documentUrl;
+
+        if (docUrl.startsWith("http://") || docUrl.startsWith("https://")) {
+          downloadUrl = docUrl;
+        } else if (docUrl.startsWith("r2://") && isR2Configured()) {
+          const r2Path = docUrl.replace(/^r2:\/\/[^/]+\//, "");
+          downloadUrl = await getPresignedDownloadUrl(r2Path, { expiresIn: 300 });
+        } else if (isR2Configured()) {
+          downloadUrl = await getPresignedDownloadUrl(docUrl, { expiresIn: 300 });
+        } else {
+          throw new Error("Cannot resolve document URL for download");
+        }
+
+        function resolveToDownloadUrl(path: string): Promise<string> {
+          if (path.startsWith("http://") || path.startsWith("https://"))
+            return Promise.resolve(path);
+          const key = path.startsWith("r2://") ? path.replace(/^r2:\/\/[^/]+\//, "") : path;
+          return getPresignedDownloadUrl(key, { expiresIn: 300 });
+        }
+
+        let actualDownloadUrl = downloadUrl;
+        try {
+          const testRes = await fetch(downloadUrl, { method: "HEAD" });
+          if (!testRes.ok) {
+            const [attachment] = await db
+              .select({ storagePath: documents.storagePath })
+              .from(documentAttachments)
+              .innerJoin(documents, eq(documentAttachments.documentId, documents.id))
+              .where(
+                and(
+                  eq(documentAttachments.linkableId, billId),
+                  eq(documentAttachments.linkableType, "bill"),
+                ),
+              )
+              .limit(1);
+
+            if (attachment?.storagePath) {
+              actualDownloadUrl = await resolveToDownloadUrl(attachment.storagePath);
+            }
+          }
+        } catch {
+          const [attachment] = await db
+            .select({ storagePath: documents.storagePath })
+            .from(documentAttachments)
+            .innerJoin(documents, eq(documentAttachments.documentId, documents.id))
+            .where(
+              and(
+                eq(documentAttachments.linkableId, billId),
+                eq(documentAttachments.linkableType, "bill"),
+              ),
+            )
+            .limit(1);
+
+          if (attachment?.storagePath) {
+            actualDownloadUrl = await resolveToDownloadUrl(attachment.storagePath);
+          }
+        }
+
+        const response = await fetch(actualDownloadUrl);
+        if (!response.ok) {
+          throw new Error(`Failed to download document: ${response.status}`);
+        }
+
+        const arrayBuffer = await response.arrayBuffer();
+        const base64Content = Buffer.from(arrayBuffer).toString("base64");
+
+        const ext = docUrl.split(".").pop()?.toLowerCase() || "";
+        let mimeType = "application/pdf";
+        if (["png", "jpg", "jpeg", "webp"].includes(ext)) {
+          mimeType = `image/${ext === "jpg" ? "jpeg" : ext}`;
+        }
+
+        const boundingBoxes = await (
+          extractBoundingBoxes as (opts: { data: unknown }) => Promise<any>
+        )({
+          data: { base64Content, mimeType },
+        });
+
+        if (!Array.isArray(boundingBoxes) || boundingBoxes.length === 0) {
+          throw new Error("AI extraction returned no bounding boxes — existing data preserved");
+        }
+
+        await db
+          .update(bills)
+          .set({
+            ocrBoundingBoxes: boundingBoxes,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)));
+
+        // Sync bounding boxes to the document record if one is linked
+        const [attachment] = await db
+          .select({ documentId: documentAttachments.documentId })
+          .from(documentAttachments)
+          .where(
+            and(
+              eq(documentAttachments.linkableId, billId),
+              eq(documentAttachments.linkableType, "bill"),
+            ),
+          )
+          .limit(1);
+
+        if (attachment?.documentId) {
+          await db
+            .update(documents)
+            .set({ ocrBoundingBoxes: boundingBoxes })
+            .where(
+              and(eq(documents.id, attachment.documentId), eq(documents.organizationId, orgId)),
+            );
+        }
+
+        return { success: true, boxes: boundingBoxes };
+      },
+    );
+  },
+);
+
+// ============================================================================
+// Save Bill Line Items (upsert — delete existing + insert new)
+// ============================================================================
+
+const saveBillLineItemsSchema = z.object({
+  billId: z.string().uuid(),
+  lineItems: z
+    .array(
+      z.object({
+        description: z.string().optional(),
+        amount: z.string(),
+        accountId: z.string().uuid(),
+        sortOrder: z.number().optional(),
+      }),
+    )
+    .min(1),
+});
+
+export const saveBillLineItems = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "bill",
+      "update",
+      { routeKey: "bill:save-line-items", limit: 30, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const parsed = saveBillLineItemsSchema.parse(rawData);
+
+        const [bill] = await db
+          .select({ id: bills.id })
+          .from(bills)
+          .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)))
+          .limit(1);
+
+        if (!bill) throw new Error("Bill not found");
+
+        await db.delete(billLineItems).where(eq(billLineItems.billId, parsed.billId));
+
+        const newItems = await db
+          .insert(billLineItems)
+          .values(
+            parsed.lineItems.map((line, i) => ({
+              billId: parsed.billId,
+              description: line.description,
+              amount: line.amount,
+              accountId: line.accountId,
+              sortOrder: line.sortOrder ?? i,
+            })),
+          )
+          .returning();
+
+        return { success: true, lineItems: newItems };
+      },
+    );
+  },
+);

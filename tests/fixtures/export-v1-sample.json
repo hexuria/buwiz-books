@@ -1,0 +1,71 @@
+{
+  "exportedAt": "2026-01-15T10:30:00.000Z",
+  "entities": {
+    "banks": [
+      {
+        "accountName": "Business Checking",
+        "institutionName": "First National Bank",
+        "accountType": "checking",
+        "lastFour": "4321",
+        "isManual": true,
+        "connectionStatus": "disconnected",
+        "isActive": true
+      }
+    ],
+    "vendors": [
+      {
+        "name": "Acme Supplies",
+        "partyType": "vendor",
+        "email": "billing@acme.com",
+        "phone": "555-0100",
+        "isActive": true
+      }
+    ],
+    "customers": [
+      {
+        "name": "Globex Corp",
+        "partyType": "customer",
+        "email": "orders@globex.com",
+        "isActive": true
+      }
+    ],
+    "categories": [
+      {
+        "accountNumber": "10000",
+        "name": "Assets",
+        "description": "All assets",
+        "accountType": "asset",
+        "subtype": null,
+        "parentName": null,
+        "isActive": true
+      },
+      {
+        "accountNumber": "11000",
+        "name": "Cash",
+        "description": "Cash accounts",
+        "accountType": "asset",
+        "subtype": "bank_accounts",
+        "parentName": "Assets",
+        "isActive": true
+      }
+    ],
+    "departments": [
+      {
+        "name": "Engineering",
+        "code": "ENG",
+        "description": "Engineering team",
+        "parentName": null,
+        "isActive": true
+      }
+    ],
+    "locations": [
+      {
+        "name": "HQ",
+        "code": "HQ",
+        "description": "Headquarters",
+        "parentName": null,
+        "isActive": true
+      }
+    ]
+  }
+}

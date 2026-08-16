@@ -1,0 +1,78 @@
+---
+title: Importing Transactions
+description: Import bank statements and transaction data from CSV files
+---
+
+<img src="/images/ledger/importing-transactions.png" alt="Importing Transactions" />
+
+## Overview
+
+Buwiz Books supports importing transactions from CSV files — either exported from your bank, another accounting system, or a spreadsheet.
+
+## How to Import
+
+<Steps>
+  <Step title="Open the Import Dialog">
+    In the Ledger, click the **⋯ menu** → **Import Transactions**.
+  </Step>
+  <Step title="Upload Your CSV">
+    Drag and drop a CSV file or click to browse. The file should contain at minimum: date,
+    description, and amount columns.
+  </Step>
+  <Step title="Map Columns">
+    Buwiz Books will attempt to auto-detect your column mapping. Review and adjust if needed:
+
+    | Required Field | Description |
+    |---|---|
+    | **Date** | Transaction date (various formats supported) |
+    | **Description** | Transaction memo/narrative |
+    | **Amount** | Dollar amount (positive = credit, negative = debit, or use separate columns) |
+
+    | Optional Field | Description |
+    |---|---|
+    | **Debit** | Separate debit amount column |
+    | **Credit** | Separate credit amount column |
+    | **Category** | Account name to classify under |
+    | **Party** | Vendor or customer name |
+
+  </Step>
+  <Step title="Select Target Account">
+    Choose which bank/asset account these transactions should be recorded against.
+  </Step>
+  <Step title="Review and Import">
+    Preview the mapped transactions, then click **Import** to add them to the ledger.
+  </Step>
+</Steps>
+
+## AI-Powered Parsing
+
+When you upload a CSV, Buwiz Books uses AI to:
+
+- **Auto-detect date formats** (MM/DD/YYYY, DD-Mon-YY, ISO 8601, etc.)
+- **Categorize transactions** based on description patterns and past behavior
+- **Resolve entities** — match vendor/customer names to existing parties in your system
+- **Suggest account classifications** based on transaction descriptions
+
+## Supported Formats
+
+| Source            | Format Notes                                              |
+| ----------------- | --------------------------------------------------------- |
+| **Bank exports**  | Most banks export CSV/OFX. Use CSV for best compatibility |
+| **QuickBooks**    | Export as "Transaction List" CSV                          |
+| **Excel**         | Save As → CSV (UTF-8)                                     |
+| **Other systems** | Any CSV with date, description, and amount columns        |
+
+## Duplicate Detection
+
+Buwiz Books checks for potential duplicate transactions during import by comparing:
+
+- Date
+- Amount
+- Description similarity
+
+Suspected duplicates are flagged for review before import completes.
+
+<Warning>
+  Always review the preview before confirming an import. Imported transactions are immediately
+  posted to the ledger.
+</Warning>

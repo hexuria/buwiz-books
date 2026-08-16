@@ -1,0 +1,61 @@
+---
+title: Reconciliations
+description: Ensure your books match your bank statements
+---
+
+## What is Reconciliation?
+
+**Bank reconciliation** is the process of comparing your internal ledger records against external bank statements to ensure they match. This catches errors, missing transactions, and unauthorized activity.
+
+<img
+  src="/images/reconciliations/overview.png"
+  alt="Reconciliations dashboard showing accounts grouped by Assets and Liabilities with reconciliation progress"
+/>
+
+## Why Reconcile?
+
+- **Catch errors** — Identify data entry mistakes or duplicate entries
+- **Find missing transactions** — Discover bank fees, interest, or charges not yet recorded
+- **Detect fraud** — Spot unauthorized transactions early
+- **Audit readiness** — Maintain clean, verified books
+
+## Reconciliation Workflow
+
+The typical reconciliation process in Buwiz Books:
+
+<Steps>
+  <Step title="Create a Reconciliation Session">
+    Select the bank account and statement period to reconcile.
+  </Step>
+  <Step title="Enter Statement Balance">Input the ending balance from your bank statement.</Step>
+  <Step title="Match Transactions">
+    Compare ledger entries against statement lines. Buwiz Books auto-matches where possible.
+  </Step>
+  <Step title="Resolve Discrepancies">
+    For unmatched items, either create missing entries or investigate the difference.
+  </Step>
+  <Step title="Complete Reconciliation">
+    Once the difference is $0.00, mark the reconciliation as complete.
+  </Step>
+</Steps>
+
+## Reconciliation Status
+
+| Status          | Meaning                                                  |
+| --------------- | -------------------------------------------------------- |
+| **In Progress** | Active reconciliation session — still matching           |
+| **Completed**   | Fully reconciled — all items matched, difference is zero |
+| **Abandoned**   | Session was cancelled without completing                 |
+
+<CardGroup cols={2}>
+  <Card
+    title="Creating a Reconciliation"
+    icon="plus"
+    href="/reconciliations/creating-reconciliation"
+  >
+    Step-by-step guide to start a new session
+  </Card>
+  <Card title="Matching Process" icon="check-double" href="/reconciliations/matching-process">
+    How to match and resolve transactions
+  </Card>
+</CardGroup>

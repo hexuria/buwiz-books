@@ -1,0 +1,64 @@
+---
+title: Upload Bill / Auto-Scan
+description: Automatically extract bill details from PDF and image uploads
+---
+
+<img src="/images/bills/ai-bill-scanning.png" alt="AI Bill Scanning" />
+
+## Overview
+
+Buwiz Books uses AI-powered Optical Character Recognition (OCR) to extract data from uploaded bill documents, eliminating manual data entry.
+
+## How It Works
+
+<Steps>
+  <Step title="Upload a Document">
+    Drag and drop a bill PDF or image (JPG, PNG) onto the bill creation form, or click **Scan
+    Bill**.
+  </Step>
+  <Step title="AI Processing">
+    The AI engine processes the document and extracts: - **Vendor name** and contact details -
+    **Bill number** / invoice number - **Bill date** and **due date** - **Line items** with
+    descriptions and amounts - **Tax amounts** and totals - **Currency** detection
+  </Step>
+  <Step title="Review Extracted Data">
+    All extracted fields are pre-filled in the bill form. Review each field for accuracy: - Green
+    indicators show high-confidence extractions - Amber indicators suggest fields that need
+    verification
+  </Step>
+  <Step title="Correct and Save">
+    Fix any misread values, assign categories to line items, and save the bill.
+  </Step>
+</Steps>
+
+## Supported Document Types
+
+| Format      | Support Level | Notes                                                      |
+| ----------- | ------------- | ---------------------------------------------------------- |
+| **PDF**     | ✅ Best       | Highest accuracy, supports multi-page documents            |
+| **JPG/PNG** | ✅ Good       | Photos of bills work, but ensure good lighting and clarity |
+| **HEIC**    | ✅ Good       | iPhone photos are automatically converted                  |
+
+## Accuracy Tips
+
+<Tip>
+  For best results, ensure the document is: - **Clear and readable** — avoid blurry or skewed images
+  - **Complete** — include all pages of multi-page bills - **Standard format** — structured invoices
+  extract better than handwritten notes
+</Tip>
+
+## Vendor Matching
+
+When a bill is scanned, Buwiz Books automatically:
+
+1. Looks up the extracted vendor name in your existing entities
+2. If a match is found, the vendor is auto-linked
+3. If no match, you can create a new vendor from the extracted details
+
+## What Gets Created
+
+After confirming the extracted data:
+
+- A new **Bill** record with all details
+- The original document is **attached** to the bill as supporting evidence
+- Categories are **suggested** based on the vendor's history and description patterns

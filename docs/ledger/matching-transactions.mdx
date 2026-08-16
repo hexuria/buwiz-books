@@ -1,0 +1,50 @@
+---
+title: Matching Transactions
+description: Link related transactions together for reconciliation
+---
+
+<img src="/images/reconciliations/matching-transactions.png" alt="Matching Transactions" />
+
+## What is Transaction Matching?
+
+Transaction matching links related entries — for example, connecting a bank statement import with a manually recorded transaction to confirm they represent the same event. This is essential for bank reconciliation.
+
+## How Matching Works
+
+### Automatic Matching
+
+When you import bank statement data, Buwiz Books automatically looks for matching transactions in your ledger based on:
+
+- **Date proximity** — Within a few days of each other
+- **Amount** — Exact or near-exact matches
+- **Description similarity** — Using fuzzy text matching
+
+Auto-matched transactions are marked with confidence scores.
+
+### Manual Matching
+
+If automatic matching doesn't find a match:
+
+1. Open the transaction detail view
+2. Click **Match** or look for the matching section
+3. Search for the corresponding transaction
+4. Select it to create the link
+
+## Match Status
+
+| Status        | Meaning                                         |
+| ------------- | ----------------------------------------------- |
+| **Matched**   | Successfully linked to a corresponding entry    |
+| **Unmatched** | No matching entry found — needs review          |
+| **Suggested** | AI found a likely match that needs confirmation |
+
+## Best Practices
+
+<Tip>
+  Import bank statements regularly (weekly or after each statement) to keep matching current and
+  manageable.
+</Tip>
+
+- **Review suggested matches** promptly — AI suggestions are usually accurate but may occasionally mismatch similar amounts
+- **Investigate unmatched items** — these may indicate missing entries, duplicate recordings, or unauthorized transactions
+- **Use the reconciliation workflow** for systematic matching — see [Reconciliations](/reconciliations/overview)

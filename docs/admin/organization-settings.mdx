@@ -1,0 +1,61 @@
+---
+title: Organization Settings
+description: Configure your organization preferences and business details
+---
+
+## Accessing Settings
+
+<img src="/images/admin/organization-settings.png" alt="Organization Settings" />
+
+Navigate to **Settings** at the bottom of the sidebar. The settings page is organized into sections:
+
+## General Settings
+
+| Setting               | Description                                        |
+| --------------------- | -------------------------------------------------- |
+| **Organization Name** | Your business name (shown on reports and invoices) |
+| **Organization Logo** | Upload a logo for branding                         |
+| **Timezone**          | Your business's operating timezone                 |
+| **Fiscal Year Start** | The month your fiscal year begins                  |
+| **Default Currency**  | Primary currency for reporting                     |
+
+## Account Settings
+
+| Setting              | Description                                                             |
+| -------------------- | ----------------------------------------------------------------------- |
+| **Default Accounts** | Set default accounts for common operations (income, expenses, clearing) |
+| **Auto-Numbering**   | Configure automatic account number generation rules                     |
+| **Account Subtypes** | Manage the subtype classifications available for accounts               |
+
+## Invoice Settings
+
+| Setting                   | Description                                              |
+| ------------------------- | -------------------------------------------------------- |
+| **Invoice Prefix**        | Prefix for auto-generated invoice numbers (e.g., "INV-") |
+| **Default Payment Terms** | Default due date terms (Net 30, Net 60, etc.)            |
+| **Business Address**      | Address printed on invoices                              |
+| **Bank Details**          | Payment instructions shown on invoices                   |
+
+## Period Close
+
+Lock accounting periods to prevent changes to historical data:
+
+<Steps>
+  <Step title="Navigate to Period Close">Go to **Settings → Period Close**.</Step>
+  <Step title="Select Period">Choose the month and year to lock.</Step>
+  <Step title="Lock Period">
+    Click **Lock**. All transactions within this period become read-only.
+  </Step>
+</Steps>
+
+<Warning>
+  Locked periods cannot be edited by any user. Only admins can unlock periods, and doing so should
+  be accompanied by a clear audit reason.
+</Warning>
+
+## Danger Zone
+
+| Action                  | Description                                          |
+| ----------------------- | ---------------------------------------------------- |
+| **Delete Organization** | Permanently delete the organization and all its data |
+| **Transfer Ownership**  | Transfer admin ownership to another member           |

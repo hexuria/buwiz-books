@@ -1,0 +1,17 @@
+diff --git a/dist/esm/server-functions-handler.js b/dist/esm/server-functions-handler.js
+index c493774211d1ea4b966e9fcd437e3e833d8f932e..91fd96e608e7acf4e345cc91091166e14b490b32 100644
+--- a/dist/esm/server-functions-handler.js
++++ b/dist/esm/server-functions-handler.js
+@@ -12,6 +12,12 @@ var handleServerAction = async ({ request, context, serverFnId }) => {
+ 	const methodUpper = request.method.toUpperCase();
+ 	const url = new URL(request.url);
+ 	const action = await getServerFnById(serverFnId, { origin: "client" });
++	if (!action) {
++		return new Response(JSON.stringify({ error: "Server function not found (Vite HMR Optimization Reload in progress)" }), {
++			status: 503,
++			headers: { "Content-Type": "application/json", "Retry-After": "1" }
++		});
++	}
+ 	if (action.method && methodUpper !== action.method) return new Response(`expected ${action.method} method. Got ${methodUpper}`, {
+ 		status: 405,
+ 		headers: { Allow: action.method }

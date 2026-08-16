@@ -1,0 +1,58 @@
+---
+title: Creating Invoices
+description: Build and customize invoices for your customers
+---
+
+<img src="/images/invoices/creating-invoices.png" alt="Creating Invoices" />
+
+## Creating a New Invoice
+
+<Steps>
+  <Step title="Click + New Invoice">From the Invoices page, click **+ New Invoice**.</Step>
+  <Step title="Select Customer">
+    Choose an existing customer or create a new one. Customer details (name, email, address) are
+    auto-populated.
+  </Step>
+  <Step title="Set Invoice Details">
+    | Field | Required | Description | |---|---|---| | **Invoice Number** | Auto | Sequential
+    number, auto-generated | | **Issue Date** | ✅ | When the invoice is dated | | **Due Date** | ✅
+    | When payment is expected | | **Payment Terms** | Optional | Net 30, Net 60, Due on Receipt,
+    etc. |
+  </Step>
+  <Step title="Add Line Items">
+    For each product or service: - **Description** — What you're billing for - **Quantity** — Number
+    of units - **Unit Price** — Price per unit - **Amount** — Calculated automatically (Qty × Price)
+    - **Category** — Revenue account to credit
+  </Step>
+  <Step title="Add Notes">
+    Include optional notes that appear on the invoice (e.g., payment instructions, thank you
+    message).
+  </Step>
+  <Step title="Review">Click **Review** to preview the invoice as your customer will see it.</Step>
+  <Step title="Send or Save">
+    - **Save as Draft** — Keep editing later - **Send** — Email the invoice to the customer with a
+    link to the payment portal
+  </Step>
+</Steps>
+
+## Invoice Preview
+
+The review screen shows a professional-formatted invoice with:
+
+- Your organization logo and details
+- Customer billing information
+- Itemized line items with subtotals
+- Tax calculations (if applicable)
+- Total amount due
+- Payment terms and due date
+
+## Journal Entry Generated
+
+When an invoice is posted, Buwiz Books creates:
+
+| Line | Account             | Debit     | Credit    |
+| ---- | ------------------- | --------- | --------- |
+| 1    | Accounts Receivable | $2,000.00 | —         |
+| 2    | Revenue Account     | —         | $2,000.00 |
+
+This records the revenue and tracks the amount owed by the customer.
