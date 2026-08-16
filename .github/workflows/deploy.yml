@@ -97,8 +97,46 @@ jobs:
       # operations, and an absent guard rejects nothing. The workflow this
       # replaced applied exactly this range. The adapter's 0028/0029
       # compatibility preparation is what lets them land on a pushed schema.
+      # Applied as plain SQL, deliberately, not through the managed lifecycle.
+      #
+      # The engine verifies what it applies, and its verifiers describe a
+      # migration-built database. This one is built by push, and 0028 cannot be
+      # reconciled with that by executing it: organization_group_entities already
+      # exists, so 0028's CREATE TABLE IF NOT EXISTS is a no-op and the three
+      # constraints it declares inline are never created. Adoption is the only
+      # sound outcome there, and teaching every 0028-0036 verifier to accept a
+      # pushed shape is its own layer, reserved separately.
+      #
+      # What this job actually needs is the guards to exist -- the Business Group
+      # suites assert the database rejects invalid writes, and an absent trigger
+      # rejects nothing. The two compatibility statements mirror the adapter's
+      # prepare0028/prepare0029: give 0028 the historical parent column it expects,
+      # and stand the 0029 objects down so its immutable SQL can recreate them.
       - name: Apply Enterprise migrations to test DB
-        run: bun run db:enterprise:migrate
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c '
+            ALTER TABLE IF EXISTS organization_group_entities
+              ADD COLUMN IF NOT EXISTS parent_entity_id uuid;'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f drizzle/0028_enterprise_business_groups.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c '
+            ALTER TABLE IF EXISTS organization_group_entities
+              DROP CONSTRAINT IF EXISTS organization_group_entities_account_group_fk;
+            DROP INDEX IF EXISTS organization_group_entities_account_org_enabled_unique;
+            ALTER TABLE IF EXISTS organization_group_entities
+              DROP COLUMN IF EXISTS enterprise_account_id;
+            ALTER TABLE IF EXISTS organization_groups
+              DROP CONSTRAINT IF EXISTS organization_groups_account_id_unique;'
+          for file in 0029_business_group_entity_exclusivity \
+                      0030_business_group_assignment_probe \
+                      0031_flat_business_group_entities \
+                      0032_reporting_projections \
+                      0033_projection_reconciliation \
+                      0034_business_group_admin_guards \
+                      0035_enterprise_stripe_billing \
+                      0036_enterprise_checkout; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "drizzle/${file}.sql"
+          done
 
       - name: Apply RLS policies to test DB
         run: bun run db:rls
