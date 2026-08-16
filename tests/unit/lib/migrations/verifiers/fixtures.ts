@@ -107,7 +107,7 @@ export function addIndex(
   // PostgreSQL truncates as it creates, so a fixture must not be able to hold a
   // name the database could never have stored.
   snapshot.indexes.set(truncatePgIdentifier(name), {
-    name,
+    name: truncatePgIdentifier(name),
     tableName,
     unique: options.unique ?? false,
     primary: false,
@@ -160,7 +160,7 @@ export function addForeignKey(
 ): void {
   snapshot.constraints.set(`${tableName}.${truncatePgIdentifier(name)}`, {
     tableName,
-    name,
+    name: truncatePgIdentifier(name),
     type: "foreign_key",
     columns,
     referencedSchema: "public",
@@ -185,7 +185,7 @@ export function addCheck(
 ): void {
   snapshot.constraints.set(`${tableName}.${truncatePgIdentifier(name)}`, {
     tableName,
-    name,
+    name: truncatePgIdentifier(name),
     type: "check",
     columns: [],
     referencedSchema: null,
