@@ -350,7 +350,17 @@ export function semanticForeignKeyName(
       !candidate.deferrable &&
       !candidate.initiallyDeferred,
   );
-  return exact?.name ?? candidates[0]?.name ?? knownConstraintName(snapshot, tableName, knownNames);
+  // Report the canonical spelling, not the stored one. PostgreSQL stores names
+  // truncated to 63 bytes, and echoing that back would key the evidence -- and
+  // therefore every failure message and every test assertion -- by a clipped
+  // name that appears nowhere in the migrations. When a known name truncates to
+  // what the catalog holds, they denote the same constraint, so prefer the name
+  // a reader can find.
+  const stored = exact?.name ?? candidates[0]?.name;
+  if (stored !== undefined) {
+    return knownNames.find((name) => truncatePgIdentifier(name) === stored) ?? stored;
+  }
+  return knownConstraintName(snapshot, tableName, knownNames);
 }
 
 function schemaSyncExpectation(
