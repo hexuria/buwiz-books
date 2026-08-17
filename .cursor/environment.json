@@ -6,7 +6,7 @@
   "terminals": [
     {
       "name": "dev-server",
-      "command": "export PATH=\"$HOME/.bun/bin:$PATH\"; export NODE_ENV=development; bun dev"
+      "command": "export PATH=\"$HOME/.bun/bin:$PATH\"; export NODE_ENV=development; bash .cursor/start.sh; bun dev"
     }
   ]
 }
