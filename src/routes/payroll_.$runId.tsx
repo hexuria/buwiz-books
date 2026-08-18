@@ -28,6 +28,11 @@ import {
   type PayrollVarianceReport,
 } from "./api/-payroll-variances";
 import { getFilingWorkspace, takeFilingSnapshot, markPeriodFiled } from "./api/-filing";
+import {
+  importPayrollRegister,
+  computePayrollFilingRun,
+  postPayrollFilingRun,
+} from "./api/-payroll-runs";
 import type { FilingWorkspace } from "../lib/tax/filing-workspace";
 import { keys } from "../lib/query-keys";
 import { VarianceVerifier } from "../components/payroll/VarianceVerifier";
@@ -41,6 +46,8 @@ function PayrollFilingPage() {
   const { runId } = Route.useParams();
   const queryClient = useQueryClient();
   const [filingReference, setFilingReference] = useState("");
+  const [registerText, setRegisterText] = useState("");
+  const [importIssues, setImportIssues] = useState<string[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const variances = useQuery({
@@ -73,6 +80,46 @@ function PayrollFilingPage() {
         data: { runId, note },
       }),
     onSuccess: refreshAll,
+  });
+
+  const importRegister = useMutation({
+    mutationFn: (table: string[][]) =>
+      (
+        importPayrollRegister as (o: { data: unknown }) => Promise<{
+          persisted: number;
+          canProceed: boolean;
+          issues: Array<{ message: string }>;
+          unmappedColumns: string[];
+        }>
+      )({
+        data: { runId, table },
+      }),
+    onSuccess: (result) => {
+      setImportIssues([
+        ...result.issues.map((issue) => issue.message),
+        ...result.unmappedColumns.map((column) => `Unmapped column: ${column}`),
+      ]);
+      if (result.canProceed) refreshAll();
+    },
+    onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
+  });
+
+  const compute = useMutation({
+    mutationFn: () =>
+      (computePayrollFilingRun as (o: { data: unknown }) => Promise<unknown>)({
+        data: { runId },
+      }),
+    onSuccess: refreshAll,
+    onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
+  });
+
+  const post = useMutation({
+    mutationFn: () =>
+      (postPayrollFilingRun as (o: { data: unknown }) => Promise<unknown>)({
+        data: { runId },
+      }),
+    onSuccess: refreshAll,
+    onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
   });
 
   const snapshot = useMutation({
@@ -127,6 +174,8 @@ function PayrollFilingPage() {
           // resolved by doing the work elsewhere on this page, so scrolling to
           // them is more honest than a button that appears to act and does not.
           if (stage === "snapshot") snapshot.mutate();
+          else if (stage === "computation") compute.mutate();
+          else if (stage === "posting") post.mutate();
           else document.getElementById(`stage-${stage}`)?.scrollIntoView({ behavior: "smooth" });
         }}
       />
@@ -136,6 +185,68 @@ function PayrollFilingPage() {
           {actionError}
         </div>
       )}
+
+      <div id="stage-computation" className="space-y-3 border-t border-slate-200 pt-6">
+        <h2 className="text-lg font-semibold text-slate-900">Register and computation</h2>
+        <p className="text-sm text-slate-600">
+          Paste a CSV using the published template headers. Employees are matched by TIN on party
+          tax profiles — a missing profile is a data problem, not a prompt to invent one.
+        </p>
+        <textarea
+          value={registerText}
+          onChange={(event) => setRegisterText(event.target.value)}
+          className="h-40 w-full rounded border border-slate-300 p-2 font-mono text-xs"
+          placeholder="employeeTin,employeeLastName,employeeFirstName,basicSalary,reportedTaxWithheld"
+        />
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={!registerText.trim() || importRegister.isPending}
+            onClick={() => {
+              setActionError(null);
+              const table = registerText
+                .trim()
+                .split(/\r?\n/)
+                .map((line) => line.split(",").map((cell) => cell.trim()));
+              importRegister.mutate(table);
+            }}
+            className="rounded bg-slate-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-50"
+          >
+            {importRegister.isPending ? "Importing…" : "Import register"}
+          </button>
+          <button
+            type="button"
+            disabled={compute.isPending}
+            onClick={() => {
+              setActionError(null);
+              compute.mutate();
+            }}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+          >
+            {compute.isPending ? "Computing…" : "Compute run"}
+          </button>
+          <button
+            type="button"
+            disabled={post.isPending}
+            onClick={() => {
+              setActionError(null);
+              post.mutate();
+            }}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+          >
+            {post.isPending ? "Posting…" : "Post to ledger"}
+          </button>
+        </div>
+        {importIssues.length > 0 && (
+          <ul className="list-disc space-y-1 pl-5 text-sm text-amber-800">
+            {importIssues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div id="stage-posting" />
 
       <div id="stage-variance_review" className="border-t border-slate-200 pt-6">
         <VarianceVerifier

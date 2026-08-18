@@ -192,3 +192,12 @@ describe("buildFilingWorkspace", () => {
     expect(workspace.canFile).toBe(false);
   });
 });
+
+it("blocks computation until the engine has run", () => {
+  const workspace = buildFilingWorkspace({
+    ...clean,
+    computed: false,
+  });
+  expect(workspace.blockers.some((b) => b.stage === "computation")).toBe(true);
+  expect(workspace.nextAction?.stage).toBe("computation");
+});

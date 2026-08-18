@@ -94,6 +94,8 @@ export interface FilingWorkspaceInput {
   reconciliationIssues?: readonly string[];
   /** Whether the period's ledger posting has happened. */
   posted?: boolean;
+  /** Whether the engine has computed this run. */
+  computed?: boolean;
 }
 
 export interface FilingWorkspace {
@@ -141,6 +143,14 @@ export function buildFilingWorkspace(input: FilingWorkspaceInput): FilingWorkspa
       "Opening balances for the taxable year are incomplete. Every year-to-date figure computed " +
         "without them is wrong, and no later check can tell.",
       false,
+    );
+  }
+
+  // ── Computation ─────────────────────────────────────────────────────────
+  if (input.computed === false) {
+    add(
+      "computation",
+      "The payroll run has not been computed. Import the register, then run the verifier before reviewing variances or posting.",
     );
   }
 

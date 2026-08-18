@@ -227,6 +227,11 @@ export async function assemblePayrollFilingWorkspace(
     },
     preflightFindings,
     posted: run.journalHeaderId !== null,
+    computed:
+      run.computedAt !== null ||
+      run.status === "computed" ||
+      run.status === "acknowledged" ||
+      run.status === "locked",
   });
 
   return { run, lines, workspace, preflightFindings };
@@ -241,6 +246,19 @@ const SNAPSHOT_PREREQUISITES: readonly FilingStage[] = [
   "reconciliation",
   "preflight",
 ];
+
+const POST_PREREQUISITES: readonly FilingStage[] = [
+  "opening_balances",
+  "computation",
+  "variance_review",
+];
+
+export function assertWorkspaceAllowsPost(workspace: FilingWorkspace): void {
+  const blockers = workspace.blockers.filter((b) => POST_PREREQUISITES.includes(b.stage));
+  if (blockers.length > 0) {
+    throw new FilingWorkspaceBlockedError(blockers[0].stage, blockers);
+  }
+}
 
 export function assertWorkspaceAllowsSnapshot(workspace: FilingWorkspace): void {
   const blockers = workspace.blockers.filter((b) => SNAPSHOT_PREREQUISITES.includes(b.stage));

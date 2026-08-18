@@ -368,4 +368,44 @@ describeDb("payroll filing glue", () => {
     expect(snapshot.referenceDatasetVersion).toBe(before.run.referenceDatasetVersion);
     expect(snapshot.referenceDatasetVersion).not.toBe("");
   });
+
+  it("persists a template register by TIN and refuses an unknown TIN", async () => {
+    const organizationId = await org();
+    const partyId = await employee(organizationId);
+    await profile(organizationId, partyId, { tin: "123456780" });
+    const runId = await makeRun(organizationId, {
+      periodIndex: 1,
+      periodStart: "2026-01-01",
+      periodEnd: "2026-01-31",
+      status: "draft",
+      computedAt: null,
+      referenceDatasetVersion: null,
+    });
+
+    const { persistImportedRegister, UnmatchedRegisterTinsError } =
+      await import("../../src/lib/tax/persist-register-import");
+
+    await expect(
+      persistImportedRegister(db, {
+        organizationId,
+        runId,
+        headers: ["employeeTin", "basicSalary", "reportedTaxWithheld"],
+        rows: [["000000000", "30000", "1375.05"]],
+      }),
+    ).rejects.toBeInstanceOf(UnmatchedRegisterTinsError);
+
+    const result = await persistImportedRegister(db, {
+      organizationId,
+      runId,
+      headers: ["employeeTin", "basicSalary", "reportedTaxWithheld"],
+      rows: [["123456780", "30000", "1375.05"]],
+    });
+    expect(result.persisted).toBe(1);
+    expect(result.parsed.canProceed).toBe(true);
+
+    const assembled = await load(organizationId, runId);
+    expect(assembled.lines).toHaveLength(1);
+    expect(assembled.lines[0].employeePartyId).toBe(partyId);
+    expect(assembled.workspace.blockers.some((b) => b.stage === "computation")).toBe(true);
+  });
 });

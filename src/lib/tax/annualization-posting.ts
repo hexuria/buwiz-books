@@ -50,7 +50,6 @@ import { addAll, fromScaled, toScaled, ZERO } from "@/lib/tax/money";
 import {
   summarizeAnnualizationPosting,
   type AnnualizationEntry,
-  type AnnualizationOutcome,
   type AnnualizationPostingSummary,
 } from "@/lib/tax/annualization-posting-summary";
 

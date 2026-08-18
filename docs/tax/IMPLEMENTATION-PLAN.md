@@ -508,15 +508,16 @@ wrongly reported as done:
 
 ### Still not started
 
-PH invoice issuance (deliberately out of v1 scope per D6). Register-import and
-payroll-post buttons. Tax-settings / party-tax screens. Deadline engine.
-Stages 3a/3b/6/7 product UI beyond the engines and the 2307 OCR registry.
+PH invoice issuance (deliberately out of v1 scope per D6). Tax-settings /
+party-tax screens. Deadline engine. Stages 3a/3b/6/7 product UI beyond the
+engines, the 2307 OCR registry, and the payroll filing journey.
 
-Stage 3a's OCR wiring and Stage 4's filing workspace have landed: the 2307
-prompt is registered, and `/payroll_/$runId` assembles the workspace and walks
-a computed run through variance review, snapshot, and filed. Still missing
-from the January path: importing a register and posting the payroll journal
-from that screen.
+Stage 3a's OCR wiring, Stage 4's filing workspace, and the January persist
+path have landed on `feat/ph-tax-on-main`: `/payroll_/$runId` can import a
+template register (TIN-matched, no invented employees), compute the verifier,
+post the journal, review variances, snapshot, and file. Still missing from a
+client-complete January path: creating the run itself, tax-profile screens,
+and the owner `.DAT` spike.
 
 **And the gap that matters more than any of those:** none of Stages 3a/3b/6/7
 is a client-complete UI. That remaining wiring, not more tax regimes, is what
