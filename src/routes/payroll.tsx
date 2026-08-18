@@ -3,8 +3,14 @@
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { createPayrollRun, listPayrollRuns, upsertEmployeeTaxProfile } from "./api/-payroll-runs";
+import { useEffect, useState } from "react";
+import {
+  createPayrollRun,
+  getOrgTaxProfile,
+  listPayrollRuns,
+  upsertEmployeeTaxProfile,
+  upsertOrgTaxProfile,
+} from "./api/-payroll-runs";
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/payroll")({
@@ -22,11 +28,34 @@ function PayrollIndexPage() {
   const [lastName, setLastName] = useState("");
   const [firstName, setFirstName] = useState("");
   const [dateHired, setDateHired] = useState("2026-01-01");
+  const [orgTin, setOrgTin] = useState("");
+  const [orgName, setOrgName] = useState("");
+  const [orgBranch, setOrgBranch] = useState("00000");
+
+  const orgProfile = useQuery({
+    queryKey: [...keys.payroll.all(), "org-profile"],
+    queryFn: () =>
+      (
+        getOrgTaxProfile as () => Promise<{
+          tin: string | null;
+          registeredName: string | null;
+          branchCode: string | null;
+        }>
+      )(),
+  });
 
   const runs = useQuery({
     queryKey: keys.payroll.all(),
     queryFn: () => (listPayrollRuns as () => Promise<Array<Record<string, unknown>>>)(),
   });
+
+  useEffect(() => {
+    if (!orgProfile.data) return;
+    if (!orgTin && orgProfile.data.tin) setOrgTin(orgProfile.data.tin);
+    if (!orgName && orgProfile.data.registeredName) setOrgName(orgProfile.data.registeredName);
+    if (orgBranch === "00000" && orgProfile.data.branchCode)
+      setOrgBranch(orgProfile.data.branchCode);
+  }, [orgProfile.data, orgTin, orgName, orgBranch]);
 
   const create = useMutation({
     mutationFn: () =>
@@ -42,6 +71,15 @@ function PayrollIndexPage() {
       await queryClient.invalidateQueries({ queryKey: keys.payroll.all() });
       await navigate({ to: "/payroll/$runId", params: { runId: run.id } });
     },
+    onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+  });
+
+  const saveOrg = useMutation({
+    mutationFn: () =>
+      (upsertOrgTaxProfile as (o: { data: unknown }) => Promise<unknown>)({
+        data: { tin: orgTin, registeredName: orgName, branchCode: orgBranch },
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.payroll.all() }),
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
   });
 
@@ -107,6 +145,45 @@ function PayrollIndexPage() {
             {create.isPending ? "Creating…" : "Create run"}
           </button>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">Employer identity</h2>
+        <p className="text-sm text-slate-600">
+          2316 prints this TIN and registered name. A missing employer block is a defect at issue
+          time.
+        </p>
+        <div className="grid max-w-xl grid-cols-2 gap-3">
+          <input
+            value={orgTin}
+            onChange={(e) => setOrgTin(e.target.value)}
+            placeholder="Employer TIN (9 digits)"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={orgBranch}
+            onChange={(e) => setOrgBranch(e.target.value)}
+            placeholder="Branch code"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={orgName}
+            onChange={(e) => setOrgName(e.target.value)}
+            placeholder="Registered name"
+            className="col-span-2 rounded border border-slate-300 p-2 text-sm"
+          />
+        </div>
+        <button
+          type="button"
+          disabled={saveOrg.isPending || !orgTin || !orgName}
+          onClick={() => {
+            setError(null);
+            saveOrg.mutate();
+          }}
+          className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+        >
+          {saveOrg.isPending ? "Saving…" : "Save employer identity"}
+        </button>
       </section>
 
       <section className="space-y-3">

@@ -12,6 +12,7 @@ import { z } from "zod";
 import { parties } from "../../db/schema/parties";
 import { partyTaxProfiles } from "../../db/schema/party-tax";
 import { payrollRuns } from "../../db/schema/payroll";
+import { orgTaxProfiles } from "../../db/schema/tax-reference";
 import { DATASET_V1 } from "../../lib/tax/reference-catalog";
 import { isAnnualizationPeriod, periodIndexFromDates } from "../../lib/tax/payroll-period";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
@@ -230,6 +231,65 @@ export const upsertEmployeeTaxProfile = createServerFn({ method: "POST" }).handl
             },
           });
         return { partyId, tin: input.tin };
+      },
+    );
+  },
+);
+
+export const getOrgTaxProfile = createServerFn({ method: "GET" }).handler(async () => {
+  return withSessionOrgContext(async ({ orgId, db }) => {
+    const [row] = await db
+      .select({
+        tin: orgTaxProfiles.tin,
+        branchCode: orgTaxProfiles.branchCode,
+        rdoCode: orgTaxProfiles.rdoCode,
+        registeredName: orgTaxProfiles.registeredName,
+      })
+      .from(orgTaxProfiles)
+      .where(eq(orgTaxProfiles.organizationId, orgId))
+      .limit(1);
+    return row ?? { tin: null, branchCode: "00000", rdoCode: null, registeredName: null };
+  });
+});
+
+const orgProfileSchema = z.object({
+  tin: z.string().regex(/^\d{9}$/),
+  registeredName: z.string().min(1),
+  branchCode: z
+    .string()
+    .regex(/^\d{4,5}$/)
+    .default("00000"),
+  rdoCode: z.string().min(1).optional(),
+});
+
+export const upsertOrgTaxProfile = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "update",
+      { routeKey: "payroll:org-profile", limit: 20, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const input = orgProfileSchema.parse(rawData);
+        await db
+          .insert(orgTaxProfiles)
+          .values({
+            organizationId: orgId,
+            tin: input.tin,
+            registeredName: input.registeredName,
+            branchCode: input.branchCode,
+            rdoCode: input.rdoCode ?? null,
+          })
+          .onConflictDoUpdate({
+            target: orgTaxProfiles.organizationId,
+            set: {
+              tin: input.tin,
+              registeredName: input.registeredName,
+              branchCode: input.branchCode,
+              rdoCode: input.rdoCode ?? null,
+              updatedAt: new Date(),
+            },
+          });
+        return input;
       },
     );
   },
