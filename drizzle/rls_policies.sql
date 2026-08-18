@@ -894,3 +894,42 @@ BEGIN
   END IF;
 END $$;
 
+-- Stage remainder tables. filing_deadline_overrides is GLOBAL and has no policy.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_year_elections') THEN
+    ALTER TABLE org_tax_year_elections ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_year_elections ON org_tax_year_elections;
+    CREATE POLICY org_isolation_org_tax_year_elections ON org_tax_year_elections FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_year_elections';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_registrations') THEN
+    ALTER TABLE org_tax_registrations ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_registrations ON org_tax_registrations;
+    CREATE POLICY org_isolation_org_tax_registrations ON org_tax_registrations FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_registrations';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tax_withholding_payments') THEN
+    ALTER TABLE tax_withholding_payments ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_tax_withholding_payments ON tax_withholding_payments;
+    CREATE POLICY org_isolation_tax_withholding_payments ON tax_withholding_payments FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for tax_withholding_payments';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tax_computed_returns') THEN
+    ALTER TABLE tax_computed_returns ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_tax_computed_returns ON tax_computed_returns;
+    CREATE POLICY org_isolation_tax_computed_returns ON tax_computed_returns FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for tax_computed_returns';
+  END IF;
+END $$;

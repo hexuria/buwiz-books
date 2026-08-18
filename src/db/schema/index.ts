@@ -30,3 +30,4 @@ export * from "./tax-reference";
 export * from "./payroll";
 export * from "./party-tax";
 export * from "./tax-certificates";
+export * from "./tax-stage-remainder";

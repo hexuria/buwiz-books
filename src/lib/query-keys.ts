@@ -126,6 +126,12 @@ export const keys = {
     all: () => ["filing"] as const,
     workspace: (runId: string) => ["filing", "workspace", runId] as const,
   },
+  tax: {
+    all: () => ["tax"] as const,
+    certificates: () => ["tax", "certificates"] as const,
+    settings: () => ["tax", "settings"] as const,
+    deadlines: (year: number) => ["tax", "deadlines", year] as const,
+  },
   org: {
     settings: () => ["org-settings"] as const,
     members: () => ["org-members"] as const,
