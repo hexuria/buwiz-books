@@ -42,6 +42,7 @@ import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices_.$invoi
 import { Route as LocationsLocationIdRouteImport } from './routes/locations_.$locationId'
 import { Route as OrganizationsJoinRouteImport } from './routes/organizations.join'
 import { Route as PayrollRouteImport } from './routes/payroll'
+import { Route as TaxCertificatesRouteImport } from './routes/tax.certificates'
 import { Route as PayrollRunIdRouteImport } from './routes/payroll_.$runId'
 import { Route as ReconciliationsReconciliationIdRouteImport } from './routes/reconciliations_.$reconciliationId'
 import { Route as TransactionsTransactionIdRouteImport } from './routes/transactions_.$transactionId'
@@ -217,6 +218,11 @@ const OrganizationsJoinRoute = OrganizationsJoinRouteImport.update({
   path: '/organizations/join',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TaxCertificatesRoute = TaxCertificatesRouteImport.update({
+  id: '/tax/certificates',
+  path: '/tax/certificates',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PayrollRoute = PayrollRouteImport.update({
   id: '/payroll',
   path: '/payroll',
@@ -310,6 +316,7 @@ export interface FileRoutesByFullPath {
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
   '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -336,6 +343,7 @@ export interface FileRoutesByFullPath {
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
   '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
@@ -360,6 +368,7 @@ export interface FileRoutesByTo {
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
   '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -386,6 +395,7 @@ export interface FileRoutesByTo {
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
   '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
@@ -411,6 +421,7 @@ export interface FileRoutesById {
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
   '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -632,6 +643,7 @@ export interface RootRouteChildren {
   LocationsLocationIdRoute: typeof LocationsLocationIdRoute
   OrganizationsJoinRoute: typeof OrganizationsJoinRoute
   PayrollRoute: PayrollRoute,
+  TaxCertificatesRoute: TaxCertificatesRoute,
   PayrollRunIdRoute: typeof PayrollRunIdRoute
   ReconciliationsReconciliationIdRoute: typeof ReconciliationsReconciliationIdRoute
   TransactionsTransactionIdRoute: typeof TransactionsTransactionIdRoute
@@ -872,6 +884,13 @@ declare module '@tanstack/react-router' {
       path: '/organizations/join'
       fullPath: '/organizations/join'
       preLoaderRoute: typeof OrganizationsJoinRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/certificates': {
+      id: '/tax/certificates'
+      path: '/tax/certificates'
+      fullPath: '/tax/certificates'
+      preLoaderRoute: typeof TaxCertificatesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/payroll': {

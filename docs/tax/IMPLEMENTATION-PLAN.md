@@ -519,6 +519,8 @@ post the journal, review variances, snapshot, and file. Still missing from a cli
 the deadline engine, and the owner `.DAT` spike. Creating a period, employee TIN, employer identity, and issuing 2316 plus
 the 1604-C Schedule 1 file now live on `/payroll` and `/payroll/$runId`.
 Schedule 2 stays untranscribed. The `.DAT` config is still unverified.
+Received 2307 capture now lives on `/tax/certificates`; CWT posting and SAWT
+export are still engine-only.
 
 **And the gap that matters more than any of those:** none of Stages 3a/3b/6/7
 is a client-complete UI. That remaining wiring, not more tax regimes, is what
