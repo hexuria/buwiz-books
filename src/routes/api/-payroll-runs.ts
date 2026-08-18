@@ -7,10 +7,14 @@
  * what is still blocked.
  */
 import { createServerFn } from "@tanstack/react-start";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
+import { parties } from "../../db/schema/parties";
+import { partyTaxProfiles } from "../../db/schema/party-tax";
 import { payrollRuns } from "../../db/schema/payroll";
-import { withMutationPermissionOrgContext } from "../../lib/server-context";
+import { DATASET_V1 } from "../../lib/tax/reference-catalog";
+import { isAnnualizationPeriod, periodIndexFromDates } from "../../lib/tax/payroll-period";
+import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
 import {
   assemblePayrollFilingWorkspace,
   assertWorkspaceAllowsPost,
@@ -18,11 +22,7 @@ import {
 import { persistImportedRegister } from "../../lib/tax/persist-register-import";
 import { computePayrollRun } from "../../lib/tax/payroll-run-service";
 import { postPayrollRun } from "../../lib/tax/payroll-journal";
-import {
-  BUWIZ_TEMPLATE,
-  IMPORTABLE_FIELDS,
-  type ImportableField,
-} from "../../lib/tax/register-import";
+import { BUWIZ_TEMPLATE, IMPORTABLE_FIELDS } from "../../lib/tax/register-import";
 
 const periodSchema = z.object({ runId: z.string().uuid() });
 
@@ -115,6 +115,121 @@ export const postPayrollFilingRun = createServerFn({ method: "POST" }).handler(
         const assembled = await assemblePayrollFilingWorkspace(db, orgId, run);
         assertWorkspaceAllowsPost(assembled.workspace);
         return db.transaction((tx) => postPayrollRun(tx, { organizationId: orgId, userId, runId }));
+      },
+    );
+  },
+);
+
+export const listPayrollRuns = createServerFn({ method: "GET" }).handler(async () => {
+  return withSessionOrgContext(async ({ orgId, db }) => {
+    return db
+      .select({
+        id: payrollRuns.id,
+        taxableYear: payrollRuns.taxableYear,
+        payrollPeriod: payrollRuns.payrollPeriod,
+        periodStart: payrollRuns.periodStart,
+        periodEnd: payrollRuns.periodEnd,
+        periodIndex: payrollRuns.periodIndex,
+        status: payrollRuns.status,
+        journalHeaderId: payrollRuns.journalHeaderId,
+        filingReference: payrollRuns.filingReference,
+      })
+      .from(payrollRuns)
+      .where(eq(payrollRuns.organizationId, orgId))
+      .orderBy(desc(payrollRuns.periodEnd));
+  });
+});
+
+const createRunSchema = z.object({
+  taxableYear: z.number().int().min(2000).max(2100),
+  payrollPeriod: z.enum(["daily", "weekly", "semi_monthly", "monthly", "annual"]),
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export const createPayrollRun = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "create",
+      { routeKey: "payroll:create", limit: 20, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const input = createRunSchema.parse(rawData);
+        if (input.periodEnd < input.periodStart) {
+          throw new Error("periodEnd must be on or after periodStart");
+        }
+        const periodIndex = periodIndexFromDates(input.payrollPeriod, input.periodEnd);
+        const [run] = await db
+          .insert(payrollRuns)
+          .values({
+            organizationId: orgId,
+            taxableYear: input.taxableYear,
+            payrollPeriod: input.payrollPeriod,
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            periodIndex,
+            status: "draft",
+            isAnnualizationRun: isAnnualizationPeriod(input.payrollPeriod, input.periodEnd),
+            referenceDatasetVersion: DATASET_V1.version,
+          })
+          .returning({ id: payrollRuns.id });
+        if (!run) throw new Error("Could not create payroll run");
+        return run;
+      },
+    );
+  },
+);
+
+const profileSchema = z.object({
+  partyId: z.string().uuid().optional(),
+  name: z.string().min(1).optional(),
+  tin: z.string().regex(/^\d{9}$/),
+  lastName: z.string().min(1),
+  firstName: z.string().min(1),
+  dateHired: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export const upsertEmployeeTaxProfile = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "update",
+      { routeKey: "payroll:profile", limit: 30, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const input = profileSchema.parse(rawData);
+        let partyId = input.partyId;
+        if (!partyId) {
+          if (!input.name) throw new Error("name is required when creating an employee");
+          const [party] = await db
+            .insert(parties)
+            .values({ organizationId: orgId, name: input.name, partyType: "employee" })
+            .returning({ id: parties.id });
+          if (!party) throw new Error("Could not create employee");
+          partyId = party.id;
+        }
+        await db
+          .insert(partyTaxProfiles)
+          .values({
+            organizationId: orgId,
+            partyId,
+            tin: input.tin,
+            lastName: input.lastName,
+            firstName: input.firstName,
+            dateHired: input.dateHired,
+            isEmployee: true,
+          })
+          .onConflictDoUpdate({
+            target: [partyTaxProfiles.organizationId, partyTaxProfiles.partyId],
+            set: {
+              tin: input.tin,
+              lastName: input.lastName,
+              firstName: input.firstName,
+              dateHired: input.dateHired,
+              isEmployee: true,
+              updatedAt: new Date(),
+            },
+          });
+        return { partyId, tin: input.tin };
       },
     );
   },

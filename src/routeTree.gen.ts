@@ -41,6 +41,7 @@ import { Route as EntitiesVendorsRouteImport } from './routes/entities.vendors'
 import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices_.$invoiceId'
 import { Route as LocationsLocationIdRouteImport } from './routes/locations_.$locationId'
 import { Route as OrganizationsJoinRouteImport } from './routes/organizations.join'
+import { Route as PayrollRouteImport } from './routes/payroll'
 import { Route as PayrollRunIdRouteImport } from './routes/payroll_.$runId'
 import { Route as ReconciliationsReconciliationIdRouteImport } from './routes/reconciliations_.$reconciliationId'
 import { Route as TransactionsTransactionIdRouteImport } from './routes/transactions_.$transactionId'
@@ -216,6 +217,11 @@ const OrganizationsJoinRoute = OrganizationsJoinRouteImport.update({
   path: '/organizations/join',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PayrollRoute = PayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PayrollRunIdRoute = PayrollRunIdRouteImport.update({
   id: '/payroll_/$runId',
   path: '/payroll/$runId',
@@ -303,6 +309,7 @@ export interface FileRoutesByFullPath {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -328,6 +335,7 @@ export interface FileRoutesByFullPath {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll': typeof PayrollRoute
   '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
@@ -351,6 +359,7 @@ export interface FileRoutesByTo {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -376,6 +385,7 @@ export interface FileRoutesByTo {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll': typeof PayrollRoute
   '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
@@ -400,6 +410,7 @@ export interface FileRoutesById {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -620,6 +631,7 @@ export interface RootRouteChildren {
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   LocationsLocationIdRoute: typeof LocationsLocationIdRoute
   OrganizationsJoinRoute: typeof OrganizationsJoinRoute
+  PayrollRoute: PayrollRoute,
   PayrollRunIdRoute: typeof PayrollRunIdRoute
   ReconciliationsReconciliationIdRoute: typeof ReconciliationsReconciliationIdRoute
   TransactionsTransactionIdRoute: typeof TransactionsTransactionIdRoute
@@ -862,6 +874,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrganizationsJoinRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/payroll': {
+      id: '/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof PayrollRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/payroll_/$runId': {
       id: '/payroll_/$runId'
       path: '/payroll/$runId'
@@ -976,6 +995,7 @@ const rootRouteChildren: RootRouteChildren = {
   InboxRoute: InboxRoute,
   InvoicesRoute: InvoicesRoute,
   LocationsRoute: LocationsRoute,
+  PayrollRoute: PayrollRoute,
   LoginRoute: LoginRoute,
   OnboardingRoute: OnboardingRoute,
   ProfileRoute: ProfileRoute,
