@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildForm1601C, dueDateFor, type Form1601CInput } from "@/lib/tax/form-1601c";
+import {
+  buildForm1601C,
+  compensationFromPayrollLine,
+  dueDateFor,
+  type Form1601CInput,
+} from "@/lib/tax/form-1601c";
 
 /**
  * 1601-C's job is a reconciliation, not a computation. A return that merely
@@ -162,5 +167,19 @@ describe("dueDateFor", () => {
   it("rejects an impossible month rather than producing a date", () => {
     expect(() => buildForm1601C({ ...base, month: 13 })).toThrow(/Invalid month/);
     expect(() => buildForm1601C({ ...base, month: 0 })).toThrow(/Invalid month/);
+  });
+});
+
+describe("compensationFromPayrollLine", () => {
+  it("adds MWE and other exempt pay into gross instead of losing it", () => {
+    const assembled = compensationFromPayrollLine({
+      employeePartyId: "emp-1",
+      basicSalary: "30000",
+      overtimePay: "2000",
+      thirteenthMonthAndOtherBenefits: "2500",
+      deMinimisBenefits: "500",
+    });
+    expect(assembled.nonTaxableCompensation).toBe("3000");
+    expect(assembled.grossCompensation).toBe("35000");
   });
 });

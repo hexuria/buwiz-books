@@ -1,10 +1,9 @@
-/**
- * Payroll filing index — create a period, add a TIN profile, open a run.
- */
+/** Payroll filing index — create a period, add a TIN profile, capture prior 2316, open a run. */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
+  capturePreviousEmployer2316,
   createPayrollRun,
   getOrgTaxProfile,
   listPayrollRuns,
@@ -31,6 +30,14 @@ function PayrollIndexPage() {
   const [orgTin, setOrgTin] = useState("");
   const [orgName, setOrgName] = useState("");
   const [orgBranch, setOrgBranch] = useState("00000");
+  const [prevTin, setPrevTin] = useState("");
+  const [prevEmployerName, setPrevEmployerName] = useState("");
+  const [prevEmployerTin, setPrevEmployerTin] = useState("");
+  const [prevTaxable, setPrevTaxable] = useState("");
+  const [prevWithheld, setPrevWithheld] = useState("");
+  const [prevPeriods, setPrevPeriods] = useState(1);
+  const [prevFrom, setPrevFrom] = useState("2026-01-01");
+  const [prevTo, setPrevTo] = useState("2026-03-31");
 
   const orgProfile = useQuery({
     queryKey: [...keys.payroll.all(), "org-profile"],
@@ -43,7 +50,6 @@ function PayrollIndexPage() {
         }>
       )(),
   });
-
   const runs = useQuery({
     queryKey: keys.payroll.all(),
     queryFn: () => (listPayrollRuns as () => Promise<Array<Record<string, unknown>>>)(),
@@ -73,7 +79,6 @@ function PayrollIndexPage() {
     },
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
   });
-
   const saveOrg = useMutation({
     mutationFn: () =>
       (upsertOrgTaxProfile as (o: { data: unknown }) => Promise<unknown>)({
@@ -82,7 +87,6 @@ function PayrollIndexPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.payroll.all() }),
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
   });
-
   const profile = useMutation({
     mutationFn: () =>
       (upsertEmployeeTaxProfile as (o: { data: unknown }) => Promise<unknown>)({
@@ -96,22 +100,45 @@ function PayrollIndexPage() {
     },
     onError: (err) => setError(err instanceof Error ? err.message : String(err)),
   });
+  const previous = useMutation({
+    mutationFn: () =>
+      (capturePreviousEmployer2316 as (o: { data: unknown }) => Promise<unknown>)({
+        data: {
+          employeeTin: prevTin,
+          taxableYear: Number(prevFrom.slice(0, 4)),
+          previousEmployerTin: prevEmployerTin || undefined,
+          previousEmployerName: prevEmployerName,
+          taxableCompensation: prevTaxable,
+          taxWithheld: prevWithheld,
+          periodsCovered: prevPeriods,
+          employmentFrom: prevFrom,
+          employmentTo: prevTo,
+        },
+      }),
+    onSuccess: () => {
+      setPrevTin("");
+      setPrevEmployerName("");
+      setPrevEmployerTin("");
+      setPrevTaxable("");
+      setPrevWithheld("");
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : String(err)),
+  });
 
   return (
     <div className="mx-auto max-w-4xl space-y-8 p-6">
       <header>
         <h1 className="text-2xl font-semibold text-slate-900">Payroll filing</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Create a period, record employee TINs, then import the register on the run page.
+          Create a period, record employee TINs and prior-employer 2316s, then import the register
+          on the run page.
         </p>
       </header>
-
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-800">
           {error}
         </div>
       )}
-
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-slate-900">New monthly period</h2>
         <div className="flex flex-wrap gap-3">
@@ -146,13 +173,8 @@ function PayrollIndexPage() {
           </button>
         </div>
       </section>
-
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-slate-900">Employer identity</h2>
-        <p className="text-sm text-slate-600">
-          2316 prints this TIN and registered name. A missing employer block is a defect at issue
-          time.
-        </p>
         <div className="grid max-w-xl grid-cols-2 gap-3">
           <input
             value={orgTin}
@@ -185,12 +207,8 @@ function PayrollIndexPage() {
           {saveOrg.isPending ? "Saving…" : "Save employer identity"}
         </button>
       </section>
-
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-slate-900">Employee TIN profile</h2>
-        <p className="text-sm text-slate-600">
-          Import matches by this nine-digit TIN. A register row with no profile is refused.
-        </p>
         <div className="grid max-w-xl grid-cols-2 gap-3">
           <input
             value={name}
@@ -235,7 +253,78 @@ function PayrollIndexPage() {
           {profile.isPending ? "Saving…" : "Save employee TIN"}
         </button>
       </section>
-
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-slate-900">Previous-employer 2316</h2>
+        <p className="text-sm text-slate-600">
+          Mid-year hires need the prior 2316 before a later-period run can compute. Match the
+          employee by the TIN saved above.
+        </p>
+        <div className="grid max-w-xl grid-cols-2 gap-3">
+          <input
+            value={prevTin}
+            onChange={(e) => setPrevTin(e.target.value)}
+            placeholder="Employee TIN"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={prevEmployerTin}
+            onChange={(e) => setPrevEmployerTin(e.target.value)}
+            placeholder="Previous employer TIN"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={prevEmployerName}
+            onChange={(e) => setPrevEmployerName(e.target.value)}
+            placeholder="Previous employer name"
+            className="col-span-2 rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={prevTaxable}
+            onChange={(e) => setPrevTaxable(e.target.value)}
+            placeholder="Taxable compensation"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            value={prevWithheld}
+            onChange={(e) => setPrevWithheld(e.target.value)}
+            placeholder="Tax withheld"
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={prevPeriods}
+            onChange={(e) => setPrevPeriods(Number(e.target.value))}
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            type="date"
+            value={prevFrom}
+            onChange={(e) => setPrevFrom(e.target.value)}
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+          <input
+            type="date"
+            value={prevTo}
+            onChange={(e) => setPrevTo(e.target.value)}
+            className="rounded border border-slate-300 p-2 text-sm"
+          />
+        </div>
+        <button
+          type="button"
+          disabled={
+            previous.isPending || !prevTin || !prevEmployerName || !prevTaxable || !prevWithheld
+          }
+          onClick={() => {
+            setError(null);
+            previous.mutate();
+          }}
+          className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+        >
+          {previous.isPending ? "Saving…" : "Save previous-employer 2316"}
+        </button>
+      </section>
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-slate-900">Periods</h2>
         {runs.isLoading ? (

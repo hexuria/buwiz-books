@@ -48,6 +48,66 @@ export interface Form1601CEmployeeLine {
   nonTaxableCompensation: string;
 }
 
+/** Collapse a payroll line into the three figures 1601-C actually remits. */
+export function compensationFromPayrollLine(line: {
+  basicSalary?: string | null;
+  representationAllowance?: string | null;
+  transportationAllowance?: string | null;
+  costOfLivingAllowance?: string | null;
+  fixedHousingAllowance?: string | null;
+  otherTaxableRegular?: string | null;
+  commission?: string | null;
+  profitSharing?: string | null;
+  directorsFees?: string | null;
+  overtimePay?: string | null;
+  hazardPay?: string | null;
+  otherTaxableSupplementary?: string | null;
+  basicSalaryMwe?: string | null;
+  holidayPayMwe?: string | null;
+  overtimePayMwe?: string | null;
+  nightShiftDifferentialMwe?: string | null;
+  hazardPayMwe?: string | null;
+  thirteenthMonthAndOtherBenefits?: string | null;
+  deMinimisBenefits?: string | null;
+  nonTaxableRetirementSeparation?: string | null;
+  otherExempt?: string | null;
+  employeePartyId: string;
+  reportedTaxWithheld?: string | null;
+  computedTaxWithheld?: string | null;
+}): Form1601CEmployeeLine {
+  const nonTaxable = addAll(
+    toScaled(line.basicSalaryMwe ?? "0"),
+    toScaled(line.holidayPayMwe ?? "0"),
+    toScaled(line.overtimePayMwe ?? "0"),
+    toScaled(line.nightShiftDifferentialMwe ?? "0"),
+    toScaled(line.hazardPayMwe ?? "0"),
+    toScaled(line.thirteenthMonthAndOtherBenefits ?? "0"),
+    toScaled(line.deMinimisBenefits ?? "0"),
+    toScaled(line.nonTaxableRetirementSeparation ?? "0"),
+    toScaled(line.otherExempt ?? "0"),
+  );
+  const regularAndSupplementary = addAll(
+    toScaled(line.basicSalary ?? "0"),
+    toScaled(line.representationAllowance ?? "0"),
+    toScaled(line.transportationAllowance ?? "0"),
+    toScaled(line.costOfLivingAllowance ?? "0"),
+    toScaled(line.fixedHousingAllowance ?? "0"),
+    toScaled(line.otherTaxableRegular ?? "0"),
+    toScaled(line.commission ?? "0"),
+    toScaled(line.profitSharing ?? "0"),
+    toScaled(line.directorsFees ?? "0"),
+    toScaled(line.overtimePay ?? "0"),
+    toScaled(line.hazardPay ?? "0"),
+    toScaled(line.otherTaxableSupplementary ?? "0"),
+  );
+  return {
+    employeePartyId: line.employeePartyId,
+    taxWithheld: line.reportedTaxWithheld ?? line.computedTaxWithheld ?? "0",
+    grossCompensation: fromScaled(addAll(regularAndSupplementary, nonTaxable)),
+    nonTaxableCompensation: fromScaled(nonTaxable),
+  };
+}
+
 export interface Form1601CInput {
   /** 1–12. */
   month: number;

@@ -12,6 +12,8 @@ import { z } from "zod";
 import { parties } from "../../db/schema/parties";
 import { partyTaxProfiles } from "../../db/schema/party-tax";
 import { payrollRuns } from "../../db/schema/payroll";
+
+import { previousEmployer2316 } from "../../db/schema/payroll";
 import { orgTaxProfiles } from "../../db/schema/tax-reference";
 import { DATASET_V1 } from "../../lib/tax/reference-catalog";
 import { isAnnualizationPeriod, periodIndexFromDates } from "../../lib/tax/payroll-period";
@@ -22,9 +24,12 @@ import {
 } from "../../lib/tax/assemble-payroll-filing-workspace";
 import { persistImportedRegister } from "../../lib/tax/persist-register-import";
 import { issuePayrollArtifacts } from "../../lib/tax/issue-payroll-artifacts";
+
+import { issueForm1601C } from "../../lib/tax/issue-1601c";
 import { computePayrollRun } from "../../lib/tax/payroll-run-service";
 import { postPayrollRun } from "../../lib/tax/payroll-journal";
 import { BUWIZ_TEMPLATE, IMPORTABLE_FIELDS } from "../../lib/tax/register-import";
+import { isPlaceholderTin } from "../../lib/tax/alphalist-preflight";
 
 const periodSchema = z.object({ runId: z.string().uuid() });
 
@@ -199,8 +204,20 @@ export const upsertEmployeeTaxProfile = createServerFn({ method: "POST" }).handl
       { routeKey: "payroll:profile", limit: 30, windowMs: 60_000 },
       async ({ orgId, db }) => {
         const input = profileSchema.parse(rawData);
+        if (isPlaceholderTin(input.tin)) {
+          throw new Error("That employee TIN is a placeholder; dummy TINs are banned.");
+        }
+        const [existingByTin] = await db
+          .select({ partyId: partyTaxProfiles.partyId })
+          .from(partyTaxProfiles)
+          .where(
+            and(eq(partyTaxProfiles.organizationId, orgId), eq(partyTaxProfiles.tin, input.tin)),
+          )
+          .limit(1);
         let partyId = input.partyId;
-        if (!partyId) {
+        if (existingByTin) {
+          partyId = existingByTin.partyId;
+        } else if (!partyId) {
           if (!input.name) throw new Error("name is required when creating an employee");
           const [party] = await db
             .insert(parties)
@@ -232,6 +249,83 @@ export const upsertEmployeeTaxProfile = createServerFn({ method: "POST" }).handl
             },
           });
         return { partyId, tin: input.tin };
+      },
+    );
+  },
+);
+
+const previousSchema = z.object({
+  employeeTin: z.string().regex(/^\d{9}$/),
+  taxableYear: z.number().int().min(2000).max(2100),
+  previousEmployerTin: z
+    .string()
+    .regex(/^\d{9}$/)
+    .optional(),
+  previousEmployerName: z.string().min(1),
+  taxableCompensation: z.string().min(1),
+  taxWithheld: z.string().min(1),
+  periodsCovered: z.number().int().min(1).max(24),
+  employmentFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  employmentTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+export const capturePreviousEmployer2316 = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "update",
+      { routeKey: "payroll:prev-2316", limit: 20, windowMs: 60_000 },
+      async ({ orgId, db }) => {
+        const input = previousSchema.parse(rawData);
+        if (isPlaceholderTin(input.employeeTin) || isPlaceholderTin(input.previousEmployerTin)) {
+          throw new Error("A placeholder TIN cannot be stored on a previous-employer 2316.");
+        }
+        const [profile] = await db
+          .select({ partyId: partyTaxProfiles.partyId })
+          .from(partyTaxProfiles)
+          .where(
+            and(
+              eq(partyTaxProfiles.organizationId, orgId),
+              eq(partyTaxProfiles.tin, input.employeeTin),
+            ),
+          )
+          .limit(1);
+        if (!profile)
+          throw new Error("No employee TIN profile matches that TIN. Save the employee first.");
+        const [row] = await db
+          .insert(previousEmployer2316)
+          .values({
+            organizationId: orgId,
+            employeePartyId: profile.partyId,
+            taxableYear: input.taxableYear,
+            previousEmployerTin: input.previousEmployerTin ?? null,
+            previousEmployerName: input.previousEmployerName,
+            taxableCompensation: input.taxableCompensation,
+            taxWithheld: input.taxWithheld,
+            periodsCovered: input.periodsCovered,
+            employmentFrom: input.employmentFrom,
+            employmentTo: input.employmentTo,
+          })
+          .onConflictDoUpdate({
+            target: [
+              previousEmployer2316.organizationId,
+              previousEmployer2316.employeePartyId,
+              previousEmployer2316.taxableYear,
+              previousEmployer2316.previousEmployerName,
+            ],
+            set: {
+              previousEmployerTin: input.previousEmployerTin ?? null,
+              taxableCompensation: input.taxableCompensation,
+              taxWithheld: input.taxWithheld,
+              periodsCovered: input.periodsCovered,
+              employmentFrom: input.employmentFrom,
+              employmentTo: input.employmentTo,
+              updatedAt: new Date(),
+            },
+          })
+          .returning({ id: previousEmployer2316.id });
+        if (!row) throw new Error("Could not capture previous-employer 2316");
+        return { id: row.id, employeePartyId: profile.partyId };
       },
     );
   },
@@ -312,5 +406,19 @@ export const issuePayrollFilingArtifacts = createServerFn({ method: "POST" }).ha
         })),
       };
     });
+  },
+);
+
+export const issuePayroll1601C = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "update",
+      { routeKey: "payroll:1601c", limit: 20, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const { runId } = periodSchema.parse(rawData);
+        return issueForm1601C(db, orgId, runId, userId);
+      },
+    );
   },
 );

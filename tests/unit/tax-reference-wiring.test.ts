@@ -470,7 +470,7 @@ describe("tax reference catalog wiring", () => {
     });
   });
 
-  describe("later foundation migrations (0041-0046)", () => {
+  describe("later foundation migrations (0041-0047)", () => {
     const FOUNDATION_FILES = [
       "0037_tax_reference_core.sql",
       "0038_payroll_compliance.sql",
@@ -482,9 +482,10 @@ describe("tax reference catalog wiring", () => {
       "0044_payroll_acknowledgement_note.sql",
       "0045_tax_certificates.sql",
       "0046_payroll_filing_state.sql",
+      "0047_tax_stage_remainder.sql",
     ];
 
-    it("names 0041-0046 in order in the foundation runner", () => {
+    it("names 0041-0047 in order in the foundation runner", () => {
       const runner = read(FOUNDATION);
       let previous = -1;
       for (const file of FOUNDATION_FILES) {
@@ -500,6 +501,13 @@ describe("tax reference catalog wiring", () => {
       const policies = read("drizzle/rls_policies.sql");
       expect(policies).toContain("org_isolation_tax_certificates");
       expect(policies).toContain("ALTER TABLE tax_certificates ENABLE ROW LEVEL SECURITY");
+    });
+    it("gives the stage-remainder tables RLS and leaves deadline overrides global", () => {
+      const policies = read("drizzle/rls_policies.sql");
+      expect(policies).toContain("org_isolation_org_tax_year_elections");
+      expect(policies).toContain("org_isolation_tax_withholding_payments");
+      expect(policies).toContain("org_isolation_tax_computed_returns");
+      expect(policies).not.toContain("org_isolation_filing_deadline_overrides");
     });
   });
 
@@ -519,6 +527,61 @@ describe("tax reference catalog wiring", () => {
       expect(page).toContain("keys.filing.workspace");
       expect(page).not.toContain('["payroll-variances"');
       expect(page).not.toContain("REFERENCE_DATASET_VERSION");
+    });
+  });
+
+  describe("product UI for remaining tax stages", () => {
+    it("exports tax query-key builders", () => {
+      const keys = read("src/lib/query-keys.ts");
+      expect(keys).toContain("tax:");
+      expect(keys).toContain('["tax", "certificates"]');
+      expect(keys).toContain('["tax", "settings"]');
+      expect(keys).toContain('["tax", "deadlines", year]');
+    });
+
+    it("wires compute, settings and deadline routes into the generated tree", () => {
+      const tree = read("src/routeTree.gen.ts");
+      expect(tree).toContain("'/tax/compute'");
+      expect(tree).toContain("'/tax/settings'");
+      expect(tree).toContain("'/tax/deadlines'");
+      expect(tree).toContain("'/tax/ewt'");
+      expect(tree).toContain("'/tax/parties'");
+    });
+
+    it("points the sidebar at the new tax screens", () => {
+      const sidebar = read("src/components/AppSidebar.tsx");
+      expect(sidebar).toContain('href: "/tax/compute"');
+      expect(sidebar).toContain('href: "/tax/settings"');
+      expect(sidebar).toContain('href: "/tax/deadlines"');
+      expect(sidebar).toContain('href: "/tax/ewt"');
+      expect(sidebar).toContain('href: "/tax/parties"');
+    });
+
+    it("uses the live engine signatures on /tax/compute", () => {
+      const page = read("src/routes/tax.compute.tsx");
+      expect(page).toContain("payeeType");
+      expect(page).toContain("paymentType");
+      expect(page).toContain("hasCompensationIncome");
+      expect(page).toContain("creditableInputVat");
+      expect(page).not.toContain("payeeKind");
+      expect(page).not.toContain("taxableBase");
+    });
+
+    it("keeps issued 2307s out of the received-certificate list", () => {
+      const api = read("src/routes/api/-tax-certificates.ts");
+      expect(api).toContain('eq(taxCertificates.certificateType, "received_2307")');
+    });
+
+    it("refuses a later replacement of an irrevocable year election", () => {
+      const api = read("src/routes/api/-tax-settings.ts");
+      expect(api).toContain("existing?.irrevocable && existing.regime !== input.regime");
+      expect(api).toContain("not to corporations");
+    });
+
+    it("stores a 1601-C working return from a payroll run", () => {
+      const issuer = read("src/lib/tax/issue-1601c.ts");
+      expect(issuer).toContain('formCode: "1601C"');
+      expect(issuer).toContain("compensationFromPayrollLine");
     });
   });
 });

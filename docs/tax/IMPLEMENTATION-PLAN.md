@@ -324,18 +324,27 @@ Recorded from the owner's answers. These close §9's first two rows and formaliz
 
 ---
 
-## 11. Build status — 2026-08-17
+## 11. Build status — 2026-08-19
 
-Thirteen commits on `feat/ph-tax-reference-core`. 1427 unit tests, 17 integration
-tests, `bun check` clean.
+Active branch is `feat/ph-tax-on-main`, replayed onto current `main`
+(`269e630`). The pre-remediation fork `feat/ph-tax-reference-core` is a
+snapshot only. Tax SQL is `0037`–`0047`. Export stays v2; the new tax
+tables stay out of `EXPORTABLE_ENTITIES` until they have handlers.
 
 ### Shipped
 
 | Stage  | What landed                                                                                                                                                                                                                                                                                                     |
 | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **1**  | Bitemporal reference core with mandatory `asOf` lookups; `org_tax_profiles`, `org_tax_branches`, `party_tax_profiles`; both withholding annexes and all 33 de minimis ceilings, primary-verified; seeder wired through every build path with a wiring test                                                      |
+| **1+** | Org settings, registered branches, dated VAT/TWA registrations, and the irrevocable year election on `/tax/settings` and `/tax/parties`                                                                                                                                                                         |
 | **2**  | The full compensation engine — segregation, both statutory withholding methods with the three triggers and the sticky latch, de minimis with four limit shapes, year-end annualization, and one dispatcher over all three paths. Reproduces RR 11-2018 Illustrations 6–15 to the centavo                        |
+| **3a** | Received 2307 capture, SAWT, CWT receivable posting, and review-only OCR on `/tax/certificates`. Issued 2307s stay off that list                                                                                                                                                                                |
+| **3b** | Agent-side EWT persist on `/tax/ewt`: record withholding, QAP, substitute 2307, QAP .DAT, 0619-E / 1601-EQ remittance, and bill-payment split into cash + EWT payable                                                                                                                                           |
+| **4**  | Filing workspace, as-filed snapshot, deadline calendar on `/tax/deadlines`, official overrides                                                                                                                                                                                                                  |
 | **5a** | Payroll data model (runs, lines, per-employee year state, previous-employer 2316); the run computation service and its variance recording; the statutory contribution engine and the check against it; register import; Form 2316; the filing period state machine; the `.DAT` encoder and alphalist pre-flight |
+| **5b** | Payroll journal, variance ack, snapshot/file, 2316 + 1604-C D1, and a saved 1601-C working return from `/payroll/$runId`                                                                                                                                                                                        |
+| **6**  | VAT / 2550Q / SLSP engines, plus saved working returns from `/tax/compute`                                                                                                                                                                                                                                      |
+| **7**  | 8% / threshold / 2551Q engines, plus saved working returns. A corporation cannot hold 8%; an irrevocable year election cannot be replaced                                                                                                                                                                       |
 
 ### Verified against primary text, not commentary
 
@@ -508,26 +517,41 @@ wrongly reported as done:
 
 ### Still not started
 
-PH invoice issuance (deliberately out of v1 scope per D6). Tax-settings /
-party-tax screens. Deadline engine. Stages 3a/3b/6/7 product UI beyond the
-engines, the 2307 OCR registry, and the payroll filing journey.
+PH invoice issuance (deliberately out of v1 scope per D6). 1604-C Schedule 2.
+Export handlers for the new tax tables. Layer 22.
 
-Stage 3a's OCR wiring, Stage 4's filing workspace, and the January persist
-path have landed on `feat/ph-tax-on-main`: `/payroll_/$runId` can import a
-template register (TIN-matched, no invented employees), compute the verifier,
-post the journal, review variances, snapshot, and file. Still missing from a client-complete January path: org-level tax settings,
-the deadline engine, and the owner `.DAT` spike. Creating a period, employee TIN, employer identity, and issuing 2316 plus
-the 1604-C Schedule 1 file now live on `/payroll` and `/payroll/$runId`.
-Schedule 2 stays untranscribed. The `.DAT` config is still unverified.
-Received 2307 capture now lives on `/tax/certificates`; CWT posting and SAWT
-export are still engine-only.
+Product UI now on `feat/ph-tax-on-main`, including the 0047 remainder:
 
-**And the gap that matters more than any of those:** none of Stages 3a/3b/6/7
-is a client-complete UI. That remaining wiring, not more tax regimes, is what
-stands between this and something a client can file with in January.
+- `/payroll` and `/payroll/$runId` — period, employee TIN, employer identity,
+  previous-employer 2316 / YTD intake, register import, compute, post, variance
+  ack, snapshot, file, 2316 + 1604-C D1, and a saved 1601-C working return.
+  Employees are matched by TIN; a second save with the same TIN does not invent
+  another party.
+- `/tax/certificates` — capture a received 2307, build the SAWT for that
+  certificate's own quarter, post the CWT receivable when the PH chart and A/R
+  mapping exist, and OCR-prefill for review. Issued 2307s stay off this list.
+- `/tax/compute` — Stages 3b/6/7 as reachable calculators against the live
+  `assessEwt` / `computeEwt` / `buildVatReturn` / `assessRegime` signatures.
+  2550Q, 2551Q, and SLSP working returns can be saved. Saving is not filing and
+  not posting. Dummy TINs are refused on the SLSP.
+- `/tax/settings` — eFPS enrollment/group, fiscal year end, classification,
+  registered branches, and the irrevocable year election. A corporation cannot
+  hold 8%. A later form cannot replace an irrevocable election.
+- `/tax/deadlines` — Stage 4 calendar from `buildDeadlineCalendar`, using the
+  org's eFPS group when set, the earliest date when it is not, and any official
+  `filing_deadline_overrides` row.
+- `/tax/ewt` — Stage 3b persist: record a payment we withheld from, save the QAP,
+  issue a substitute 2307 PDF, download the QAP .DAT, and remit 0619-E / 1601-EQ
+  against EWT payable. Bill payment splits A/P into cash + EWT payable when
+  withholding is supplied.
+- `/tax/parties` — payee TIN/sworn-declaration profiles and dated VAT/TWA
+  registrations. Registration is never a boolean on the org. Import is TIN-only.
+
+Still missing from a client-complete filing product: the owner `.DAT` spike and
+1604-C Schedule 2. The `.DAT` config is still unverified.
 
 **Export protocol, current `main`.** This branch now sits on current `main`
-with tax migrations numbered 0037-0046. `payroll_*`, `party_tax_profiles`,
+with tax migrations numbered 0037-0047. `payroll_*`, `party_tax_profiles`,
 `tax_certificates`, and the tax-reference tables are still not in
 `EXPORTABLE_ENTITIES`. They stay out of v2 until they have export/import
 handlers; adding empty arrays without handlers would be a version bump for

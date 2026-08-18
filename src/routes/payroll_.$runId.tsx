@@ -34,6 +34,8 @@ import {
   postPayrollFilingRun,
   issuePayrollFilingArtifacts,
 } from "./api/-payroll-runs";
+
+import { issuePayroll1601C } from "./api/-payroll-runs";
 import type { FilingWorkspace } from "../lib/tax/filing-workspace";
 import { keys } from "../lib/query-keys";
 import { VarianceVerifier } from "../components/payroll/VarianceVerifier";
@@ -170,6 +172,22 @@ function PayrollFilingPage() {
     onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
   });
 
+  const form1601c = useMutation({
+    mutationFn: () =>
+      (
+        issuePayroll1601C as (o: {
+          data: unknown;
+        }) => Promise<{ dueDate: string; stillDue: string; blockingIssues: string[] }>
+      )({
+        data: { runId },
+      }),
+    onSuccess: (form) => {
+      if (form.blockingIssues.length > 0) setActionError(form.blockingIssues.join(" "));
+      else setActionError(`1601-C due ${form.dueDate}; still due ${form.stillDue}`);
+    },
+    onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
+  });
+
   const file = useMutation({
     mutationFn: () =>
       (markPeriodFiled as (o: { data: unknown }) => Promise<unknown>)({
@@ -283,6 +301,17 @@ function PayrollFilingPage() {
             className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
           >
             {issue.isPending ? "Issuing…" : "Download 2316 + 1604-C"}
+          </button>
+          <button
+            type="button"
+            disabled={form1601c.isPending}
+            onClick={() => {
+              setActionError(null);
+              form1601c.mutate();
+            }}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+          >
+            {form1601c.isPending ? "Building…" : "Build 1601-C"}
           </button>
         </div>
         {importIssues.length > 0 && (
