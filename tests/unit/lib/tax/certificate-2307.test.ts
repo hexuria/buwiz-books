@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildSawt,
   CertificateValidationError,
+  certificatesInSawtPeriod,
   impliedRateBps,
   normalizeTin,
   validateReceived2307,
@@ -19,7 +20,7 @@ import {
  * certificate behind it.
  */
 const base: Received2307Input = {
-  payorTin: "123-456-789",
+  payorTin: "234-567-890",
   payorRegisteredName: "ACME CORPORATION",
   certificateNumber: "2307-0001",
   periodStart: "2026-04-01",
@@ -63,7 +64,7 @@ describe("impliedRateBps", () => {
 describe("validateReceived2307", () => {
   it("accepts a well-formed certificate with no warnings", () => {
     const { normalized, warnings } = validateReceived2307(base);
-    expect(normalized.payorTin).toBe("123456789000");
+    expect(normalized.payorTin).toBe("234567890000");
     expect(warnings).toEqual([]);
   });
 
@@ -125,6 +126,11 @@ describe("validateReceived2307", () => {
 
   it("upper-cases the ATC so lookups and grouping are stable", () => {
     expect(validateReceived2307({ ...base, atc: "wc010" }).normalized.atc).toBe("WC010");
+  });
+
+  it("refuses a dummy TIN instead of storing a placeholder credit", () => {
+    expect(() => validateReceived2307({ ...base, payorTin: "123-456-789" })).toThrow(/placeholder/);
+    expect(() => validateReceived2307({ ...base, payorTin: "000000000" })).toThrow(/placeholder/);
   });
 });
 
@@ -251,5 +257,24 @@ describe("buildSawt", () => {
       certificates: [cert({ incomePayment: "0.00000003", taxWithheld: "0.00000001" })],
     });
     expect(sawt.totalTaxWithheld).toBe("0.00000001");
+  });
+});
+
+describe("certificatesInSawtPeriod", () => {
+  const q1 = { periodStart: "2026-01-01", periodEnd: "2026-03-31" };
+  const q2 = { periodStart: "2026-04-01", periodEnd: "2026-06-30" };
+
+  it("keeps only certificates whose own quarter sits inside the SAWT period", () => {
+    expect(certificatesInSawtPeriod([q1, q2], "2026-04-01", "2026-06-30")).toEqual([q2]);
+  });
+
+  it("does not pull a prior quarter in just because it overlaps the window", () => {
+    expect(certificatesInSawtPeriod([q1], "2026-03-01", "2026-06-30")).toEqual([]);
+  });
+
+  it("refuses a window that ends before it starts", () => {
+    expect(() => certificatesInSawtPeriod([q2], "2026-06-30", "2026-04-01")).toThrow(
+      /ends .* before it starts/,
+    );
   });
 });

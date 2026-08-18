@@ -10,6 +10,9 @@ import { resolveFunctionalCurrency } from "@/lib/functional-currency";
 import { centsToMoney, moneyToCents } from "@/lib/money";
 import { postBillAccrualJournal } from "@/lib/bill-journal";
 import { requireMappedAccountId } from "@/lib/coa/resolve-mapped-account";
+
+import { requirePhAccount } from "@/lib/tax/ph-account-resolver";
+import { splitBillPaymentWithEwt } from "@/lib/tax/bill-payment-ewt";
 import {
   beginAccountingOperation,
   completeAccountingOperation,
@@ -28,6 +31,8 @@ export type ManualBillPaymentInput = {
   idempotencyKey: string;
   /** ISO date the payment took effect. Omit only when it is genuinely today. */
   paymentDate?: string;
+  /** Tax withheld from this payment, if we are the agent. */
+  ewtWithheld?: string;
 };
 
 async function resolveApAccount(db: DbExecutor, orgId: string): Promise<string> {
@@ -51,6 +56,7 @@ async function createBillPaymentJournal(
      * period whenever it is recorded late, which is the normal case.
      */
     effectiveDate?: string;
+    ewtWithheld?: string;
   },
 ): Promise<string> {
   const [bankAccount] = await db
@@ -109,11 +115,12 @@ async function createBillPaymentJournal(
     .returning();
   if (!header) throw new Error("Bill payment journal could not be posted.");
 
-  await db.insert(journalLines).values([
+  const split = splitBillPaymentWithEwt(input.paymentAmount, input.ewtWithheld);
+  const values = [
     {
       journalHeaderId: header.id,
       accountId: apAccountId,
-      debit: input.paymentAmount,
+      debit: split.accountsPayable,
       credit: null,
       lineDescription: `A/P Settlement: ${input.bill.billNumber || "Bill"}`,
       partyId: input.bill.vendorId,
@@ -123,12 +130,25 @@ async function createBillPaymentJournal(
       journalHeaderId: header.id,
       accountId: input.bankAccountId,
       debit: null,
-      credit: input.paymentAmount,
+      credit: split.cash,
       lineDescription: `Payment for bill ${input.bill.billNumber || ""}`.trim(),
       partyId: input.bill.vendorId,
       sortOrder: 1,
     },
-  ]);
+  ];
+  if (split.withheld) {
+    const ewtAccountId = await requirePhAccount(db, input.organizationId, "ph_ewt_payable");
+    values.push({
+      journalHeaderId: header.id,
+      accountId: ewtAccountId,
+      debit: null,
+      credit: split.ewtPayable,
+      lineDescription: "EWT withheld from supplier",
+      partyId: input.bill.vendorId,
+      sortOrder: 2,
+    });
+  }
+  await db.insert(journalLines).values(values);
   await db.insert(activityLogs).values({
     organizationId: input.organizationId,
     entityType: "transaction",
@@ -226,6 +246,7 @@ export async function recordManualBillPayment(db: DbExecutor, input: ManualBillP
     paymentReference: input.paymentReference ?? null,
     idempotencyKey: input.idempotencyKey,
     effectiveDate: input.paymentDate,
+    ewtWithheld: input.ewtWithheld,
   });
   const paymentSource = await ensureOperationalPaymentLineage(db, {
     organizationId: input.organizationId,

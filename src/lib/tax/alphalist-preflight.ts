@@ -103,7 +103,21 @@ function isLumpedName(normalized: string): boolean {
  * RMC 5-2014 bans dummy TINs explicitly. These are the placeholders that show
  * up in practice when a bookkeeper needs the field filled.
  */
-const DUMMY_TINS = new Set(["000000000", "111111111", "123456789", "999999999", "000000001"]);
+export const PLACEHOLDER_TINS = new Set([
+  "000000000",
+  "111111111",
+  "123456789",
+  "999999999",
+  "000000001",
+]);
+
+/** True when the TIN passes a digit check but identifies nobody. */
+export function isPlaceholderTin(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 9) return false;
+  return PLACEHOLDER_TINS.has(digits.slice(0, 9));
+}
 
 const BANNED_CHARS = /[ñÑ*?&]/;
 /** Global variant. The non-global one replaces only the first match. */
@@ -134,7 +148,7 @@ export function preflightAlphalist(rows: readonly AlphalistRow[]): PreflightFind
           `field after it in the .DAT record`,
       );
     } else {
-      if (DUMMY_TINS.has(row.tin)) {
+      if (isPlaceholderTin(row.tin)) {
         add("ALPHA-003", "fatal", `TIN "${row.tin}" is a placeholder; dummy TINs are banned`);
       }
       const first = seenTins.get(row.tin);

@@ -164,6 +164,7 @@ const transitionStatusSchema = z.object({
   paymentReference: z.string().optional(),
   bankAccountId: z.string().uuid().optional(), // Required when newStatus === 'paid' or 'partial'
   paymentAmount: z.string().or(z.number()).optional(), // For partial payments — omit for full balance
+  ewtWithheld: z.string().optional(),
 });
 
 const deleteBillSchema = z.object({
@@ -694,6 +695,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           paymentReference,
           bankAccountId,
           paymentAmount,
+          ewtWithheld,
         } = parsed;
 
         if ((newStatus === "paid" || newStatus === "partial") && !bankAccountId) {
@@ -715,6 +717,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
             paymentMethod,
             paymentReference,
             idempotencyKey: idempotencyKey!,
+            ewtWithheld,
           });
         }
         const canonicalPaymentAmount =

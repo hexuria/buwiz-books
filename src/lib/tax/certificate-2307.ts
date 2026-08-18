@@ -26,6 +26,7 @@
  * money has already been remitted to the BIR in our name.
  */
 import { addAll, fromScaled, toScaled, ZERO, type ScaledMoney } from "@/lib/tax/money";
+import { isPlaceholderTin } from "@/lib/tax/alphalist-preflight";
 
 export class CertificateValidationError extends Error {
   constructor(
@@ -127,6 +128,12 @@ export function validateReceived2307(input: Received2307Input): {
 } {
   const warnings: CertificateWarning[] = [];
   const payorTin = normalizeTin(input.payorTin);
+  if (isPlaceholderTin(payorTin)) {
+    throw new CertificateValidationError(
+      `TIN ${JSON.stringify(input.payorTin)} is a placeholder; dummy TINs are banned.`,
+      "payorTin",
+    );
+  }
 
   if (!input.payorRegisteredName.trim()) {
     throw new CertificateValidationError(
@@ -207,6 +214,27 @@ export interface SawtCertificate {
   incomePayment: string;
   taxWithheld: string;
   certificateStatus: string;
+}
+
+/**
+ * A 2307 belongs on a SAWT when the certificate's own quarter sits inside the
+ * SAWT period. Overlap is the wrong test: a prior-quarter paper that happens
+ * to arrive this quarter is still last quarter's credit.
+ */
+export function certificatesInSawtPeriod<T extends { periodStart: string; periodEnd: string }>(
+  certificates: readonly T[],
+  periodStart: string,
+  periodEnd: string,
+): T[] {
+  if (periodEnd < periodStart) {
+    throw new CertificateValidationError(
+      `The SAWT period ends (${periodEnd}) before it starts (${periodStart}).`,
+      "periodEnd",
+    );
+  }
+  return certificates.filter(
+    (certificate) => certificate.periodStart >= periodStart && certificate.periodEnd <= periodEnd,
+  );
 }
 
 export interface SawtLine {
