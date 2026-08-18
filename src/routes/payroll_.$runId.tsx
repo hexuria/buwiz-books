@@ -32,6 +32,7 @@ import {
   importPayrollRegister,
   computePayrollFilingRun,
   postPayrollFilingRun,
+  issuePayrollFilingArtifacts,
 } from "./api/-payroll-runs";
 import type { FilingWorkspace } from "../lib/tax/filing-workspace";
 import { keys } from "../lib/query-keys";
@@ -130,6 +131,42 @@ function PayrollFilingPage() {
         },
       }),
     onSuccess: refreshAll,
+    onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
+  });
+
+  const issue = useMutation({
+    mutationFn: () =>
+      (
+        issuePayrollFilingArtifacts as (o: { data: unknown }) => Promise<{
+          alphalist: { fileName: string; content: string; blockingIssues: string[] };
+          certificates: Array<{
+            employeeName: string;
+            pdfBase64: string;
+            blockingIssues: string[];
+          }>;
+        }>
+      )({ data: { runId } }),
+    onSuccess: (issued) => {
+      const dat = new Blob([issued.alphalist.content], { type: "text/plain" });
+      const datUrl = URL.createObjectURL(dat);
+      const datLink = document.createElement("a");
+      datLink.href = datUrl;
+      datLink.download = issued.alphalist.fileName;
+      datLink.click();
+      URL.revokeObjectURL(datUrl);
+      for (const cert of issued.certificates) {
+        const pdf = Uint8Array.from(atob(cert.pdfBase64), (c) => c.charCodeAt(0));
+        const pdfUrl = URL.createObjectURL(new Blob([pdf], { type: "application/pdf" }));
+        const link = document.createElement("a");
+        link.href = pdfUrl;
+        link.download = `2316-${cert.employeeName.replace(/[^A-Za-z0-9]+/g, "_")}.pdf`;
+        link.click();
+        URL.revokeObjectURL(pdfUrl);
+      }
+      if (issued.alphalist.blockingIssues.length > 0) {
+        setActionError(issued.alphalist.blockingIssues.join(" "));
+      }
+    },
     onError: (error) => setActionError(error instanceof Error ? error.message : String(error)),
   });
 
@@ -235,6 +272,17 @@ function PayrollFilingPage() {
             className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
           >
             {post.isPending ? "Posting…" : "Post to ledger"}
+          </button>
+          <button
+            type="button"
+            disabled={issue.isPending}
+            onClick={() => {
+              setActionError(null);
+              issue.mutate();
+            }}
+            className="rounded border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-900 disabled:opacity-50"
+          >
+            {issue.isPending ? "Issuing…" : "Download 2316 + 1604-C"}
           </button>
         </div>
         {importIssues.length > 0 && (

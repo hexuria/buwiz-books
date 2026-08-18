@@ -516,8 +516,9 @@ Stage 3a's OCR wiring, Stage 4's filing workspace, and the January persist
 path have landed on `feat/ph-tax-on-main`: `/payroll_/$runId` can import a
 template register (TIN-matched, no invented employees), compute the verifier,
 post the journal, review variances, snapshot, and file. Still missing from a client-complete January path: org-level tax settings,
-the deadline engine, and the owner `.DAT` spike. Creating a period, an employee TIN profile, and the employer identity
-2316 reads now live on `/payroll`.
+the deadline engine, and the owner `.DAT` spike. Creating a period, employee TIN, employer identity, and issuing 2316 plus
+the 1604-C Schedule 1 file now live on `/payroll` and `/payroll/$runId`.
+Schedule 2 stays untranscribed. The `.DAT` config is still unverified.
 
 **And the gap that matters more than any of those:** none of Stages 3a/3b/6/7
 is a client-complete UI. That remaining wiring, not more tax regimes, is what

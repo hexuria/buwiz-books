@@ -21,6 +21,7 @@ import {
   assertWorkspaceAllowsPost,
 } from "../../lib/tax/assemble-payroll-filing-workspace";
 import { persistImportedRegister } from "../../lib/tax/persist-register-import";
+import { issuePayrollArtifacts } from "../../lib/tax/issue-payroll-artifacts";
 import { computePayrollRun } from "../../lib/tax/payroll-run-service";
 import { postPayrollRun } from "../../lib/tax/payroll-journal";
 import { BUWIZ_TEMPLATE, IMPORTABLE_FIELDS } from "../../lib/tax/register-import";
@@ -292,5 +293,24 @@ export const upsertOrgTaxProfile = createServerFn({ method: "POST" }).handler(
         return input;
       },
     );
+  },
+);
+
+export const issuePayrollFilingArtifacts = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withSessionOrgContext(async ({ orgId, db }) => {
+      const { runId } = periodSchema.parse(rawData);
+      const issued = await issuePayrollArtifacts(db, orgId, runId);
+      return {
+        runId: issued.runId,
+        alphalist: issued.alphalist,
+        certificates: issued.certificates.map((c) => ({
+          employeePartyId: c.employeePartyId,
+          employeeName: `${c.form.employee.lastName}, ${c.form.employee.firstName}`,
+          pdfBase64: c.pdfBase64,
+          blockingIssues: c.form.blockingIssues,
+        })),
+      };
+    });
   },
 );
