@@ -29,7 +29,12 @@ export interface InvoicePdfData {
   balanceDue: string;
   notes: string | null;
   paymentTerms: string | null;
-  currency?: string;
+  /**
+   * ISO 4217 code the invoice is denominated in. Required rather than
+   * defaulted: this used to fall back to "USD", so a Philippine invoice
+   * rendered its totals as dollars on the document the customer receives.
+   */
+  currency: string;
 }
 
 function money(value: string | number, currency: string): string {
@@ -43,7 +48,7 @@ function money(value: string | number, currency: string): string {
  *   - client: `doc.save(filename)` to download
  */
 export function generateInvoicePdf(data: InvoicePdfData): jsPDF {
-  const currency = data.currency ?? "USD";
+  const currency = data.currency;
   const doc = new jsPDF({ unit: "pt", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();

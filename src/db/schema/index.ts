@@ -26,3 +26,7 @@ export * from "./operation-idempotency";
 export * from "./ai";
 export * from "./business-groups";
 export * from "./reporting-projections";
+export * from "./tax-reference";
+export * from "./payroll";
+export * from "./party-tax";
+export * from "./tax-certificates";

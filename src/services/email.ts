@@ -18,6 +18,30 @@ function getEnvResend(): Resend | null {
   return envResend;
 }
 
+/**
+ * Currency symbols we are confident about in a customer-facing email.
+ *
+ * Anything not listed falls back to the ISO code — "PHP 1,500.00" is
+ * unambiguous, whereas guessing the wrong symbol is not. This template used to
+ * hard-code "$", so every Philippine invoice went out denominated in dollars.
+ */
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  USD: "$",
+  PHP: "₱",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  AUD: "A$",
+  CAD: "C$",
+  SGD: "S$",
+};
+
+function formatInvoiceAmount(total: string, currency: string): string {
+  const code = currency.trim().toUpperCase();
+  const symbol = CURRENCY_SYMBOLS[code];
+  return symbol ? `${symbol}${total}` : `${code} ${total}`;
+}
+
 // Utility to extract just the email portion from a string like "Name <email@domain.com>"
 function extractEmail(fromStr: string): string {
   const match = fromStr.match(/<([^>]+)>/);
@@ -29,6 +53,12 @@ export interface InvoiceEmailData {
   invoiceNumber: string;
   customerName: string;
   total: string;
+  /**
+   * ISO 4217 code the invoice is denominated in. Required: the template used
+   * to hard-code a "$" prefix, so a Philippine invoice went out to the
+   * customer reading "$1,500.00" for an amount that was pesos.
+   */
+  currency: string;
   dueDate: string;
   fromCompany: string;
   fromEmail?: string;
@@ -51,6 +81,9 @@ export async function sendInvoiceEmail(
   data: InvoiceEmailData,
 ): Promise<{ success: boolean; messageId?: string }> {
   const subject = data.subject ?? `Invoice ${data.invoiceNumber} from ${data.fromCompany}`;
+  // Symbol where we know one, ISO code otherwise — an unfamiliar code reads
+  // unambiguously, a wrong symbol does not.
+  const amount = formatInvoiceAmount(data.total, data.currency);
 
   // Resend requires the `from` address to use a verified domain.
   // Always use MAIL_FROM (verified domain) as the actual sender.
@@ -70,13 +103,13 @@ export async function sendInvoiceEmail(
       </div>
 
       <div style="background: #f8fafc; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-        <p style="margin: 0 0 8px; font-size: 28px; font-weight: 700; color: #1e293b;">$${data.total}</p>
+        <p style="margin: 0 0 8px; font-size: 28px; font-weight: 700; color: #1e293b;">${amount}</p>
         <p style="margin: 0; font-size: 13px; color: #64748b;">Due ${data.dueDate}</p>
       </div>
 
       <p style="color: #475569; line-height: 1.6;">
         Hi ${data.customerName},<br /><br />
-        Please find your invoice <strong>${data.invoiceNumber}</strong> for <strong>$${data.total}</strong>.
+        Please find your invoice <strong>${data.invoiceNumber}</strong> for <strong>${amount}</strong>.
         ${data.memo ? `<br /><br />${data.memo}` : ""}
       </p>
 

@@ -14,8 +14,9 @@ import { eq, desc, and, asc } from "drizzle-orm";
 import { z } from "zod";
 import { createLogger } from "../../lib/logger";
 import { insertActivityLog } from "../../lib/insert-activity-log";
-import { allocateJournalTransactionNumber } from "../../lib/sequence";
-import { isDateInLockedPeriod, getClosedThrough, isDateLocked } from "../../lib/period-close";
+import { getClosedThrough, isDateLocked } from "../../lib/period-close";
+import { postBillAccrualJournal } from "../../lib/bill-journal";
+import { sumMoney } from "../../lib/inbox/money";
 import { statementLines, reconciliations } from "../../db/schema/reconciliations";
 import { inArray } from "drizzle-orm";
 import { isR2Configured, getPresignedDownloadUrl } from "../../lib/storage";
@@ -380,10 +381,11 @@ export const createBill = createServerFn({ method: "POST" }).handler(
       async ({ orgId, userId, role, db }) => {
         const parsed = createBillSchema.parse(rawData);
 
-        const totalAmount = parsed.lineItems.reduce(
-          (sum, l) => sum + Number.parseFloat(l.amount),
-          0,
-        );
+        // Exact summation. Float `reduce` + `.toFixed(2)` drifted from the
+        // raw line amounts, so a bill whose lines carry more than two decimals
+        // produced an A/P credit that did not equal the debits it offsets —
+        // an unbalanced journal, which the ledger now rejects outright (0038).
+        const totalAmount = sumMoney(parsed.lineItems.map((l) => l.amount));
         const requestPayloadHash = idempotencyPayloadHash("bill-submission", {
           vendorId: parsed.vendorId,
           billNumber: parsed.billNumber,
@@ -415,8 +417,8 @@ export const createBill = createServerFn({ method: "POST" }).handler(
               memo: parsed.memo,
               documentUrl: parsed.documentUrl,
               documentType: parsed.documentType,
-              amount: totalAmount.toFixed(2),
-              balanceDue: totalAmount.toFixed(2),
+              amount: totalAmount,
+              balanceDue: totalAmount,
               status: parsed.status ?? "in_review",
               isRecurring: parsed.isRecurring ?? false,
               recurringFrequency: parsed.recurringFrequency,
@@ -504,7 +506,7 @@ export const createBill = createServerFn({ method: "POST" }).handler(
                 billNumber: parsed.billNumber ?? null,
                 billDate: parsed.billDate,
                 dueDate: parsed.dueDate,
-                totalAmount: totalAmount.toFixed(2),
+                totalAmount,
                 status: parsed.status ?? "in_review",
                 lineItemCount: parsed.lineItems.length,
               },
@@ -539,7 +541,7 @@ export const createBill = createServerFn({ method: "POST" }).handler(
                 })),
                 {
                   accountId: apAccountId,
-                  credit: totalAmount.toFixed(2),
+                  credit: totalAmount,
                   lineDescription: `A/P: ${bill.billNumber || "Bill"}`,
                   partyId: bill.vendorId,
                   sortOrder: parsed.lineItems.length,
@@ -673,121 +675,6 @@ async function linkBillDocumentToCandidate(
 /**
  * Generate a sequential transaction number for journal entries.
  */
-async function generateBillTxnNumber(orgId: string, db: DbExecutor): Promise<string> {
-  return allocateJournalTransactionNumber(orgId, db);
-}
-
-/**
- * Create the accrual journal entry when a bill enters awaiting_payment.
- * DR Expense accounts (per line item), CR Accounts Payable (total)
- * This recognizes the liability on the Balance Sheet.
- */
-async function createApAccrualJournal(
-  db: DbExecutor,
-  orgId: string,
-  userId: string,
-  bill: typeof bills.$inferSelect,
-  billId: string,
-): Promise<string> {
-  // Idempotency: skip if journal already exists
-  if (bill.journalHeaderId) return bill.journalHeaderId;
-
-  // The accrual journal is dated on the bill date — refuse to post into a closed period.
-  const { locked, closedThrough } = await isDateInLockedPeriod(orgId, bill.billDate);
-  if (locked) {
-    throw new Error(
-      `Cannot post bill ${bill.billNumber || billId}: its bill date ${bill.billDate} falls in a period locked through ${closedThrough}.`,
-    );
-  }
-
-  const apAccountId = await resolveApAccount(db, orgId);
-
-  const lineItems = await db
-    .select({
-      description: billLineItems.description,
-      amount: billLineItems.amount,
-      accountId: billLineItems.accountId,
-      departmentId: billLineItems.departmentId,
-      locationId: billLineItems.locationId,
-      sortOrder: billLineItems.sortOrder,
-    })
-    .from(billLineItems)
-    .where(eq(billLineItems.billId, billId))
-    .orderBy(asc(billLineItems.sortOrder));
-
-  if (lineItems.length === 0) {
-    throw new Error("Bill has no line items — cannot create journal entry");
-  }
-
-  const totalAmount = lineItems.reduce((sum, l) => sum + Number.parseFloat(l.amount), 0);
-  const txnNumber = await generateBillTxnNumber(orgId, db);
-
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: orgId,
-      transactionNumber: txnNumber,
-      transactionDate: bill.billDate,
-      transactionType: "journal",
-      source: "bill",
-      memo: `Bill Accrual: ${bill.billNumber || billId}`,
-      partyId: bill.vendorId,
-      totalAmount: totalAmount.toFixed(2),
-      status: "posted",
-      sourceDocumentId: billId,
-      sourceDocumentType: "bill",
-      createdBy: userId,
-      referenceNumber: bill.billNumber || null,
-      idempotencyKey: `bill-accrual:${billId}`,
-    })
-    .returning();
-
-  // DR Expense accounts (per line item), CR A/P (total)
-  const journalLineValues = [
-    ...lineItems.map((line, index) => ({
-      journalHeaderId: header.id,
-      accountId: line.accountId,
-      debit: line.amount,
-      credit: null as string | null,
-      lineDescription: line.description || "Bill line item",
-      partyId: bill.vendorId,
-      departmentId: line.departmentId,
-      locationId: line.locationId,
-      sortOrder: index,
-    })),
-    {
-      journalHeaderId: header.id,
-      accountId: apAccountId,
-      debit: null as string | null,
-      credit: totalAmount.toFixed(2),
-      lineDescription: `A/P: ${bill.billNumber || "Bill"}`,
-      partyId: bill.vendorId,
-      departmentId: null as string | null,
-      locationId: null as string | null,
-      sortOrder: lineItems.length,
-    },
-  ];
-
-  await db.insert(journalLines).values(journalLineValues);
-
-  await db.insert(activityLogs).values({
-    organizationId: orgId,
-    entityType: "transaction",
-    entityId: header.id,
-    action: "created",
-    actorId: userId,
-    changes: {
-      source: "bill_accrual",
-      billId,
-      billNumber: bill.billNumber,
-      totalAmount: totalAmount.toFixed(2),
-      transactionNumber: txnNumber,
-    },
-  });
-
-  return header.id;
-}
-
 /**
  * Transition bill status with validation
  */
@@ -903,11 +790,30 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
         }
 
         if (newStatus === "awaiting_payment" || newStatus === "scheduled") {
-          const journalId = await createApAccrualJournal(db, orgId, userId, bill, billId);
+          const journalId = await postBillAccrualJournal(db, {
+            organizationId: orgId,
+            userId,
+            bill,
+          });
           updateFields.journalHeaderId = journalId;
           operationJournalHeaderId = journalId;
         }
 
+        // ═══════════════════════════════════════════════════════════════
+        // VOIDED — void the posted journals only. NO reversal.
+        //
+        // Reports and the projection aggregate `status = 'posted'` rows only,
+        // so flipping the source journals to "voided" already removes their
+        // effect entirely. This branch ALSO posted a full mirrored reversal,
+        // which subtracted the same amount a second time — every voided bill
+        // understated its period by the bill's value. The invoice path fixed
+        // exactly this and its comment calls it "the historical bug"; the bill
+        // path kept it.
+        //
+        // It also skipped the period lock that bill-delete and invoice-void
+        // both check, so a bill accrued in a filed month could be removed from
+        // that month after the return was filed.
+        // ═══════════════════════════════════════════════════════════════
         if (newStatus === "voided") {
           const linkedJournals = await db
             .select()
@@ -929,53 +835,21 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
             );
           }
 
+          const closedThrough = await getClosedThrough(orgId, db);
+          const inLocked = linkedJournals.find((journal) =>
+            isDateLocked(journal.transactionDate, closedThrough),
+          );
+          if (inLocked) {
+            throw new Error(
+              `Cannot void bill: its journal dated ${inLocked.transactionDate} falls in a period locked through ${closedThrough}. Open the period first.`,
+            );
+          }
+
           for (const journal of linkedJournals) {
             await db
               .update(journalHeaders)
               .set({ status: "voided", updatedAt: new Date() })
               .where(eq(journalHeaders.id, journal.id));
-
-            const originalLines = await db
-              .select()
-              .from(journalLines)
-              .where(eq(journalLines.journalHeaderId, journal.id));
-
-            const reversalTxn = await generateBillTxnNumber(orgId, db);
-            const [reversalHeader] = await db
-              .insert(journalHeaders)
-              .values({
-                organizationId: orgId,
-                transactionNumber: reversalTxn,
-                transactionDate: new Date().toISOString().split("T")[0],
-                transactionType: journal.transactionType,
-                source: "system",
-                memo: `REVERSAL: ${journal.memo || journal.transactionNumber}`,
-                partyId: journal.partyId,
-                totalAmount: journal.totalAmount,
-                status: "posted",
-                sourceDocumentId: billId,
-                sourceDocumentType: "bill",
-                createdBy: userId,
-                referenceNumber: journal.referenceNumber,
-                idempotencyKey: `bill-void:${idempotencyKey}:${journal.id}`,
-              })
-              .returning();
-
-            if (originalLines.length > 0) {
-              await db.insert(journalLines).values(
-                originalLines.map((line, idx) => ({
-                  journalHeaderId: reversalHeader.id,
-                  accountId: line.accountId,
-                  debit: line.credit,
-                  credit: line.debit,
-                  lineDescription: `Reversal: ${line.lineDescription || ""}`,
-                  partyId: line.partyId,
-                  departmentId: line.departmentId,
-                  locationId: line.locationId,
-                  sortOrder: idx,
-                })),
-              );
-            }
 
             await db.insert(activityLogs).values({
               organizationId: orgId,
@@ -983,11 +857,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
               entityId: journal.id,
               action: "voided",
               actorId: userId,
-              changes: {
-                reason: "bill_voided",
-                billId,
-                reversalTransactionNumber: reversalTxn,
-              },
+              changes: { reason: "bill_voided", billId },
             });
           }
         }

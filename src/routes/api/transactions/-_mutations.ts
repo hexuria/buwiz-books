@@ -113,6 +113,29 @@ export const updateTransaction = createServerFn({ method: "POST" })
           throw new Error("Voided transactions cannot be edited");
         }
 
+        // A POSTED journal is never edited in place. This path deletes every
+        // line and reinserts the replacements, so before this guard existed any
+        // tax line the compliance layer wrote could be silently mutated or
+        // dropped, leaving only an activity-log row behind. The correct
+        // operation is a reversal plus a replacement — see
+        // lib/journal-amendment.ts. Database triggers (0039) enforce the same
+        // rule underneath, so this check is the friendly message rather than
+        // the actual guarantee.
+        const changesFinancialSubstance =
+          lines !== undefined ||
+          (updates.transactionDate !== undefined &&
+            updates.transactionDate !== existing.transactionDate) ||
+          (updates.transactionType !== undefined &&
+            updates.transactionType !== existing.transactionType) ||
+          (updates.partyId !== undefined && updates.partyId !== existing.partyId);
+
+        if (existing.status === "posted" && changesFinancialSubstance) {
+          throw new Error(
+            "This transaction is posted and cannot be edited in place. " +
+              "Reverse and replace it instead, so the original entry stays on the record.",
+          );
+        }
+
         // Period lock check — the transaction must not currently sit in a locked period...
         const { locked, closedThrough } = await isDateInLockedPeriod(
           orgId,
@@ -181,7 +204,7 @@ export const updateTransaction = createServerFn({ method: "POST" })
           await db.insert(journalLines).values(lineValues);
 
           // Update cached total
-          computedTotalAmount = balance.totalDebits.toFixed(2);
+          computedTotalAmount = balance.totalDebitsExact;
         }
 
         // Build update object (only include provided fields)

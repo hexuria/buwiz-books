@@ -18,6 +18,7 @@ import { receiptOcrOutputSchema } from "../schemas/receipt-ocr";
 import { statementOcrOutputSchema } from "../schemas/statement-ocr";
 import { billOcrOutputSchema, boundingBoxesOutputSchema } from "../schemas/bill-ocr";
 import { emailExtractionOutputSchema } from "../schemas/email-extraction";
+import { form2307OcrOutputSchema } from "../schemas/form-2307-ocr";
 import { ingestTriageOutputSchema } from "../schemas/ingest-triage";
 import { matchAssistOutputSchema } from "../schemas/match-assist";
 import { reflectionOutputSchema } from "../schemas/reflection";
@@ -27,6 +28,7 @@ import { transactionParsePrompt } from "./transaction-parse";
 import { dateParsePrompt } from "./date-parse";
 import { classifyDocumentPrompt } from "./classify-document";
 import { receiptOcrPrompt } from "./receipt-ocr";
+import { form2307OcrPrompt } from "./form-2307-ocr";
 import { statementOcrPrompt } from "./statement-ocr";
 import { billOcrPrompt, bboxScanPrompt } from "./bill-ocr";
 import { emailExtractionPrompt } from "./email-extraction";
@@ -100,6 +102,10 @@ const RAW_REGISTRY: Partial<Record<AiTaskName, TaskRegistryEntry>> = {
   statement_ocr: {
     prompt: statementOcrPrompt as PromptModule<any>,
     schema: statementOcrOutputSchema,
+  },
+  form_2307_ocr: {
+    prompt: form2307OcrPrompt as PromptModule<any>,
+    schema: form2307OcrOutputSchema,
   },
   bill_ocr: {
     prompt: billOcrPrompt as PromptModule<any>,

@@ -41,6 +41,7 @@ import { Route as EntitiesVendorsRouteImport } from './routes/entities.vendors'
 import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices_.$invoiceId'
 import { Route as LocationsLocationIdRouteImport } from './routes/locations_.$locationId'
 import { Route as OrganizationsJoinRouteImport } from './routes/organizations.join'
+import { Route as PayrollRunIdRouteImport } from './routes/payroll_.$runId'
 import { Route as ReconciliationsReconciliationIdRouteImport } from './routes/reconciliations_.$reconciliationId'
 import { Route as TransactionsTransactionIdRouteImport } from './routes/transactions_.$transactionId'
 import { Route as TransactionsNewRouteImport } from './routes/transactions_.new'
@@ -215,6 +216,11 @@ const OrganizationsJoinRoute = OrganizationsJoinRouteImport.update({
   path: '/organizations/join',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PayrollRunIdRoute = PayrollRunIdRouteImport.update({
+  id: '/payroll_/$runId',
+  path: '/payroll/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReconciliationsReconciliationIdRoute =
   ReconciliationsReconciliationIdRouteImport.update({
     id: '/reconciliations_/$reconciliationId',
@@ -322,6 +328,7 @@ export interface FileRoutesByFullPath {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions/new': typeof TransactionsNewRoute
@@ -369,6 +376,7 @@ export interface FileRoutesByTo {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions/new': typeof TransactionsNewRoute
@@ -417,6 +425,7 @@ export interface FileRoutesById {
   '/invoices_/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations_/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll_/$runId': typeof PayrollRunIdRoute
   '/reconciliations_/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions_/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions_/new': typeof TransactionsNewRoute
@@ -466,6 +475,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/locations/$locationId'
     | '/organizations/join'
+    | '/payroll/$runId'
     | '/reconciliations/$reconciliationId'
     | '/transactions/$transactionId'
     | '/transactions/new'
@@ -513,6 +523,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/locations/$locationId'
     | '/organizations/join'
+    | '/payroll/$runId'
     | '/reconciliations/$reconciliationId'
     | '/transactions/$transactionId'
     | '/transactions/new'
@@ -560,6 +571,7 @@ export interface FileRouteTypes {
     | '/invoices_/$invoiceId'
     | '/locations_/$locationId'
     | '/organizations/join'
+    | '/payroll_/$runId'
     | '/reconciliations_/$reconciliationId'
     | '/transactions_/$transactionId'
     | '/transactions_/new'
@@ -608,6 +620,7 @@ export interface RootRouteChildren {
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   LocationsLocationIdRoute: typeof LocationsLocationIdRoute
   OrganizationsJoinRoute: typeof OrganizationsJoinRoute
+  PayrollRunIdRoute: typeof PayrollRunIdRoute
   ReconciliationsReconciliationIdRoute: typeof ReconciliationsReconciliationIdRoute
   TransactionsTransactionIdRoute: typeof TransactionsTransactionIdRoute
   TransactionsNewRoute: typeof TransactionsNewRoute
@@ -849,6 +862,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrganizationsJoinRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/payroll_/$runId': {
+      id: '/payroll_/$runId'
+      path: '/payroll/$runId'
+      fullPath: '/payroll/$runId'
+      preLoaderRoute: typeof PayrollRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reconciliations_/$reconciliationId': {
       id: '/reconciliations_/$reconciliationId'
       path: '/reconciliations/$reconciliationId'
@@ -976,6 +996,7 @@ const rootRouteChildren: RootRouteChildren = {
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   LocationsLocationIdRoute: LocationsLocationIdRoute,
   OrganizationsJoinRoute: OrganizationsJoinRoute,
+  PayrollRunIdRoute: PayrollRunIdRoute,
   ReconciliationsReconciliationIdRoute: ReconciliationsReconciliationIdRoute,
   TransactionsTransactionIdRoute: TransactionsTransactionIdRoute,
   TransactionsNewRoute: TransactionsNewRoute,

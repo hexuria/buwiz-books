@@ -293,7 +293,9 @@ function PayPalPayButtons({
     }
     const script = document.createElement("script");
     script.id = scriptId;
-    script.src = `https://www.paypal.com/sdk/js?client-id=${invoice.paypalClientId}&currency=USD`;
+    // The invoice's own currency, not a hard-coded USD: charging a peso
+    // invoice through a USD-initialised SDK bills the wrong amount.
+    script.src = `https://www.paypal.com/sdk/js?client-id=${invoice.paypalClientId}&currency=${invoice.currency}`;
     script.async = true;
     script.onload = () => {
       setSdkLoading(false);
@@ -305,7 +307,7 @@ function PayPalPayButtons({
     };
     document.body.appendChild(script);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [invoice.paypalClientId]);
+  }, [invoice.paypalClientId, invoice.currency]);
 
   function renderButtons() {
     const paypal = (
@@ -962,6 +964,7 @@ function PublicPaymentPage() {
             onClick={async () => {
               const { generateInvoicePdf } = await import("../lib/generate-invoice-pdf");
               generateInvoicePdf({
+                currency: invoice.currency,
                 invoiceNumber: invoice.invoiceNumber,
                 issueDate: invoice.issueDate,
                 dueDate: invoice.dueDate,

@@ -9,6 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { parseOrgMetadata } from "../../lib/org-metadata";
 import { dbAdmin } from "../../db";
+import { resolveFunctionalCurrency } from "../../lib/functional-currency";
 import { invoices, invoiceLineItems } from "../../db/schema/invoices";
 import { parties } from "../../db/schema/parties";
 import { financialAccounts } from "../../db/schema/financial-accounts";
@@ -52,6 +53,12 @@ export interface PublicInvoiceData {
   notes: string | null;
   paymentTerms: string | null;
   customerName: string | null;
+  /**
+   * ISO 4217 code the invoice is denominated in. The pay page hard-coded USD
+   * into the PayPal SDK URL and defaulted the PDF to dollars, so a peso
+   * invoice was presented — and charged — in the wrong currency.
+   */
+  currency: string;
   lineItems: PublicInvoiceLineItem[];
   /** Org branding */
   orgName: string;
@@ -155,6 +162,11 @@ export const getPublicInvoice = createServerFn({ method: "GET" })
 
     const meta = parseOrgMetadata(org?.metadata);
 
+    // The organization's books currency. This route runs on dbAdmin because
+    // there is no session to derive an RLS context from; the lookup is scoped
+    // to the invoice's own organization, which was already resolved above.
+    const invoiceCurrency = await resolveFunctionalCurrency(dbAdmin, invoice.organizationId);
+
     // Fetch all bank accounts marked for payment display
     const bankRows = await dbAdmin
       .select({
@@ -209,6 +221,7 @@ export const getPublicInvoice = createServerFn({ method: "GET" })
         unitPrice: String(li.unitPrice),
         amount: String(li.amount),
       })),
+      currency: invoiceCurrency,
       orgName: org?.name ?? "Business",
       orgLogoUrl: meta.logoUrl ?? "",
       orgPhone: meta.phone ?? "",

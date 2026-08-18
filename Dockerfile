@@ -84,6 +84,9 @@ COPY --from=build --chown=buwiz:buwiz /app/src/db ./src/db
 # no-op in production if either is missing from the image.
 COPY --from=build --chown=buwiz:buwiz /app/scripts/seed-review-rules.ts ./scripts/seed-review-rules.ts
 COPY --from=build --chown=buwiz:buwiz /app/src/lib/inbox/review-rule-catalog.ts ./src/lib/inbox/review-rule-catalog.ts
+COPY --from=build --chown=buwiz:buwiz /app/scripts/apply-tax-foundation.ts ./scripts/apply-tax-foundation.ts
+COPY --from=build --chown=buwiz:buwiz /app/scripts/seed-tax-reference.ts ./scripts/seed-tax-reference.ts
+COPY --from=build --chown=buwiz:buwiz /app/src/lib/tax/reference-catalog.ts ./src/lib/tax/reference-catalog.ts
 COPY --from=build --chown=buwiz:buwiz /app/tsconfig.json ./tsconfig.json
 
 # Drop privileges

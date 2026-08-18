@@ -59,6 +59,13 @@ export const DEFAULT_CHAINS: Record<AiTaskName, ChainEntry[]> = {
     { provider: "gemini", model: GEMINI_OCR },
     { provider: "gemini", model: GEMINI_OCR_PRO },
   ],
+  // Escalates to the Pro model on failure like the other document tasks. A
+  // 2307 is often a faint dot-matrix print or a fold-creased photocopy, and
+  // the figures on it become a tax credit — worth the second attempt.
+  form_2307_ocr: [
+    { provider: "gemini", model: GEMINI_OCR },
+    { provider: "gemini", model: GEMINI_OCR_PRO },
+  ],
   bbox_scan: [{ provider: "gemini", model: GEMINI_OCR }],
   email_extraction: [{ provider: "gemini", model: GEMINI_OCR }],
 

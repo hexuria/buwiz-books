@@ -1,12 +1,14 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { activityLogs } from "@/db/schema/activity-logs";
-import { billLineItems, bills } from "@/db/schema/bills";
+import { bills } from "@/db/schema/bills";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
 import { isDateInLockedPeriod } from "@/lib/period-close";
+import { resolveFunctionalCurrency } from "@/lib/functional-currency";
 import { centsToMoney, moneyToCents } from "@/lib/money";
+import { postBillAccrualJournal } from "@/lib/bill-journal";
 import { requireMappedAccountId } from "@/lib/coa/resolve-mapped-account";
 import {
   beginAccountingOperation,
@@ -24,104 +26,12 @@ export type ManualBillPaymentInput = {
   paymentMethod?: string;
   paymentReference?: string;
   idempotencyKey: string;
+  /** ISO date the payment took effect. Omit only when it is genuinely today. */
+  paymentDate?: string;
 };
 
 async function resolveApAccount(db: DbExecutor, orgId: string): Promise<string> {
   return requireMappedAccountId(db, orgId, "bill", "accounts_payable");
-}
-
-async function ensureBillAccrualJournal(
-  db: DbExecutor,
-  input: {
-    organizationId: string;
-    userId: string;
-    bill: typeof bills.$inferSelect;
-  },
-): Promise<string> {
-  if (input.bill.journalHeaderId) return input.bill.journalHeaderId;
-
-  const { locked, closedThrough } = await isDateInLockedPeriod(
-    input.organizationId,
-    input.bill.billDate,
-    db,
-  );
-  if (locked) {
-    throw new Error(
-      `Cannot post bill ${input.bill.billNumber || input.bill.id}: its bill date ${input.bill.billDate} falls in a period locked through ${closedThrough}.`,
-    );
-  }
-
-  const lineItems = await db
-    .select()
-    .from(billLineItems)
-    .where(eq(billLineItems.billId, input.bill.id))
-    .orderBy(asc(billLineItems.sortOrder));
-  if (lineItems.length === 0) {
-    throw new Error("Bill has no line items — cannot create journal entry");
-  }
-  const totalAmount = lineItems.reduce((sum, line) => sum + Number(line.amount), 0);
-  const apAccountId = await resolveApAccount(db, input.organizationId);
-  const transactionNumber = await allocateJournalTransactionNumber(input.organizationId, db);
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: input.organizationId,
-      transactionNumber,
-      transactionDate: input.bill.billDate,
-      transactionType: "journal",
-      source: "bill",
-      memo: `Bill Accrual: ${input.bill.billNumber || input.bill.id}`,
-      partyId: input.bill.vendorId,
-      totalAmount: totalAmount.toFixed(2),
-      status: "posted",
-      sourceDocumentId: input.bill.id,
-      sourceDocumentType: "bill",
-      createdBy: input.userId,
-      referenceNumber: input.bill.billNumber,
-      idempotencyKey: `bill-accrual:${input.bill.id}`,
-    })
-    .returning();
-  if (!header) throw new Error("Bill accrual journal could not be posted.");
-
-  await db.insert(journalLines).values([
-    ...lineItems.map((line, index) => ({
-      journalHeaderId: header.id,
-      accountId: line.accountId,
-      debit: line.amount,
-      credit: null as string | null,
-      lineDescription: line.description || "Bill line item",
-      partyId: input.bill.vendorId,
-      departmentId: line.departmentId,
-      locationId: line.locationId,
-      sortOrder: index,
-    })),
-    {
-      journalHeaderId: header.id,
-      accountId: apAccountId,
-      debit: null as string | null,
-      credit: totalAmount.toFixed(2),
-      lineDescription: `A/P: ${input.bill.billNumber || "Bill"}`,
-      partyId: input.bill.vendorId,
-      departmentId: null as string | null,
-      locationId: null as string | null,
-      sortOrder: lineItems.length,
-    },
-  ]);
-  await db.insert(activityLogs).values({
-    organizationId: input.organizationId,
-    entityType: "transaction",
-    entityId: header.id,
-    action: "created",
-    actorId: input.userId,
-    changes: {
-      source: "bill_accrual",
-      billId: input.bill.id,
-      billNumber: input.bill.billNumber,
-      totalAmount: totalAmount.toFixed(2),
-      transactionNumber,
-    },
-  });
-  return header.id;
 }
 
 async function createBillPaymentJournal(
@@ -134,6 +44,13 @@ async function createBillPaymentJournal(
     paymentAmount: string;
     paymentReference: string | null;
     idempotencyKey: string;
+    /**
+     * The date the payment actually took effect. Defaults to today only when
+     * the caller genuinely has no better information — stamping `new Date()`
+     * unconditionally back-dates nothing and posts a payment into the wrong
+     * period whenever it is recorded late, which is the normal case.
+     */
+    effectiveDate?: string;
   },
 ): Promise<string> {
   const [bankAccount] = await db
@@ -154,14 +71,31 @@ async function createBillPaymentJournal(
 
   const apAccountId = await resolveApAccount(db, input.organizationId);
   const transactionNumber = await allocateJournalTransactionNumber(input.organizationId, db);
+  const functionalCurrency = await resolveFunctionalCurrency(db, input.organizationId);
+  const transactionDate = input.effectiveDate ?? new Date().toISOString().slice(0, 10);
+
+  // A payment dated into a closed period is the same violation as a bill dated
+  // into one; the accrual path above already guards it, this one did not.
+  const { locked, closedThrough } = await isDateInLockedPeriod(
+    input.organizationId,
+    transactionDate,
+    db,
+  );
+  if (locked) {
+    throw new Error(
+      `Cannot post payment for bill ${input.bill.billNumber || input.bill.id}: its payment date ${transactionDate} falls in a period locked through ${closedThrough}.`,
+    );
+  }
+
   const [header] = await db
     .insert(journalHeaders)
     .values({
       organizationId: input.organizationId,
       transactionNumber,
-      transactionDate: new Date().toISOString().slice(0, 10),
+      transactionDate,
       transactionType: "pay_out",
       source: "payment",
+      functionalCurrency,
       memo: `Bill Payment: ${input.bill.billNumber || input.bill.id}`,
       partyId: input.bill.vendorId,
       totalAmount: input.paymentAmount,
@@ -277,7 +211,7 @@ export async function recordManualBillPayment(db: DbExecutor, input: ManualBillP
   const newPaidCents = previousPaidCents + paymentCents;
   const newBalanceCents = totalBillCents - newPaidCents;
   const finalStatus = newBalanceCents <= 0 ? "paid" : "partial";
-  const accrualJournalHeaderId = await ensureBillAccrualJournal(db, {
+  const accrualJournalHeaderId = await postBillAccrualJournal(db, {
     organizationId: input.organizationId,
     userId: input.userId,
     bill,
@@ -291,6 +225,7 @@ export async function recordManualBillPayment(db: DbExecutor, input: ManualBillP
     paymentAmount,
     paymentReference: input.paymentReference ?? null,
     idempotencyKey: input.idempotencyKey,
+    effectiveDate: input.paymentDate,
   });
   const paymentSource = await ensureOperationalPaymentLineage(db, {
     organizationId: input.organizationId,

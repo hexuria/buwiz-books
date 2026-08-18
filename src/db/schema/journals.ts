@@ -104,6 +104,19 @@ export const journalHeaders = pgTable(
     postedAt: timestamp("posted_at", { withTimezone: true }),
     voidedAt: timestamp("voided_at", { withTimezone: true }),
 
+    // Amend-by-reversal lineage. A posted journal is never edited in place; a
+    // correction posts a reversal (reversesHeaderId -> original) and a
+    // replacement (replacesHeaderId -> original), leaving all three rows
+    // permanently readable. Reports need no change: the original and its
+    // reversal are both posted and net to zero.
+    reversesHeaderId: uuid("reverses_header_id").references((): AnyPgColumn => journalHeaders.id, {
+      onDelete: "restrict",
+    }),
+    replacesHeaderId: uuid("replaces_header_id").references((): AnyPgColumn => journalHeaders.id, {
+      onDelete: "restrict",
+    }),
+    amendmentReason: text("amendment_reason"),
+
     // Non-destructive duplicate consolidation. A duplicate journal remains
     // immutable and fully auditable, but accounting queries exclude it while
     // this pointer is set.

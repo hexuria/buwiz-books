@@ -12,11 +12,11 @@ import { accounts } from "../../db/schema/accounts";
 import { journalHeaders, journalLines } from "../../db/schema/journals";
 import { reconciliations, statementLines } from "../../db/schema/reconciliations";
 import { activityLogs } from "../../db/schema/activity-logs";
-import { eq, desc, asc, and, inArray, ilike } from "drizzle-orm";
+import { eq, desc, asc, and, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { validateBalance, type JournalLineInput } from "../../db/validation/journals";
-import { allocateInvoiceNumber, allocateJournalTransactionNumber } from "../../lib/sequence";
-import { getClosedThrough, isDateInLockedPeriod, isDateLocked } from "../../lib/period-close";
+import { allocateInvoiceNumber } from "../../lib/sequence";
+import { getClosedThrough, isDateLocked } from "../../lib/period-close";
+import { resolveFunctionalCurrency } from "../../lib/functional-currency";
 import { sendInvoiceEmail as sendEmail } from "../../services/email";
 import { organization, member, user } from "../../db/schema/auth";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
@@ -28,11 +28,7 @@ import {
   completeAccountingOperation,
 } from "../../lib/operational-idempotency";
 import { recordManualInvoicePayment } from "../../lib/manual-invoice-payment";
-import {
-  requireMappedAccountId,
-  resolveMappedAccountId,
-  UnmappedAccountError,
-} from "../../lib/coa/resolve-mapped-account";
+import { createArJournalEntry } from "../../lib/invoice-journal";
 
 // ============================================================================
 // Types
@@ -510,228 +506,6 @@ const JOURNAL_PRODUCING_INVOICE_STATUSES = new Set(["sent"]);
  * copy-pasted lookups that scanned for a hardcoded subtype (and, for tax, for a
  * user-editable account NAME) while ignoring the mapping the org configured.
  */
-async function resolveArAccount(db: DbExecutor, orgId: string): Promise<string> {
-  return requireMappedAccountId(db, orgId, "invoice", "accounts_receivable");
-}
-
-async function resolveTaxPayableAccount(db: DbExecutor, orgId: string): Promise<string> {
-  const mapped = await resolveMappedAccountId(db, orgId, "invoice", "sales_tax_payable");
-  if (mapped) return mapped;
-
-  // Legacy name match, kept for one release so an org that already has a
-  // differently-numbered "Sales Tax Payable" keeps posting to the same account
-  // until the backfill writes it an explicit mapping. Ordered, unlike before.
-  const [acct] = await db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(
-      and(
-        eq(accounts.organizationId, orgId),
-        eq(accounts.accountType, "liability"),
-        ilike(accounts.name, "%sales tax%"),
-        eq(accounts.isActive, true),
-      ),
-    )
-    .orderBy(asc(accounts.accountNumber), asc(accounts.id))
-    .limit(1);
-  if (!acct) {
-    throw new UnmappedAccountError("invoice", "sales_tax_payable", "Sales Tax Payable");
-  }
-  return acct.id;
-}
-
-async function resolveDiscountAccount(db: DbExecutor, orgId: string): Promise<string> {
-  return requireMappedAccountId(db, orgId, "invoice", "discounts");
-}
-
-/**
- * Generate a sequential transaction number for journal entries.
- */
-async function generateTxnNumber(orgId: string, tx?: DbExecutor): Promise<string> {
-  return allocateJournalTransactionNumber(orgId, tx);
-}
-
-/**
- * Create the A/R journal entry when an invoice is sent (accrual basis).
- *   DR Accounts Receivable   (invoice total, net of discount)
- *   DR Sales Discount        (discount amount — contra-revenue)
- *   CR Revenue accounts      (per line item, gross subtotal)
- *   CR Sales Tax Payable     (tax amount — liability)
- * The entry is validated to balance (debits == credits) BEFORE anything is written;
- * it is never posted unbalanced. Returns null (posting nothing) only when the invoice
- * has no revenue accounts assigned at all — the caller still transitions status and the
- * journal can be posted once accounts are assigned.
- */
-async function createArJournalEntry(
-  db: DbExecutor,
-  orgId: string,
-  userId: string,
-  invoice: {
-    id: string;
-    invoiceNumber: string;
-    customerId: string;
-    issueDate: string;
-    total: string;
-    subtotal: string;
-    discountAmount: string | null;
-    taxAmount: string | null;
-  },
-): Promise<string> {
-  // The A/R journal is dated on the invoice's issue date — refuse to post into a closed period.
-  const { locked, closedThrough } = await isDateInLockedPeriod(orgId, invoice.issueDate, db);
-  if (locked) {
-    throw new Error(
-      `Cannot post invoice ${invoice.invoiceNumber}: its issue date ${invoice.issueDate} falls in a period locked through ${closedThrough}.`,
-    );
-  }
-
-  const arAccountId = await resolveArAccount(db, orgId);
-  const totalAmount = Number.parseFloat(invoice.total);
-  const discountAmount = Number.parseFloat(invoice.discountAmount ?? "0");
-  const taxAmount = Number.parseFloat(invoice.taxAmount ?? "0");
-
-  // Fetch line items with their revenue accounts
-  const lineItems = await db
-    .select({
-      description: invoiceLineItems.description,
-      amount: invoiceLineItems.amount,
-      revenueAccountId: invoiceLineItems.revenueAccountId,
-      sortOrder: invoiceLineItems.sortOrder,
-    })
-    .from(invoiceLineItems)
-    .where(eq(invoiceLineItems.invoiceId, invoice.id))
-    .orderBy(invoiceLineItems.sortOrder);
-
-  if (lineItems.length === 0) {
-    throw new Error("Invoice has no line items — cannot create journal entry");
-  }
-
-  const withAccounts = lineItems.filter((l) => l.revenueAccountId);
-
-  if (withAccounts.length === 0) {
-    throw new Error(
-      `Cannot post invoice ${invoice.invoiceNumber}: every line item needs a revenue account.`,
-    );
-  }
-
-  // Partial assignment would credit only some of the revenue and unbalance the entry —
-  // refuse rather than post a broken journal (this was the historical silent-imbalance bug).
-  if (withAccounts.length < lineItems.length) {
-    throw new Error(
-      `Cannot post invoice ${invoice.invoiceNumber}: ${
-        lineItems.length - withAccounts.length
-      } line item(s) have no revenue account assigned. Assign a revenue account to every line, or none, before sending.`,
-    );
-  }
-
-  // Build the balanced set of lines as JournalLineInput (validated before insert).
-  const lineInputs: (JournalLineInput & { lineDescription: string })[] = [];
-
-  // DR Accounts Receivable (net total the customer owes)
-  lineInputs.push({
-    accountId: arAccountId,
-    debit: totalAmount.toFixed(2),
-    lineDescription: `A/R for invoice ${invoice.invoiceNumber}`,
-    partyId: invoice.customerId,
-  });
-
-  // CR Revenue (gross, per line)
-  for (const line of withAccounts) {
-    lineInputs.push({
-      accountId: line.revenueAccountId!,
-      credit: line.amount,
-      lineDescription: line.description || "Invoice line item",
-      partyId: invoice.customerId,
-    });
-  }
-
-  // DR Sales Discount (contra-revenue) — offsets the gross revenue credit
-  if (discountAmount > 0) {
-    const discountAccountId = await resolveDiscountAccount(db, orgId);
-    lineInputs.push({
-      accountId: discountAccountId,
-      debit: discountAmount.toFixed(2),
-      lineDescription: `Discount on invoice ${invoice.invoiceNumber}`,
-      partyId: invoice.customerId,
-    });
-  }
-
-  // CR Sales Tax Payable (liability) — tax collected on behalf of the authority
-  if (taxAmount > 0) {
-    const taxAccountId = await resolveTaxPayableAccount(db, orgId);
-    lineInputs.push({
-      accountId: taxAccountId,
-      credit: taxAmount.toFixed(2),
-      lineDescription: `Sales tax on invoice ${invoice.invoiceNumber}`,
-      partyId: invoice.customerId,
-    });
-  }
-
-  // Never post an unbalanced entry.
-  const balance = validateBalance(lineInputs);
-  if (!balance.valid) {
-    throw new Error(
-      `Invoice ${invoice.invoiceNumber} journal does not balance ` +
-        `(debits ${balance.totalDebits.toFixed(2)} != credits ${balance.totalCredits.toFixed(2)}). ` +
-        `Check that total = subtotal - discount + tax. Refusing to post.`,
-    );
-  }
-
-  const txnNumber = await generateTxnNumber(orgId, db);
-
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: orgId,
-      transactionNumber: txnNumber,
-      transactionDate: invoice.issueDate,
-      transactionType: "pay_in",
-      source: "invoice",
-      memo: `Invoice Issued: ${invoice.invoiceNumber}`,
-      partyId: invoice.customerId,
-      totalAmount: balance.totalDebits.toFixed(2), // schema: cached sum of debit lines
-      status: "posted",
-      sourceDocumentId: invoice.id,
-      sourceDocumentType: "invoice",
-      createdBy: userId,
-      referenceNumber: invoice.invoiceNumber,
-      idempotencyKey: `invoice-accrual:${invoice.id}`,
-    })
-    .returning();
-
-  await db.insert(journalLines).values(
-    lineInputs.map((line, index) => ({
-      journalHeaderId: header.id,
-      accountId: line.accountId,
-      debit: line.debit ?? null,
-      credit: line.credit ?? null,
-      lineDescription: line.lineDescription,
-      partyId: invoice.customerId,
-      departmentId: null as string | null,
-      locationId: null as string | null,
-      sortOrder: index,
-    })),
-  );
-
-  // Activity log
-  await db.insert(activityLogs).values({
-    organizationId: orgId,
-    entityType: "transaction",
-    entityId: header.id,
-    action: "created",
-    actorId: userId,
-    changes: {
-      source: "invoice_issued",
-      invoiceId: invoice.id,
-      invoiceNumber: invoice.invoiceNumber,
-      totalAmount: balance.totalDebits.toFixed(2),
-      transactionNumber: txnNumber,
-    },
-  });
-
-  return header.id;
-}
-
 export const transitionInvoiceStatus = createServerFn({
   method: "POST",
 }).handler(async ({ data: rawData }: { data: unknown }) => {
@@ -1125,7 +899,9 @@ export const sendInvoiceEmailFn = createServerFn({ method: "POST" }).handler(
 
         // Build the invoice PDF attachment.
         const { invoicePdfBuffer } = await import("../../lib/generate-invoice-pdf");
+        const invoiceCurrency = await resolveFunctionalCurrency(db, orgId);
         const pdfContent = invoicePdfBuffer({
+          currency: invoiceCurrency,
           invoiceNumber: invoice.invoiceNumber,
           issueDate: invoice.issueDate,
           dueDate: invoice.dueDate,
@@ -1211,6 +987,10 @@ export const sendInvoiceEmailFn = createServerFn({ method: "POST" }).handler(
           invoiceNumber: invoice.invoiceNumber,
           customerName: customer?.name ?? "Customer",
           total: String(invoice.total),
+          // The organization's own books currency. The email template used to
+          // hard-code a "$", so a PHP invoice reached the customer denominated
+          // in dollars.
+          currency: invoiceCurrency,
           dueDate: invoice.dueDate,
           fromCompany: resolvedFromCompany,
           pdfAttachment: {
