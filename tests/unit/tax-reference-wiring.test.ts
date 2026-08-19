@@ -88,6 +88,10 @@ describe("tax reference catalog wiring", () => {
       // convergent tax foundation restores CHECK constraints push cannot express.
       const value = pkg.scripts[script];
       expect(value.indexOf(migrateStep)).toBeLessThan(value.indexOf("db:tax:foundation"));
+      expect(value.indexOf("db:enterprise:test-sql")).toBeGreaterThan(value.indexOf(migrateStep));
+      expect(value.indexOf("db:enterprise:test-sql")).toBeLessThan(
+        value.indexOf("db:tax:foundation"),
+      );
     });
 
     it.each(["db:fresh", "db:test:fresh"])("%s seeds only after the tables exist", (script) => {

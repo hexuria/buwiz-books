@@ -80,4 +80,24 @@ describe("isolated Buwiz Business Groups application wiring", () => {
       testBootstrap.indexOf("REVOKE ALL ON TABLE enterprise_billing_checkout_sessions"),
     ).toBeGreaterThan(testBootstrap.indexOf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES"));
   });
+
+  it("applies 0028-0036 as SQL on disposable test databases, matching CI", () => {
+    const pkg = JSON.parse(read("package.json")) as { scripts: Record<string, string> };
+    const apply = read("scripts/apply-enterprise-test-sql.ts");
+    const workflow = read(".github/workflows/deploy.yml");
+    const integrationJob = workflow.slice(workflow.indexOf("\n  integration-tests:"));
+
+    expect(pkg.scripts["db:enterprise:test-sql"]).toContain("scripts/apply-enterprise-test-sql.ts");
+    expect(pkg.scripts["db:test:fresh"]).toContain("db:enterprise:test-sql");
+    expect(pkg.scripts["db:fresh"]).toContain("db:enterprise:test-sql");
+    expect(apply).toContain("0028_enterprise_business_groups.sql");
+    expect(apply).toContain("0034_business_group_admin_guards.sql");
+    expect(apply).toContain("0035_enterprise_stripe_billing.sql");
+    expect(apply).toContain("0036_enterprise_checkout.sql");
+    expect(apply).toContain("Never run this against a real database");
+    expect(integrationJob).toContain("Apply Enterprise migrations to test DB");
+    expect(integrationJob.indexOf("Apply Enterprise migrations to test DB")).toBeLessThan(
+      integrationJob.indexOf("db:tax:foundation"),
+    );
+  });
 });

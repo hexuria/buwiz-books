@@ -36,7 +36,13 @@ describe("Migration 0034 verifier", () => {
     ).resolves.toMatchObject({ state: "partial" });
 
     snapshot.roles.clear();
-    addPrivilege(snapshot, "function", "can_manage_organization_group(uuid)", "PUBLIC", "EXECUTE");
+    addPrivilege(
+      snapshot,
+      "function",
+      "lock_business_group_user_rows(text[])",
+      "PUBLIC",
+      "EXECUTE",
+    );
     await expect(
       verifier0034.verify(queryFor(snapshot, [preflight]).query, context("0034")),
     ).resolves.toMatchObject({ state: "partial" });
@@ -44,7 +50,13 @@ describe("Migration 0034 verifier", () => {
 
   it("treats a 0034-specific ACL row as a partial migration footprint", async () => {
     const snapshot = createEmptyCatalogSnapshot();
-    addPrivilege(snapshot, "function", "can_manage_organization_group(uuid)", "PUBLIC", "EXECUTE");
+    addPrivilege(
+      snapshot,
+      "function",
+      "lock_business_group_user_rows(text[])",
+      "PUBLIC",
+      "EXECUTE",
+    );
     const preflight = {
       ownerless_groups: 0,
       cross_account_members: 0,
@@ -187,6 +199,14 @@ describe("Migration 0034 verifier", () => {
       "business_group_projection_reconciliation_events",
       "app_runtime",
       "SELECT",
+    );
+    addPrivilege(snapshot, "function", "can_manage_organization_group(uuid)", "PUBLIC", "EXECUTE");
+    addPrivilege(
+      snapshot,
+      "function",
+      "can_bootstrap_organization_group(uuid, text)",
+      "PUBLIC",
+      "EXECUTE",
     );
 
     await expect(
