@@ -28,7 +28,6 @@ the session and then delegate:
 | -------------------------------------------------------------- | --------------------------------------------- |
 | `withSessionOrgContext`                                        | authenticated organization reads              |
 | `withPermissionOrgContext(resource, action, …)`                | organization reads needing permission checks  |
-| `withMutationSessionOrgContext(guard, …)`                      | organization writes                           |
 | `withMutationPermissionOrgContext(resource, action, guard, …)` | organization writes needing permission checks |
 | `withSessionUserContext`                                       | authenticated cross-organization user reads   |
 | `withMutationSessionUserContext(scope, guard, …)`              | guarded cross-organization user writes        |

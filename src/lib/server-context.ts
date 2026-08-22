@@ -123,16 +123,6 @@ export async function withSessionOrgContext<T>(
   return runWithOrgContext(session, fn);
 }
 
-export async function withMutationSessionOrgContext<T>(
-  guard: GuardConfig,
-  fn: (ctx: OrgServerContext) => Promise<T>,
-): Promise<T> {
-  const headers = getRequestHeaders();
-  const { getSessionContext } = await import("@/lib/auth-middleware");
-  const session = await getSessionContext(headers);
-  return runWithOrgContext(session, fn, guard);
-}
-
 export async function withPermissionOrgContext<R extends Resource, T>(
   resource: R,
   action: Action<R>,
