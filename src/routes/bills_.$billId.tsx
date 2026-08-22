@@ -305,6 +305,7 @@ function BillDetailPage() {
       idempotencyKey?: string;
       bankAccountId?: string;
       paymentAmount?: string;
+      ewtWithheld?: string;
     }) =>
       (transitionBillStatus as (opts: { data: unknown }) => Promise<unknown>)({
         data,
@@ -624,6 +625,21 @@ function BillDetailPage() {
           />
         </div>
 
+        <div className="px-5 py-3 border-b border-[#e2e8f0] dark:border-white/10">
+          <label className="block text-xs font-medium text-[#64748b] dark:text-white/50 mb-1.5">
+            EWT withheld (optional)
+          </label>
+          <input
+            id="bill-ewt-withheld"
+            type="number"
+            inputMode="decimal"
+            step="0.01"
+            min="0"
+            placeholder="0.00"
+            className="w-full min-h-11 px-3 py-2 rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white placeholder:text-[#94a3b8] focus:outline-none focus:ring-2 focus:ring-[#3b82f6]/30 focus:border-[#3b82f6]"
+          />
+        </div>
+
         {/* Bank account list */}
         <div className="px-5 py-2">
           <label className="block text-xs font-medium text-[#64748b] dark:text-white/50 mb-1">
@@ -645,12 +661,17 @@ function BillDetailPage() {
                   const amountInput = document.getElementById(
                     "bill-payment-amount",
                   ) as HTMLInputElement | null;
+                  const ewtInput = document.getElementById(
+                    "bill-ewt-withheld",
+                  ) as HTMLInputElement | null;
                   const rawValue = amountInput?.value;
+                  const ewtValue = ewtInput?.value;
                   const mutationData: {
                     billId: string;
                     newStatus: string;
                     bankAccountId: string;
                     paymentAmount?: string;
+                    ewtWithheld?: string;
                   } = {
                     billId: bill.id,
                     newStatus: "paid",
@@ -658,6 +679,9 @@ function BillDetailPage() {
                   };
                   if (rawValue && rawValue.trim() !== "") {
                     mutationData.paymentAmount = rawValue.trim();
+                  }
+                  if (ewtValue && ewtValue.trim() !== "") {
+                    mutationData.ewtWithheld = ewtValue.trim();
                   }
                   transitionMutation.mutate(
                     withStableIdempotencyKey(transitionIntentRef, mutationData),

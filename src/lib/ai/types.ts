@@ -16,6 +16,7 @@ export type AiTaskName =
   | "bill_ocr"
   | "statement_ocr"
   | "bbox_scan"
+  | "form_2307_ocr"
   | "classify_document"
   | "email_extraction"
   | "ingest_triage"
@@ -40,6 +41,7 @@ export const AI_TASK_CATEGORY: Record<AiTaskName, AITaskCategory> = {
   bill_ocr: "ocr",
   statement_ocr: "ocr",
   bbox_scan: "ocr",
+  form_2307_ocr: "ocr",
   email_extraction: "ocr",
 };
 

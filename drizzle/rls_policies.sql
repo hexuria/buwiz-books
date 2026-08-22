@@ -789,3 +789,147 @@ BEGIN
     RAISE NOTICE 'RLS configured for statement_line_matches';
   END IF;
 END $$;
+
+-- ============================================================================
+-- Philippine BIR tax subsystem (drizzle/0037_tax_reference_core.sql)
+-- ============================================================================
+-- GLOBAL, deliberately WITHOUT policies: tax_reference_datasets,
+-- tax_withholding_tables, tax_de_minimis_ceilings. These carry statutory rates,
+-- not tenant data — the same treatment review_rule_definitions gets. A per-org
+-- copy of a national rate is the drift bug IMPLEMENTATION-PLAN.md blocker B11
+-- describes: a rate change would never reach an org that already onboarded.
+--
+-- Org-scoped and therefore isolated: org_tax_profiles, org_tax_branches. Both
+-- will hold TINs and filing identity, which is among the most sensitive data
+-- the product stores.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_profiles') THEN
+    ALTER TABLE org_tax_profiles ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_profiles ON org_tax_profiles;
+    CREATE POLICY org_isolation_org_tax_profiles ON org_tax_profiles FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_profiles';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_branches') THEN
+    ALTER TABLE org_tax_branches ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_branches ON org_tax_branches;
+    CREATE POLICY org_isolation_org_tax_branches ON org_tax_branches FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_branches';
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Payroll compliance (Stage 5a of docs/tax/IMPLEMENTATION-PLAN.md)
+-- ============================================================================
+-- Every table here is org-scoped and holds employee compensation — among the
+-- most sensitive data the product stores. Note that RLS is not actually
+-- enforced today (rls_hardening.sql Section B is commented out and the app
+-- connects as the table owner), so the application-level organizationId
+-- predicate is the real boundary; these policies are the ratchet for when it is.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payroll_runs') THEN
+    ALTER TABLE payroll_runs ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_payroll_runs ON payroll_runs;
+    CREATE POLICY org_isolation_payroll_runs ON payroll_runs FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for payroll_runs';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payroll_lines') THEN
+    ALTER TABLE payroll_lines ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_payroll_lines ON payroll_lines;
+    CREATE POLICY org_isolation_payroll_lines ON payroll_lines FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for payroll_lines';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payroll_employee_year_state') THEN
+    ALTER TABLE payroll_employee_year_state ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_payroll_employee_year_state ON payroll_employee_year_state;
+    CREATE POLICY org_isolation_payroll_employee_year_state ON payroll_employee_year_state FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for payroll_employee_year_state';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'payroll_previous_employer_2316') THEN
+    ALTER TABLE payroll_previous_employer_2316 ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_payroll_previous_employer_2316 ON payroll_previous_employer_2316;
+    CREATE POLICY org_isolation_payroll_previous_employer_2316 ON payroll_previous_employer_2316 FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for payroll_previous_employer_2316';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'party_tax_profiles') THEN
+    ALTER TABLE party_tax_profiles ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_party_tax_profiles ON party_tax_profiles;
+    CREATE POLICY org_isolation_party_tax_profiles ON party_tax_profiles FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for party_tax_profiles';
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tax_certificates') THEN
+    ALTER TABLE tax_certificates ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_tax_certificates ON tax_certificates;
+    CREATE POLICY org_isolation_tax_certificates ON tax_certificates FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for tax_certificates';
+  END IF;
+END $$;
+
+-- Stage remainder tables. filing_deadline_overrides is GLOBAL and has no policy.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_year_elections') THEN
+    ALTER TABLE org_tax_year_elections ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_year_elections ON org_tax_year_elections;
+    CREATE POLICY org_isolation_org_tax_year_elections ON org_tax_year_elections FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_year_elections';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'org_tax_registrations') THEN
+    ALTER TABLE org_tax_registrations ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_org_tax_registrations ON org_tax_registrations;
+    CREATE POLICY org_isolation_org_tax_registrations ON org_tax_registrations FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for org_tax_registrations';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tax_withholding_payments') THEN
+    ALTER TABLE tax_withholding_payments ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_tax_withholding_payments ON tax_withholding_payments;
+    CREATE POLICY org_isolation_tax_withholding_payments ON tax_withholding_payments FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for tax_withholding_payments';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'tax_computed_returns') THEN
+    ALTER TABLE tax_computed_returns ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_tax_computed_returns ON tax_computed_returns;
+    CREATE POLICY org_isolation_tax_computed_returns ON tax_computed_returns FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for tax_computed_returns';
+  END IF;
+END $$;

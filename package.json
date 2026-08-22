@@ -20,7 +20,7 @@
     "test:e2e:debug": "playwright test --debug",
     "test:all": "bun run test:unit && bun run test:component && bun run test:integration",
     "db:test:reset": "psql ${TEST_DATABASE_URL:-postgresql://uriah@localhost:5432/buwiz-books-tests} -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'",
-    "db:test:fresh": "bun run db:test:reset && bun --env-file=.env.test run db:migrate && bun --env-file=.env.test run db:rls && bun --env-file=.env.test run db:rls:hardening && bun --env-file=.env.test run db:seed && bun --env-file=.env.test run db:seed:review-rules && bun --env-file=.env.test run db:seed:transactions",
+    "db:test:fresh": "bun run db:test:reset && bun --env-file=.env.test run db:migrate && bun --env-file=.env.test run db:tax:foundation && bun --env-file=.env.test run db:rls && bun --env-file=.env.test run db:rls:hardening && bun --env-file=.env.test run db:seed && bun --env-file=.env.test run db:seed:review-rules && bun --env-file=.env.test run db:seed:tax-reference && bun --env-file=.env.test run db:seed:transactions",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "bun run scripts/migrate.ts apply",
     "db:migrations:status": "bun run scripts/migrate.ts status",
@@ -44,7 +44,7 @@
     "dedup:health": "bun run scripts/dedup-health.ts",
     "dedup:backfill": "bun run scripts/dedup-backfill.ts",
     "dedup:convert-legacy": "bun run scripts/convert-legacy-matches.ts",
-    "db:fresh": "bun db:reset && bun db:migrate && bun db:rls && bun db:seed && bun db:seed:coa && bun db:seed:review-rules",
+    "db:fresh": "bun db:reset && bun db:migrate && bun db:tax:foundation && bun db:rls && bun db:seed && bun db:seed:coa && bun db:seed:review-rules && bun db:seed:tax-reference",
     "reset": "bun db:reset",
     "migrate": "bun db:migrate",
     "seed": "bun db:seed",
@@ -57,7 +57,10 @@
     "typecheck": "tsc --noEmit",
     "prepare": "husky",
     "test:evals": "AI_EVALS_MODE=recorded bun run vitest run --config vitest.evals.config.ts",
-    "test:evals:live": "AI_EVALS_MODE=live bun run vitest run --config vitest.evals.config.ts"
+    "test:evals:live": "AI_EVALS_MODE=live bun run vitest run --config vitest.evals.config.ts",
+    "db:tax:foundation": "bun run scripts/apply-tax-foundation.ts",
+    "db:seed:tax-reference": "bun run scripts/seed-tax-reference.ts",
+    "db:tax-reference:status": "bun run scripts/seed-tax-reference.ts --status"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.115.0",

@@ -18,6 +18,8 @@ export type ManualInvoicePaymentInput = {
   bankAccountId: string;
   paymentAmount?: string | number;
   idempotencyKey: string;
+  /** ISO date the payment took effect. Omit only when it is genuinely today. */
+  paymentDate?: string;
 };
 
 /**
@@ -90,6 +92,11 @@ export async function recordManualInvoicePayment(db: DbExecutor, input: ManualIn
   const newPaidCents = previousPaidCents + paymentCents;
   const newBalanceCents = totalCents - newPaidCents;
   const finalStatus = newBalanceCents === 0 ? "paid" : "partial";
+  // Resolved ONCE and shared by the journal and the lineage record. These were
+  // computed separately — the journal stamped its own new Date() internally
+  // while the lineage row stamped another below — so a payment recorded across
+  // midnight could carry two different dates for the same event.
+  const effectiveDate = input.paymentDate ?? new Date().toISOString().slice(0, 10);
   const journalHeaderId = await createPaymentJournalEntry(
     db,
     input.organizationId,
@@ -102,8 +109,8 @@ export async function recordManualInvoicePayment(db: DbExecutor, input: ManualIn
     input.bankAccountId,
     paymentCents / 100,
     input.idempotencyKey,
+    effectiveDate,
   );
-  const effectiveDate = new Date().toISOString().slice(0, 10);
   const paymentSource = await ensureOperationalPaymentLineage(db, {
     organizationId: input.organizationId,
     actorId: input.userId,

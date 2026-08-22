@@ -117,6 +117,21 @@ export const keys = {
         params ?? null,
       ] as const,
   },
+  payroll: {
+    all: () => ["payroll"] as const,
+    run: (runId: string) => ["payroll", runId] as const,
+    variances: (runId: string) => ["payroll", runId, "variances"] as const,
+  },
+  filing: {
+    all: () => ["filing"] as const,
+    workspace: (runId: string) => ["filing", "workspace", runId] as const,
+  },
+  tax: {
+    all: () => ["tax"] as const,
+    certificates: () => ["tax", "certificates"] as const,
+    settings: () => ["tax", "settings"] as const,
+    deadlines: (year: number) => ["tax", "deadlines", year] as const,
+  },
   org: {
     settings: () => ["org-settings"] as const,
     members: () => ["org-members"] as const,

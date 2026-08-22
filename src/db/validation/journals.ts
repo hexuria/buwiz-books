@@ -92,35 +92,81 @@ export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 
 /**
  * Validates that total debits equal total credits in a set of journal lines.
- * Returns { valid: boolean, totalDebits: number, totalCredits: number, difference: number }
+ *
+ * SUMS AS SCALED INTEGERS, NOT FLOATS. This previously accumulated with
+ * `Number.parseFloat` and then rounded both sides to 2dp BEFORE comparing,
+ * against a ledger stored at `decimal(20, 8)`. Two consequences:
+ *
+ *   - float addition drifts, so a long enough line set could disagree with
+ *     the database over amounts that are individually exact;
+ *   - anything finer than a centavo was rounded away before the comparison, so
+ *     a journal out of balance by 0.00000001 passed validation and was posted.
+ *
+ * The database now rejects that outright (0038), which would have turned a
+ * silent corruption into an unexplained constraint violation at COMMIT. This
+ * computes at the same scale the ledger stores, so the application refuses it
+ * first, with a message that names the amounts.
+ *
+ * `totalDebits` / `totalCredits` stay `number` for existing display callers.
+ * `totalDebitsExact` / `totalCreditsExact` are the full-precision strings, and
+ * are what should be written to `journal_headers.total_amount` — `.toFixed(2)`
+ * on the float truncates a legitimately sub-centavo total.
  */
 export function validateBalance(lines: JournalLineInput[]): {
   valid: boolean;
   totalDebits: number;
   totalCredits: number;
   difference: number;
+  totalDebitsExact: string;
+  totalCreditsExact: string;
+  differenceExact: string;
 } {
-  let totalDebits = 0;
-  let totalCredits = 0;
+  let debits = 0n;
+  let credits = 0n;
 
   for (const line of lines) {
-    if (line.debit) {
-      totalDebits += Number.parseFloat(line.debit);
-    }
-    if (line.credit) {
-      totalCredits += Number.parseFloat(line.credit);
-    }
+    if (line.debit) debits += scaleToBigInt(line.debit);
+    if (line.credit) credits += scaleToBigInt(line.credit);
   }
 
-  // Round to 2 decimal places for precision
-  totalDebits = Math.round(totalDebits * 100) / 100;
-  totalCredits = Math.round(totalCredits * 100) / 100;
-  const difference = Math.round((totalDebits - totalCredits) * 100) / 100;
+  const difference = debits - credits;
 
   return {
-    valid: difference === 0,
-    totalDebits,
-    totalCredits,
-    difference,
+    // Exact comparison at the stored scale — no rounding before the test.
+    valid: difference === 0n,
+    totalDebits: Number(bigIntToDecimalString(debits)),
+    totalCredits: Number(bigIntToDecimalString(credits)),
+    difference: Number(bigIntToDecimalString(difference)),
+    totalDebitsExact: bigIntToDecimalString(debits),
+    totalCreditsExact: bigIntToDecimalString(credits),
+    differenceExact: bigIntToDecimalString(difference),
   };
+}
+
+/** Scale used by `decimal(20, 8)` ledger columns. */
+const LEDGER_SCALE = 8;
+
+/** `"12.34"` -> `1234000000n`. Rejects anything that is not a plain decimal. */
+function scaleToBigInt(value: string): bigint {
+  const trimmed = value.trim();
+  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
+    throw new Error(`Invalid money amount: ${JSON.stringify(value)}`);
+  }
+  const negative = trimmed.startsWith("-");
+  const [whole, fraction = ""] = (negative ? trimmed.slice(1) : trimmed).split(".");
+  if (fraction.length > LEDGER_SCALE) {
+    throw new Error(
+      `Money amount ${JSON.stringify(value)} has more than ${LEDGER_SCALE} decimal places.`,
+    );
+  }
+  const scaled = BigInt(`${whole}${fraction.padEnd(LEDGER_SCALE, "0")}`);
+  return negative ? -scaled : scaled;
+}
+
+function bigIntToDecimalString(scaled: bigint): string {
+  const negative = scaled < 0n;
+  const digits = (negative ? -scaled : scaled).toString().padStart(LEDGER_SCALE + 1, "0");
+  const whole = digits.slice(0, -LEDGER_SCALE);
+  const fraction = digits.slice(-LEDGER_SCALE).replace(/0+$/, "");
+  return `${negative ? "-" : ""}${whole}${fraction ? `.${fraction}` : ""}`;
 }

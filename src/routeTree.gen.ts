@@ -41,6 +41,14 @@ import { Route as EntitiesVendorsRouteImport } from './routes/entities.vendors'
 import { Route as InvoicesInvoiceIdRouteImport } from './routes/invoices_.$invoiceId'
 import { Route as LocationsLocationIdRouteImport } from './routes/locations_.$locationId'
 import { Route as OrganizationsJoinRouteImport } from './routes/organizations.join'
+import { Route as PayrollRouteImport } from './routes/payroll'
+import { Route as TaxCertificatesRouteImport } from './routes/tax.certificates'
+import { Route as PayrollRunIdRouteImport } from './routes/payroll_.$runId'
+import { Route as TaxComputeRouteImport } from './routes/tax.compute'
+import { Route as TaxSettingsRouteImport } from './routes/tax.settings'
+import { Route as TaxDeadlinesRouteImport } from './routes/tax.deadlines'
+import { Route as TaxEwtRouteImport } from './routes/tax.ewt'
+import { Route as TaxPartiesRouteImport } from './routes/tax.parties'
 import { Route as ReconciliationsReconciliationIdRouteImport } from './routes/reconciliations_.$reconciliationId'
 import { Route as TransactionsTransactionIdRouteImport } from './routes/transactions_.$transactionId'
 import { Route as TransactionsNewRouteImport } from './routes/transactions_.new'
@@ -215,6 +223,46 @@ const OrganizationsJoinRoute = OrganizationsJoinRouteImport.update({
   path: '/organizations/join',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TaxCertificatesRoute = TaxCertificatesRouteImport.update({
+  id: '/tax/certificates',
+  path: '/tax/certificates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TaxComputeRoute = TaxComputeRouteImport.update({
+  id: '/tax/compute',
+  path: '/tax/compute',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TaxSettingsRoute = TaxSettingsRouteImport.update({
+  id: '/tax/settings',
+  path: '/tax/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TaxDeadlinesRoute = TaxDeadlinesRouteImport.update({
+  id: '/tax/deadlines',
+  path: '/tax/deadlines',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TaxEwtRoute = TaxEwtRouteImport.update({
+  id: '/tax/ewt',
+  path: '/tax/ewt',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TaxPartiesRoute = TaxPartiesRouteImport.update({
+  id: '/tax/parties',
+  path: '/tax/parties',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayrollRoute = PayrollRouteImport.update({
+  id: '/payroll',
+  path: '/payroll',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PayrollRunIdRoute = PayrollRunIdRouteImport.update({
+  id: '/payroll_/$runId',
+  path: '/payroll/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReconciliationsReconciliationIdRoute =
   ReconciliationsReconciliationIdRouteImport.update({
     id: '/reconciliations_/$reconciliationId',
@@ -297,6 +345,13 @@ export interface FileRoutesByFullPath {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
+  '/tax/compute': typeof TaxComputeRoute
+  '/tax/settings': typeof TaxSettingsRoute
+  '/tax/deadlines': typeof TaxDeadlinesRoute
+  '/tax/ewt': typeof TaxEwtRoute
+  '/tax/parties': typeof TaxPartiesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -322,6 +377,14 @@ export interface FileRoutesByFullPath {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
+  '/tax/compute': typeof TaxComputeRoute
+  '/tax/settings': typeof TaxSettingsRoute
+  '/tax/deadlines': typeof TaxDeadlinesRoute
+  '/tax/ewt': typeof TaxEwtRoute
+  '/tax/parties': typeof TaxPartiesRoute
+  '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions/new': typeof TransactionsNewRoute
@@ -344,6 +407,13 @@ export interface FileRoutesByTo {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
+  '/tax/compute': typeof TaxComputeRoute
+  '/tax/settings': typeof TaxSettingsRoute
+  '/tax/deadlines': typeof TaxDeadlinesRoute
+  '/tax/ewt': typeof TaxEwtRoute
+  '/tax/parties': typeof TaxPartiesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -369,6 +439,9 @@ export interface FileRoutesByTo {
   '/invoices/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
+  '/payroll/$runId': typeof PayrollRunIdRoute
   '/reconciliations/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions/new': typeof TransactionsNewRoute
@@ -392,6 +465,8 @@ export interface FileRoutesById {
   '/business-groups': typeof BusinessGroupsRoute
   '/create-organization': typeof CreateOrganizationRoute
   '/departments': typeof DepartmentsRoute
+  '/payroll': typeof PayrollRoute
+  '/tax/certificates': typeof TaxCertificatesRoute
   '/documents': typeof DocumentsRoute
   '/financials': typeof FinancialsRoute
   '/inbox': typeof InboxRoute
@@ -417,6 +492,7 @@ export interface FileRoutesById {
   '/invoices_/$invoiceId': typeof InvoicesInvoiceIdRoute
   '/locations_/$locationId': typeof LocationsLocationIdRoute
   '/organizations/join': typeof OrganizationsJoinRoute
+  '/payroll_/$runId': typeof PayrollRunIdRoute
   '/reconciliations_/$reconciliationId': typeof ReconciliationsReconciliationIdRoute
   '/transactions_/$transactionId': typeof TransactionsTransactionIdRoute
   '/transactions_/new': typeof TransactionsNewRoute
@@ -466,6 +542,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/locations/$locationId'
     | '/organizations/join'
+    | '/payroll/$runId'
     | '/reconciliations/$reconciliationId'
     | '/transactions/$transactionId'
     | '/transactions/new'
@@ -513,6 +590,7 @@ export interface FileRouteTypes {
     | '/invoices/$invoiceId'
     | '/locations/$locationId'
     | '/organizations/join'
+    | '/payroll/$runId'
     | '/reconciliations/$reconciliationId'
     | '/transactions/$transactionId'
     | '/transactions/new'
@@ -560,6 +638,7 @@ export interface FileRouteTypes {
     | '/invoices_/$invoiceId'
     | '/locations_/$locationId'
     | '/organizations/join'
+    | '/payroll_/$runId'
     | '/reconciliations_/$reconciliationId'
     | '/transactions_/$transactionId'
     | '/transactions_/new'
@@ -608,6 +687,14 @@ export interface RootRouteChildren {
   InvoicesInvoiceIdRoute: typeof InvoicesInvoiceIdRoute
   LocationsLocationIdRoute: typeof LocationsLocationIdRoute
   OrganizationsJoinRoute: typeof OrganizationsJoinRoute
+  PayrollRoute: PayrollRoute,
+  TaxCertificatesRoute: TaxCertificatesRoute,
+  TaxComputeRoute: typeof TaxComputeRoute
+  TaxSettingsRoute: typeof TaxSettingsRoute
+  TaxDeadlinesRoute: typeof TaxDeadlinesRoute
+  TaxEwtRoute: typeof TaxEwtRoute
+  TaxPartiesRoute: typeof TaxPartiesRoute
+  PayrollRunIdRoute: typeof PayrollRunIdRoute
   ReconciliationsReconciliationIdRoute: typeof ReconciliationsReconciliationIdRoute
   TransactionsTransactionIdRoute: typeof TransactionsTransactionIdRoute
   TransactionsNewRoute: typeof TransactionsNewRoute
@@ -849,6 +936,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrganizationsJoinRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/tax/certificates': {
+      id: '/tax/certificates'
+      path: '/tax/certificates'
+      fullPath: '/tax/certificates'
+      preLoaderRoute: typeof TaxCertificatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/compute': {
+      id: '/tax/compute'
+      path: '/tax/compute'
+      fullPath: '/tax/compute'
+      preLoaderRoute: typeof TaxComputeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/settings': {
+      id: '/tax/settings'
+      path: '/tax/settings'
+      fullPath: '/tax/settings'
+      preLoaderRoute: typeof TaxSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/deadlines': {
+      id: '/tax/deadlines'
+      path: '/tax/deadlines'
+      fullPath: '/tax/deadlines'
+      preLoaderRoute: typeof TaxDeadlinesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/ewt': {
+      id: '/tax/ewt'
+      path: '/tax/ewt'
+      fullPath: '/tax/ewt'
+      preLoaderRoute: typeof TaxEwtRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/tax/parties': {
+      id: '/tax/parties'
+      path: '/tax/parties'
+      fullPath: '/tax/parties'
+      preLoaderRoute: typeof TaxPartiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payroll': {
+      id: '/payroll'
+      path: '/payroll'
+      fullPath: '/payroll'
+      preLoaderRoute: typeof PayrollRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/payroll_/$runId': {
+      id: '/payroll_/$runId'
+      path: '/payroll/$runId'
+      fullPath: '/payroll/$runId'
+      preLoaderRoute: typeof PayrollRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/reconciliations_/$reconciliationId': {
       id: '/reconciliations_/$reconciliationId'
       path: '/reconciliations/$reconciliationId'
@@ -956,6 +1099,13 @@ const rootRouteChildren: RootRouteChildren = {
   InboxRoute: InboxRoute,
   InvoicesRoute: InvoicesRoute,
   LocationsRoute: LocationsRoute,
+  PayrollRoute: PayrollRoute,
+  TaxCertificatesRoute: TaxCertificatesRoute,
+  TaxComputeRoute: TaxComputeRoute,
+  TaxSettingsRoute: TaxSettingsRoute,
+  TaxDeadlinesRoute: TaxDeadlinesRoute,
+  TaxEwtRoute: TaxEwtRoute,
+  TaxPartiesRoute: TaxPartiesRoute,
   LoginRoute: LoginRoute,
   OnboardingRoute: OnboardingRoute,
   ProfileRoute: ProfileRoute,
@@ -976,6 +1126,7 @@ const rootRouteChildren: RootRouteChildren = {
   InvoicesInvoiceIdRoute: InvoicesInvoiceIdRoute,
   LocationsLocationIdRoute: LocationsLocationIdRoute,
   OrganizationsJoinRoute: OrganizationsJoinRoute,
+  PayrollRunIdRoute: PayrollRunIdRoute,
   ReconciliationsReconciliationIdRoute: ReconciliationsReconciliationIdRoute,
   TransactionsTransactionIdRoute: TransactionsTransactionIdRoute,
   TransactionsNewRoute: TransactionsNewRoute,

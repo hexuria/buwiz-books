@@ -50,6 +50,7 @@ export const updateTransactionsBatch = createServerFn({ method: "POST" })
             id: journalHeaders.id,
             transactionDate: journalHeaders.transactionDate,
             duplicateOfHeaderId: journalHeaders.duplicateOfHeaderId,
+            status: journalHeaders.status,
           })
           .from(journalHeaders)
           .where(and(inArray(journalHeaders.id, ids), eq(journalHeaders.organizationId, orgId)))
@@ -63,6 +64,22 @@ export const updateTransactionsBatch = createServerFn({ method: "POST" })
           throw new Error(
             "Suppressed duplicate transactions cannot be modified. Unmatch them first.",
           );
+        }
+
+        // Re-pointing `account_id` on a POSTED line moves the amount to a
+        // different GL account after the fact — the ledger silently disagrees
+        // with anything already filed off it, and only an activity-log row
+        // records that it happened. Dimension re-tagging (department/location)
+        // moves no money and stays allowed. Trigger 0039 enforces this
+        // underneath; this is the message that names the batch.
+        if (updates.accountId !== undefined) {
+          const posted = lockRows.filter((h) => h.status === "posted");
+          if (posted.length > 0) {
+            throw new Error(
+              `Cannot recategorize ${posted.length} posted transaction(s): a posted entry's account ` +
+                `cannot be changed in place. Reverse and replace them instead.`,
+            );
+          }
         }
 
         const closedThroughForUpdate = await getClosedThrough(orgId, db);

@@ -139,6 +139,12 @@ jobs:
             psql "$DATABASE_URL" -v ON_ERROR_STOP=1 --single-transaction -f "drizzle/${file}.sql"
           done
 
+      - name: Apply tax foundation to test DB
+        run: bun run db:tax:foundation
+
+      - name: Seed tax reference catalog on test DB
+        run: bun run db:seed:tax-reference
+
       - name: Apply RLS policies to test DB
         run: bun run db:rls
 
