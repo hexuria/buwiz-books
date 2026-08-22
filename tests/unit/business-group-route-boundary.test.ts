@@ -122,6 +122,11 @@ describe("Business Group request and operator boundaries", () => {
     expect(guardMigration?.phase).toBe("post_schema");
     expect(pkg.scripts["db:migrate"]).toContain("scripts/migrate.ts apply");
     expect(pkg.scripts["db:test:fresh"]).toContain("db:migrate");
+    expect(pkg.scripts["db:enterprise:test-sql"]).toContain("scripts/apply-enterprise-test-sql.ts");
+    expect(pkg.scripts["db:test:fresh"]).toContain("db:enterprise:test-sql");
+    expect(pkg.scripts["db:test:fresh"].indexOf("db:migrate")).toBeLessThan(
+      pkg.scripts["db:test:fresh"].indexOf("db:enterprise:test-sql"),
+    );
     expect(pkg.scripts["db:rls:hardening"]).toContain("drizzle/rls_hardening.sql");
     expect(pkg.scripts["db:test:fresh"]).toContain("db:rls:hardening");
     expect(migration).toContain("groups without an eligible owner");

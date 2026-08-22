@@ -464,6 +464,10 @@ export const verifier0034: MigrationVerifier = {
       "can_manage_organization_group(uuid)",
       "can_bootstrap_organization_group(uuid, text)",
     ]);
+    const inheritedPrivilegeIdentities = new Set([
+      "can_manage_organization_group(uuid)",
+      "can_bootstrap_organization_group(uuid, text)",
+    ]);
     const footprint =
       snapshot.relations.has("business_group_owner_transfer_context") ||
       adminFunctionContracts.some(
@@ -475,7 +479,19 @@ export const verifier0034: MigrationVerifier = {
         snapshot.triggers.has(`${trigger.tableName}.${trigger.name}`),
       ) ||
       hasHardenedPolicyFootprint0034(snapshot) ||
-      catalogHasPrivilegeFootprint(snapshot, privilegeFootprintScopes0034);
+      catalogHasPrivilegeFootprint(
+        snapshot,
+        privilegeFootprintScopes0034.map((scope) =>
+          scope.objectType === "function"
+            ? {
+                ...scope,
+                objectIdentities: scope.objectIdentities.filter(
+                  (identity) => !inheritedPrivilegeIdentities.has(identity),
+                ),
+              }
+            : scope,
+        ),
+      );
     const inheritedContracts = [
       ...contracts0028(true).filter(
         (contract) =>
