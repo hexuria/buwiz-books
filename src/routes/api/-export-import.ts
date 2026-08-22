@@ -17,7 +17,11 @@ import { numberSequences } from "../../db/schema/number-sequences";
 import { organization } from "../../db/schema/auth";
 import { eq, and, asc, desc, inArray, or } from "drizzle-orm";
 import { z } from "zod";
-import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+import {
+  withMutationPermissionOrgContext,
+  withPermissionOrgContext,
+  withSessionOrgContext,
+} from "../../lib/server-context";
 import { EXPORT_VERSION } from "../../lib/export-versions";
 import type { ExportMeta, VersionedExportFile } from "../../lib/export-versions";
 // Migration engine — used by import flow to handle legacy v1 files
@@ -103,7 +107,10 @@ const exportDataSchema = z.object({
 
 export const exportData = createServerFn({ method: "POST" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    // report:export is withheld from member and clientApprover. Gating on
+    // the session alone let either role export the organization's books,
+    // which is the one thing that grant exists to prevent.
+    return withPermissionOrgContext("report", "export", async ({ orgId, db }) => {
       const { entities, ids, includeInactive } = exportDataSchema.parse(rawData);
 
       const result: Record<string, any> = {};
@@ -1239,7 +1246,10 @@ const listExportableSchema = z.object({
 
 export const listExportableRecords = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    // report:export is withheld from member and clientApprover. Gating on
+    // the session alone let either role export the organization's books,
+    // which is the one thing that grant exists to prevent.
+    return withPermissionOrgContext("report", "export", async ({ orgId, db }) => {
       const { entityType, includeInactive } = listExportableSchema.parse(rawData);
 
       switch (entityType) {

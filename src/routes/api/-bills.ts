@@ -32,6 +32,7 @@ import {
   beginAccountingOperation,
   completeAccountingOperation,
 } from "../../lib/operational-idempotency";
+import { assertRolePermission } from "../../lib/auth-middleware";
 import { recordManualBillPayment } from "../../lib/manual-bill-payment";
 import {
   withMutationPermissionOrgContext,
@@ -685,7 +686,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
       "bill",
       "update",
       { routeKey: "bill:transition", limit: 30, windowMs: 60_000 },
-      async ({ orgId, userId, db }) => {
+      async ({ orgId, userId, role, db }) => {
         const parsed = transitionStatusSchema.parse(rawData);
         const {
           billId,
@@ -707,6 +708,13 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           );
         }
         if (newStatus === "paid" || newStatus === "partial") {
+          // The endpoint gates on bill:update because most transitions here are
+          // ordinary status edits. Recording a payment is not one of those — it
+          // writes a journal and moves money — and `bill:pay` exists precisely
+          // to withhold that from roles allowed to edit a bill. Checked here
+          // rather than on the wrapper so non-payment transitions keep needing
+          // only update.
+          assertRolePermission(role, "bill", "pay");
           return recordManualBillPayment(db, {
             organizationId: orgId,
             userId,

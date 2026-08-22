@@ -18,7 +18,11 @@ import { organization } from "../../db/schema/auth";
 import { eq, and, inArray, gte, lte, desc, asc, ilike, or, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { TRANSACTION_TYPES, JOURNAL_STATUSES } from "../../db/validation/journals";
-import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+import {
+  withMutationPermissionOrgContext,
+  withPermissionOrgContext,
+  withSessionOrgContext,
+} from "../../lib/server-context";
 
 // ============================================================================
 // Schemas
@@ -220,7 +224,10 @@ function createFormattedWorksheet(
  */
 export const exportTransactionsCSV = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    // report:export is withheld from member and clientApprover. Gating on
+    // the session alone let either role export the organization's books,
+    // which is the one thing that grant exists to prevent.
+    return withPermissionOrgContext("report", "export", async ({ orgId, db }) => {
       const parsed = exportCSVSchema.parse(rawData ?? {});
       const { csv, filename } = await buildTransactionsCSV(db, orgId, parsed);
       return { csv, filename };
@@ -484,7 +491,10 @@ export const exportCSVToDocuments = createServerFn({ method: "POST" }).handler(
  */
 export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    // report:export is withheld from member and clientApprover. Gating on
+    // the session alone let either role export the organization's books,
+    // which is the one thing that grant exists to prevent.
+    return withPermissionOrgContext("report", "export", async ({ orgId, db }) => {
       const parsed = financialPackageSchema.parse(rawData ?? {});
       const { dateFrom, dateTo } = parsed;
 
