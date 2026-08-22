@@ -30,34 +30,40 @@ describeDb("computeFinalizeBalances", () => {
     side: "debit" | "credit",
     duplicateOfHeaderId?: string,
   ) {
-    const [h] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId: ORG,
-        transactionDate: date,
-        transactionType: "journal",
-        status: "posted",
-        duplicateOfHeaderId,
-      })
-      .returning();
-    const [bankLine] = await db
-      .insert(journalLines)
-      .values({
+    // Both sides in ONE transaction. This journal already balances, but a
+    // balance check on posted journals is a deferred constraint that runs at
+    // COMMIT: with bare `db.insert` each statement autocommits, so the bank
+    // line would be checked alone, before its contra exists.
+    return db.transaction(async (tx: any) => {
+      const [h] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: ORG,
+          transactionDate: date,
+          transactionType: "journal",
+          status: "posted",
+          duplicateOfHeaderId,
+        })
+        .returning();
+      const [bankLine] = await tx
+        .insert(journalLines)
+        .values({
+          journalHeaderId: h.id,
+          accountId: LEDGER_ACCT,
+          debit: side === "debit" ? amount : null,
+          credit: side === "credit" ? amount : null,
+          sortOrder: 0,
+        })
+        .returning();
+      await tx.insert(journalLines).values({
         journalHeaderId: h.id,
-        accountId: LEDGER_ACCT,
-        debit: side === "debit" ? amount : null,
-        credit: side === "credit" ? amount : null,
-        sortOrder: 0,
-      })
-      .returning();
-    await db.insert(journalLines).values({
-      journalHeaderId: h.id,
-      accountId: CONTRA,
-      debit: side === "credit" ? amount : null,
-      credit: side === "debit" ? amount : null,
-      sortOrder: 1,
+        accountId: CONTRA,
+        debit: side === "credit" ? amount : null,
+        credit: side === "debit" ? amount : null,
+        sortOrder: 1,
+      });
+      return { headerId: h.id as string, lineId: bankLine.id as string };
     });
-    return { headerId: h.id as string, lineId: bankLine.id as string };
   }
 
   async function addStatementLine(opts: {

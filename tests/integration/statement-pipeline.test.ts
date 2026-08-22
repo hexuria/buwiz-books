@@ -211,35 +211,41 @@ async function postBankTxn(
   amount: number,
   description: string,
 ): Promise<string> {
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: fixture.orgId,
-      transactionDate: date,
-      transactionType: "journal",
-      status: "posted",
-      memo: description,
-    })
-    .returning();
-  const [bankLine] = await db
-    .insert(journalLines)
-    .values({
+  // Both sides in ONE transaction. The journal already balances, but a balance
+  // check on posted journals is a deferred constraint evaluated at COMMIT, and
+  // bare `db.insert` autocommits each statement — which would check the bank
+  // line on its own, before its contra exists.
+  return db.transaction(async (tx: any) => {
+    const [header] = await tx
+      .insert(journalHeaders)
+      .values({
+        organizationId: fixture.orgId,
+        transactionDate: date,
+        transactionType: "journal",
+        status: "posted",
+        memo: description,
+      })
+      .returning();
+    const [bankLine] = await tx
+      .insert(journalLines)
+      .values({
+        journalHeaderId: header.id,
+        accountId: fixture.ledgerAccountId,
+        debit: amount > 0 ? String(amount) : null,
+        credit: amount < 0 ? String(Math.abs(amount)) : null,
+        lineDescription: description,
+        sortOrder: 0,
+      })
+      .returning();
+    await tx.insert(journalLines).values({
       journalHeaderId: header.id,
-      accountId: fixture.ledgerAccountId,
-      debit: amount > 0 ? String(amount) : null,
-      credit: amount < 0 ? String(Math.abs(amount)) : null,
-      lineDescription: description,
-      sortOrder: 0,
-    })
-    .returning();
-  await db.insert(journalLines).values({
-    journalHeaderId: header.id,
-    accountId: fixture.contraAccountId,
-    debit: amount < 0 ? String(Math.abs(amount)) : null,
-    credit: amount > 0 ? String(amount) : null,
-    sortOrder: 1,
+      accountId: fixture.contraAccountId,
+      debit: amount < 0 ? String(Math.abs(amount)) : null,
+      credit: amount > 0 ? String(amount) : null,
+      sortOrder: 1,
+    });
+    return bankLine.id as string;
   });
-  return bankLine.id;
 }
 
 function reRunnableJob(fixture: Fixture): ProcessingJob {
