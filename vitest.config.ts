@@ -40,6 +40,13 @@ export default defineConfig({
           globalSetup: ["./tests/global-setup.ts"],
           include: ["tests/integration/**/*.test.{ts,tsx}"],
           fileParallelism: false,
+          // These talk to a real Postgres and run a job handler end to end, so
+          // several seconds of genuine work is normal. Vitest's 5s default is
+          // sized for pure functions, and holding database tests to it produced
+          // failures that pointed at the test rather than at anything wrong —
+          // the same test passing alone and failing under a loaded suite.
+          testTimeout: 30_000,
+          hookTimeout: 60_000,
         },
       },
     ],
