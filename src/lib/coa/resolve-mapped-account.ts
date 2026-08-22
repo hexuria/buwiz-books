@@ -18,13 +18,19 @@
  *  2. There is no "first account of roughly the right type" fallback. The old
  *     `ledgerAccounts[0]` tier would happily post a bill line to Accounts
  *     Receivable. Unresolvable returns null (or throws, for posting paths).
+ *
+ * Everything public here funnels through ONE implementation,
+ * `resolveMappedAccountsBatch`. Resolving one key and resolving fifty run the
+ * same code, so the single-key and batch paths cannot drift apart: a divergence
+ * would show up as the settings UI prefilling a different account than the
+ * posting path actually uses.
  */
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor } from "../../db";
 import { accounts } from "../../db/schema/accounts";
 import { categoryMappings } from "../../db/schema/category-mappings";
 import { mappingRowFor } from "./mapping-registry";
-import type { MappingType } from "./mapping-types";
+import type { MappingRow, MappingType } from "./mapping-types";
 
 export class UnmappedAccountError extends Error {
   constructor(
@@ -48,70 +54,141 @@ export interface ResolvedAccount {
   source: "mapping" | "subtype";
 }
 
+/** Tier 2 rows come back from raw SQL, so they are typed by hand. */
+interface SubtypeMatchRow {
+  sourceKey: string;
+  id: string;
+  name: string;
+  accountNumber: string | null;
+  accountType: string;
+  subtype: string | null;
+}
+
 /**
- * Resolve one mapping row to an account.
+ * Resolve many mapping keys at once.
  *
- * @returns the account, or null when nothing valid matches.
+ * Cost: at most TWO round trips regardless of how many keys are passed — one
+ * for the configured mappings, one for the subtype fallback (skipped entirely
+ * when tier 1 answered everything). Every requested key gets an entry; unknown
+ * or unresolvable keys map to null.
  */
-export async function resolveMappedAccount(
+async function resolveMappedAccountsBatch(
   db: DbExecutor,
   orgId: string,
   mappingType: MappingType,
-  sourceKey: string,
-): Promise<ResolvedAccount | null> {
-  const row = mappingRowFor(mappingType, sourceKey);
-  if (!row) return null;
+  sourceKeys: string[],
+): Promise<Map<string, ResolvedAccount | null>> {
+  const resolved = new Map<string, ResolvedAccount | null>();
 
-  const columns = {
-    id: accounts.id,
-    name: accounts.name,
-    accountNumber: accounts.accountNumber,
-    accountType: accounts.accountType,
-    subtype: accounts.subtype,
-  };
+  // Unknown keys are not an error — they simply resolve to nothing, exactly as
+  // the single-key path has always behaved.
+  const known = new Map<string, MappingRow>();
+  for (const sourceKey of new Set(sourceKeys)) {
+    const row = mappingRowFor(mappingType, sourceKey);
+    resolved.set(sourceKey, null);
+    if (row) known.set(sourceKey, row);
+  }
+  if (known.size === 0) return resolved;
 
-  // Tier 1 — the configured mapping, type-guarded.
-  const [mapped] = await db
-    .select(columns)
+  // ---- Tier 1 — the configured mapping, type-guarded. -------------------
+  //
+  // The `ledgerType` guard differs per key, so it is applied in JS rather than
+  // in SQL. That is safe precisely because it is an equality test: unlike the
+  // tier 2 ranking below, exact string comparison cannot disagree with
+  // Postgres. `uq_org_mapping` on (organization_id, mapping_type, source_key)
+  // guarantees at most one row per key, so no ranking is needed here either.
+  const mappedRows = await db
+    .select({
+      sourceKey: categoryMappings.sourceKey,
+      id: accounts.id,
+      name: accounts.name,
+      accountNumber: accounts.accountNumber,
+      accountType: accounts.accountType,
+      subtype: accounts.subtype,
+    })
     .from(categoryMappings)
     .innerJoin(accounts, eq(accounts.id, categoryMappings.targetCategoryId))
     .where(
       and(
         eq(categoryMappings.organizationId, orgId),
         eq(categoryMappings.mappingType, mappingType),
-        eq(categoryMappings.sourceKey, sourceKey),
+        inArray(categoryMappings.sourceKey, [...known.keys()]),
         eq(accounts.organizationId, orgId),
         eq(accounts.isActive, true),
-        eq(accounts.accountType, row.ledgerType),
       ),
-    )
-    .limit(1);
-  if (mapped) return { ...mapped, source: "mapping" };
+    );
 
-  // Tier 2 — subtype match, deterministically ordered. The previous resolvers
-  // used `.limit(1)` with no ORDER BY, so which account got credited depended
-  // on the query plan.
-  const [matched] = await db
-    .select(columns)
-    .from(accounts)
-    .where(
-      and(
-        eq(accounts.organizationId, orgId),
-        eq(accounts.isActive, true),
-        eq(accounts.accountType, row.ledgerType),
-        eq(accounts.subtype, row.defaultSubtype),
-      ),
-    )
-    .orderBy(
-      sql`CASE WHEN ${accounts.accountNumber} = ${row.defaultNumber} THEN 0 ELSE 1 END`,
-      sql`${accounts.accountNumber} ASC NULLS LAST`,
-      asc(accounts.createdAt),
-      asc(accounts.id),
-    )
-    .limit(1);
-  if (matched) return { ...matched, source: "subtype" };
+  for (const row of mappedRows) {
+    const expected = known.get(row.sourceKey);
+    if (!expected || row.accountType !== expected.ledgerType) continue;
+    const { sourceKey, ...account } = row;
+    resolved.set(sourceKey, { ...account, source: "mapping" });
+  }
 
-  return null;
+  // ---- Tier 2 — subtype match, deterministically ordered. ---------------
+  const pending = [...known.entries()].filter(([sourceKey]) => !resolved.get(sourceKey));
+  if (pending.length === 0) return resolved;
+
+  // Raw SQL with a bound VALUES list and DISTINCT ON, rather than this repo's
+  // usual `inArray` + group-in-JS idiom. Those precedents group but never RANK.
+  // Ranking in JS would mean re-implementing this ORDER BY over
+  // `account_number` — a nullable varchar(10) sorted under whatever collation
+  // the cluster was initialized with, since nothing here sets COLLATE. A JS
+  // comparator is not guaranteed to agree with Postgres, and the disagreement
+  // would be silent. Keeping the ordering server-side removes that class of bug.
+  //
+  // The tie-break itself is unchanged from when this was one query per key:
+  // the previous resolvers used `.limit(1)` with no ORDER BY at all, so which
+  // account got credited depended on the query plan.
+  const keyTuples = pending.map(
+    ([sourceKey, row]) =>
+      sql`(${sourceKey}::text, ${row.ledgerType}::text, ${row.defaultSubtype}::text, ${row.defaultNumber}::text)`,
+  );
+
+  const matched = (await db.execute(sql`
+    select distinct on (k.source_key)
+      k.source_key as "sourceKey",
+      a.id as "id",
+      a.name as "name",
+      a.account_number as "accountNumber",
+      a.account_type as "accountType",
+      a.subtype as "subtype"
+    from (values ${sql.join(keyTuples, sql`, `)})
+      as k(source_key, ledger_type, default_subtype, default_number)
+    join accounts a
+      on a.organization_id = ${orgId}
+     and a.is_active = true
+     and a.account_type = k.ledger_type
+     and a.subtype = k.default_subtype
+    order by
+      k.source_key,
+      case when a.account_number = k.default_number then 0 else 1 end,
+      a.account_number asc nulls last,
+      a.created_at asc,
+      a.id asc
+  `)) as unknown as SubtypeMatchRow[];
+
+  for (const row of matched) {
+    const { sourceKey, ...account } = row;
+    resolved.set(sourceKey, { ...account, source: "subtype" });
+  }
+
+  return resolved;
+}
+
+/**
+ * Resolve one mapping row to an account.
+ *
+ * @returns the account, or null when nothing valid matches.
+ */
+async function resolveMappedAccount(
+  db: DbExecutor,
+  orgId: string,
+  mappingType: MappingType,
+  sourceKey: string,
+): Promise<ResolvedAccount | null> {
+  const resolved = await resolveMappedAccountsBatch(db, orgId, mappingType, [sourceKey]);
+  return resolved.get(sourceKey) ?? null;
 }
 
 export async function resolveMappedAccountId(
@@ -161,18 +238,22 @@ export async function mappedAccountFamilyIds(
   return [account.id, ...descendants];
 }
 
-/** Batch variant for UI prefill — one round trip per tier, never N+1. */
+/**
+ * Batch variant for UI prefill.
+ *
+ * Two round trips total, not two per key — see `resolveMappedAccountsBatch`.
+ * Every requested key appears in the result; unresolvable ones map to null.
+ */
 export async function resolveMappedAccountIds(
   db: DbExecutor,
   orgId: string,
   mappingType: MappingType,
   sourceKeys: string[],
 ): Promise<Record<string, string | null>> {
+  const resolved = await resolveMappedAccountsBatch(db, orgId, mappingType, sourceKeys);
   const out: Record<string, string | null> = {};
-  await Promise.all(
-    sourceKeys.map(async (sourceKey) => {
-      out[sourceKey] = await resolveMappedAccountId(db, orgId, mappingType, sourceKey);
-    }),
-  );
+  for (const sourceKey of sourceKeys) {
+    out[sourceKey] = resolved.get(sourceKey)?.id ?? null;
+  }
   return out;
 }
