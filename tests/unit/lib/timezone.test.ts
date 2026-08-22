@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import {
   getTimezoneList,
   formatDateInTz,
@@ -7,6 +7,18 @@ import {
 } from "../../../src/lib/timezone";
 
 describe("Timezone Utilities", () => {
+  // getTimezoneList() builds two Intl.DateTimeFormat instances per zone across
+  // every zone Intl.supportedValuesOf reports — several hundred formatter
+  // constructions — and memoizes the result. Whichever test called it first
+  // paid that entire cost, which on a loaded machine running the full suite
+  // exceeded the default 5s per-test timeout and failed a test that had
+  // nothing wrong with it. Warming the singleton here moves the cost into a
+  // hook with an explicit budget, so no individual test pays it and the
+  // outcome no longer depends on test ordering or machine load.
+  beforeAll(() => {
+    getTimezoneList();
+  }, 30_000);
+
   // ========================================================================
   // getTimezoneList
   // ========================================================================

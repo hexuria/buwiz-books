@@ -11,7 +11,8 @@
 // (or two proposals naming the same entity) converges instead of duplicating.
 // ============================================================================
 
-import { and, eq, ilike } from "drizzle-orm";
+import { and, asc, eq, ilike, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import type { DbExecutor } from "../db";
 import { parties } from "../db/schema/parties";
 import { accounts } from "../db/schema/accounts";
@@ -176,9 +177,29 @@ export async function ensureBankInfrastructure(
   const parentSubtype = isCredit ? "credit_cards" : "bank_accounts";
   const parentAccountType = isCredit ? "liability" : "asset";
 
+  // The insert below gives the new account this SAME `subtype`, so it satisfies
+  // this very predicate on the next run. Without an ORDER BY, `.limit(1)` could
+  // return a previously-created bank account and parent the new one under it —
+  // chaining accounts and distorting every reporting rollup that walks the tree.
+  // This path can run unattended (`create_party` is not in
+  // STRUCTURAL_MANUAL_KINDS), so it is not a rare hand-triggered case.
+  //
+  // Rank on the PARENT's `isSystem` rather than on accountNumber "11000":
+  // planCoaPreset renumbers on conflict, so that literal is not stable, but only
+  // the eight preset roots carry isSystem. The preset "Bank Accounts" node hangs
+  // off the Assets root and wins; anything created here hangs off "Bank Accounts"
+  // and loses. The remaining keys mirror tier 2 of
+  // src/lib/coa/resolve-mapped-account.ts, so both agree on "which of several
+  // candidates".
+  //
+  // The root cause is the child inheriting the parent's subtype at the insert
+  // below. Changing that is a schema-semantics decision — reporting rollups read
+  // subtype — and is deliberately out of scope here.
+  const parentOfParent = alias(accounts, "parentOfParent");
   const [parentAccount] = await db
     .select({ id: accounts.id })
     .from(accounts)
+    .leftJoin(parentOfParent, eq(parentOfParent.id, accounts.parentId))
     .where(
       and(
         eq(accounts.organizationId, orgId),
@@ -186,6 +207,12 @@ export async function ensureBankInfrastructure(
         eq(accounts.subtype, parentSubtype),
         eq(accounts.isActive, true),
       ),
+    )
+    .orderBy(
+      sql`case when ${parentOfParent.isSystem} then 0 else 1 end`,
+      sql`${accounts.accountNumber} asc nulls last`,
+      asc(accounts.createdAt),
+      asc(accounts.id),
     )
     .limit(1);
 

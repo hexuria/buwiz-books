@@ -29,6 +29,10 @@ describe("Transactions API", () => {
   });
 
   describe("API Function Signatures", () => {
+    // Importing the route module pulls in its whole dependency graph and
+    // measures at roughly six seconds here, so the 5s default timeout failed
+    // this test deterministically rather than flakily — it was never asserting
+    // anything slow, it just paid the import. The budget is explicit instead.
     it("should have correct function signatures for transaction operations", async () => {
       // Test that the API functions exist and have correct signatures
       const { getTransaction, updateTransaction, listTransactions } =
@@ -37,7 +41,7 @@ describe("Transactions API", () => {
       expect(typeof getTransaction).toBe("function");
       expect(typeof updateTransaction).toBe("function");
       expect(typeof listTransactions).toBe("function");
-    });
+    }, 30_000);
 
     it("should handle transaction query parameters correctly", async () => {
       // Test parameter validation and structure
