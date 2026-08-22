@@ -62,6 +62,20 @@ describeDb("match_assist job", () => {
       })
       .returning();
 
+    // The posted journal below needs a second side; match-assist only ever
+    // reads the bank account's line, so this exists to keep the fixture valid
+    // double-entry rather than a single-sided stub.
+    const [contraAccount] = await db
+      .insert(accounts)
+      .values({
+        organizationId: orgId,
+        name: "Supply Expense",
+        accountNumber: `6000-${crypto.randomUUID().slice(0, 4)}`,
+        accountType: "expense" as const,
+        subtype: "supplies_and_materials" as const,
+      })
+      .returning();
+
     const [bank] = await db
       .insert(financialAccounts)
       .values({
@@ -95,31 +109,47 @@ describeDb("match_assist job", () => {
       })
       .returning();
 
-    const [header] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId: orgId,
-        transactionDate: "2026-01-09",
-        transactionType: "pay_out" as const,
-        memo: "Acme Supply invoice",
-        status: "posted" as const,
-        transactionNumber: `TXN-${crypto.randomUUID().slice(0, 8)}`,
-      })
-      .returning();
+    // One transaction, both sides. The balance check on posted journals is a
+    // deferred constraint run at COMMIT; bare `db.insert` autocommits each
+    // statement and would check the credit line before its debit exists.
+    const jlId = await db.transaction(async (tx: any) => {
+      const [header] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: orgId,
+          transactionDate: "2026-01-09",
+          transactionType: "pay_out" as const,
+          memo: "Acme Supply invoice",
+          status: "posted" as const,
+          transactionNumber: `TXN-${crypto.randomUUID().slice(0, 8)}`,
+        })
+        .returning();
 
-    const [jl] = await db
-      .insert(journalLines)
-      .values({
+      const [line] = await tx
+        .insert(journalLines)
+        .values({
+          organizationId: orgId,
+          journalHeaderId: header.id,
+          accountId: ledgerAccount.id,
+          credit: "250.00",
+          debit: "0",
+          lineDescription: "ACME SUPPLY CO",
+        })
+        .returning();
+
+      await tx.insert(journalLines).values({
         organizationId: orgId,
         journalHeaderId: header.id,
-        accountId: ledgerAccount.id,
-        credit: "250.00",
-        debit: "0",
-        lineDescription: "ACME SUPPLY CO",
-      })
-      .returning();
+        accountId: contraAccount.id,
+        credit: "0",
+        debit: "250.00",
+        lineDescription: "ACME SUPPLY CO contra",
+      });
 
-    return { orgId, reconciliationId: recon.id, statementLineId: line.id, journalLineId: jl.id };
+      return line.id as string;
+    });
+
+    return { orgId, reconciliationId: recon.id, statementLineId: line.id, journalLineId: jlId };
   }
 
   const job = (orgId: string, reconciliationId: string, prefill = false) =>

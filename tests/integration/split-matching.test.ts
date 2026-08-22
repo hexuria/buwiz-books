@@ -52,6 +52,20 @@ describeDb("split matching", () => {
       })
       .returning();
 
+    // Every posted journal below needs a second side. Reconciliation only ever
+    // reads the bank account's lines, so the contra account exists purely to
+    // keep the fixtures valid double-entry rather than single-sided stubs.
+    const [contraAccount] = await db
+      .insert(accounts)
+      .values({
+        organizationId: orgId,
+        name: "Payout Contra",
+        accountNumber: `6000-${crypto.randomUUID().slice(0, 4)}`,
+        accountType: "expense" as const,
+        subtype: "general_operations" as const,
+      })
+      .returning();
+
     const [bank] = await db
       .insert(financialAccounts)
       .values({
@@ -89,29 +103,46 @@ describeDb("split matching", () => {
 
     const journalLineIds: string[] = [];
     for (const amount of ["60.00", "40.00"]) {
-      const [header] = await db
-        .insert(journalHeaders)
-        .values({
-          organizationId: orgId,
-          transactionDate: "2026-01-09",
-          transactionType: "pay_out" as const,
-          status: "posted" as const,
-          transactionNumber: `TXN-${crypto.randomUUID().slice(0, 8)}`,
-        })
-        .returning();
-      const [jl] = await db
-        .insert(journalLines)
-        .values({
+      // One transaction per journal. A balance check on posted journals is a
+      // deferred constraint, so it runs at COMMIT — with both sides written, it
+      // sees a balanced journal. Inserting the lines with bare `db.insert`
+      // would autocommit each statement and check the first line on its own.
+      const jlId = await db.transaction(async (tx: any) => {
+        const [header] = await tx
+          .insert(journalHeaders)
+          .values({
+            organizationId: orgId,
+            transactionDate: "2026-01-09",
+            transactionType: "pay_out" as const,
+            status: "posted" as const,
+            transactionNumber: `TXN-${crypto.randomUUID().slice(0, 8)}`,
+          })
+          .returning();
+        const [jl] = await tx
+          .insert(journalLines)
+          .values({
+            organizationId: orgId,
+            journalHeaderId: header.id,
+            accountId: ledgerAccount.id,
+            // Money leaving the bank account credits it.
+            credit: amount,
+            debit: "0",
+            lineDescription: `Payout ${amount}`,
+          })
+          .returning();
+        // The matching debit. Only the credit line is returned, because that is
+        // the one reconciliation matches against.
+        await tx.insert(journalLines).values({
           organizationId: orgId,
           journalHeaderId: header.id,
-          accountId: ledgerAccount.id,
-          // Money leaving the bank account credits it.
-          credit: amount,
-          debit: "0",
-          lineDescription: `Payout ${amount}`,
-        })
-        .returning();
-      journalLineIds.push(jl.id);
+          accountId: contraAccount.id,
+          credit: "0",
+          debit: amount,
+          lineDescription: `Payout ${amount} contra`,
+        });
+        return jl.id;
+      });
+      journalLineIds.push(jlId);
     }
 
     return { orgId, recon, ledgerAccountId: ledgerAccount.id, line, journalLineIds };
