@@ -30,10 +30,14 @@ describeDb("match_assist job", () => {
   let sql: postgres.Sql;
   let processMatchAssistJob: typeof import("../../src/lib/jobs/handlers/match-assist").processMatchAssistJob;
 
+  // The handler import drags in a large dependency graph. Under a loaded full
+  // suite run it exceeded the 10s default hook timeout and failed the whole
+  // file, while passing in isolation — a timing artifact, not a defect. Give it
+  // an explicit budget so the outcome does not depend on machine load.
   beforeAll(async () => {
     ({ db, sql } = await createTestDb());
     ({ processMatchAssistJob } = await import("../../src/lib/jobs/handlers/match-assist"));
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await sql.end();
