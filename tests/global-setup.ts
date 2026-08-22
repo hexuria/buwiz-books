@@ -14,6 +14,9 @@
  *     hand-insert the one row they need.
  */
 import postgres from "postgres";
+import { loadTestEnv } from "./load-test-env";
+
+loadTestEnv();
 
 export async function setup() {
   const connectionString = process.env.TEST_DATABASE_URL;
