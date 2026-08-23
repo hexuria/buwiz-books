@@ -12,7 +12,7 @@ import { documents } from "../../db/schema/documents";
 import { aiComplete } from "./facade";
 import type { IngestTriageOutput } from "../ai/schemas/ingest-triage";
 import { normalizeConfidence } from "./confidence";
-import { createProposal, listProposals } from "./proposals";
+import { createProposal, createProposalWithAutonomy, listProposals } from "./proposals";
 import { createLogger } from "../logger";
 
 const logger = createLogger("ai.ingest-triage");
@@ -33,6 +33,13 @@ export function isTextExtractable(mimeType: string): boolean {
 export interface RunIngestTriageInput {
   orgId: string;
   userId?: string;
+  /**
+   * The UPLOADER's real role, threaded from the request that fired this
+   * triage. When present, a confident classification may auto-apply under
+   * that role's own permissions (org autonomy + threshold gated); absent,
+   * the proposal always waits for a human.
+   */
+  role?: string;
   documentId: string;
   filename: string;
   mimeType: string;
@@ -130,9 +137,8 @@ export async function runIngestTriage(input: RunIngestTriageInput): Promise<void
       });
       if (existing.length > 0) return;
 
-      await createProposal(tx, {
-        orgId: input.orgId,
-        kind: "document_type",
+      const proposalInput = {
+        kind: "document_type" as const,
         payload: {
           documentId: input.documentId,
           documentType: result.data.docKind,
@@ -143,7 +149,15 @@ export async function runIngestTriage(input: RunIngestTriageInput): Promise<void
         confidence: confidence01,
         sourceRef: { entityType: "document", entityId: input.documentId },
         createdBy: input.userId,
-      });
+      };
+      if (input.role && input.userId) {
+        await createProposalWithAutonomy(
+          { orgId: input.orgId, userId: input.userId, role: input.role, db: tx },
+          proposalInput,
+        );
+      } else {
+        await createProposal(tx, { orgId: input.orgId, ...proposalInput });
+      }
     });
   } catch (err) {
     logger.warn("Ingest triage failed (non-fatal)", {

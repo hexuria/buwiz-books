@@ -26,7 +26,11 @@ import { AuthorizationError } from "../auth-errors";
 import { proposalPayloadSchemas } from "./proposal-types";
 import { PROPOSAL_APPLIERS, type ApplierContext } from "./proposal-appliers";
 import { canAutoApply } from "./autonomy";
+import { demoteAutonomyIfSlipped } from "./org-ai-config";
+import { createLogger } from "../logger";
 import { getOrgAiSettings } from "./settings";
+
+const logger = createLogger("ai.proposals");
 
 const DEFAULT_EXPIRY_DAYS = 30;
 
@@ -264,6 +268,25 @@ export async function approveProposal(
   return { proposal: claimed, result };
 }
 
+/**
+ * Negative feedback may trip auto-demotion for the kind. Never allowed to
+ * fail the user's own action — the feedback row is already written.
+ */
+async function checkDemotionAfterNegativeFeedback(
+  ctx: ApplierContext,
+  kind: (typeof aiActionProposals.$inferSelect)["kind"],
+): Promise<void> {
+  try {
+    await demoteAutonomyIfSlipped(ctx.db, ctx.orgId, kind, ctx.userId);
+  } catch (error) {
+    logger.error("Autonomy demotion check failed (feedback already recorded)", {
+      orgId: ctx.orgId,
+      kind,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 /** Correct: apply the USER's corrected payload; the diff is the label. */
 export async function correctProposal(
   ctx: ApplierContext,
@@ -285,6 +308,7 @@ export async function correctProposal(
     correction: fieldDiff(claimed.proposal, corrected),
     userId: ctx.userId,
   });
+  await checkDemotionAfterNegativeFeedback(ctx, claimed.kind);
   return { proposal: claimed, result };
 }
 
@@ -303,6 +327,7 @@ export async function rejectProposal(
     correction: reason ? { reason } : undefined,
     userId: ctx.userId,
   });
+  await checkDemotionAfterNegativeFeedback(ctx, claimed.kind);
   return claimed;
 }
 

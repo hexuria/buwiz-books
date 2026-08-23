@@ -533,6 +533,7 @@ export const updateOrgAiSettings = createServerFn({ method: "POST" }).handler(
           monthlySpendCapUsd,
           killSwitch,
           taskAllowlist,
+          autonomy,
         } = rawData as {
           organizationId: string;
           providerAllowlist?: unknown;
@@ -541,6 +542,7 @@ export const updateOrgAiSettings = createServerFn({ method: "POST" }).handler(
           monthlySpendCapUsd?: unknown;
           killSwitch?: unknown;
           taskAllowlist?: unknown;
+          autonomy?: unknown;
         };
         if (!organizationId) throw new Error("organizationId is required");
         assertOrgScope(ctx, organizationId);
@@ -556,6 +558,7 @@ export const updateOrgAiSettings = createServerFn({ method: "POST" }).handler(
           ...("monthlySpendCapUsd" in raw ? { monthlySpendCapUsd } : {}),
           ...("killSwitch" in raw ? { killSwitch } : {}),
           ...("taskAllowlist" in raw ? { taskAllowlist } : {}),
+          ...("autonomy" in raw ? { autonomy } : {}),
         });
 
         // Field NAMES only — the values are already in activity_logs, and the

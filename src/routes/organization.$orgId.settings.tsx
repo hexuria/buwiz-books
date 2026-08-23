@@ -1419,6 +1419,27 @@ const AI_TASK_TITLES: Record<string, string> = {
   match_assist: "Match assist",
 };
 
+const AUTONOMY_KIND_TITLES: Record<string, { title: string; blurb: string }> = {
+  document_type: {
+    title: "Document type labels",
+    blurb:
+      "Sets an uploaded document's type (invoice, receipt, statement…) when it is still unlabelled.",
+  },
+  category_mapping: {
+    title: "Category mapping defaults",
+    blurb: "Points expense/income categories at chart-of-accounts targets for posting defaults.",
+  },
+};
+
+const WALLED_KIND_LABELS: Record<string, string> = {
+  match: "Transaction matching",
+  split: "Splits",
+  coa_accounts: "Chart of accounts changes",
+  create_party: "Creating vendors/customers",
+  date_fix: "Date fixes",
+  categorize: "Recategorisation",
+};
+
 const PROVIDER_SHORT: Record<string, string> = {
   gemini: "Gemini",
   anthropic: "Anthropic",
@@ -1712,6 +1733,18 @@ function AiGovernanceSection({ orgId, queryClient }: { orgId: string; queryClien
     mutation.mutate({ killSwitch: next });
   };
 
+  const toggleAutonomy = (kind: string, enable: boolean) => {
+    if (enable) {
+      const meta = AUTONOMY_KIND_TITLES[kind];
+      const message = `Let AI apply its own high-confidence "${meta?.title ?? kind}" suggestions without waiting for approval? Every auto-applied change is still recorded and reversible, and this turns itself back off if quality slips.`;
+      if (!window.confirm(message)) return;
+    }
+    const next: Record<string, string> = { ...config.autonomy };
+    if (enable) next[kind] = "auto_apply_high_confidence";
+    else delete next[kind];
+    mutation.mutate({ autonomy: next });
+  };
+
   const saveSpendCap = () => {
     const trimmed = spendCap.trim();
     if (trimmed && !(Number(trimmed) >= 0)) {
@@ -1825,6 +1858,75 @@ function AiGovernanceSection({ orgId, queryClient }: { orgId: string; queryClien
               </span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Earned automation (per-kind auto-apply) */}
+      <div className="space-y-2">
+        <div>
+          <p className="text-xs font-medium text-[#64748b] dark:text-white/50 mb-1">Automation</p>
+          <p className="text-[11px] text-[#94a3b8] dark:text-white/40">
+            A task can apply its own high-confidence suggestions only after this organization has
+            reviewed 200+ of them with a 98%+ acceptance rate — and it turns itself back off if
+            quality slips. Everything auto-applied stays visible and reversible.
+          </p>
+        </div>
+        <div className="space-y-1.5">
+          {(config.autonomyKinds ?? []).map((k) => {
+            const meta = AUTONOMY_KIND_TITLES[k.kind] ?? { title: k.kind, blurb: "" };
+            const canEnable = k.eligibility.eligible;
+            const pct = (k.eligibility.acceptanceRate * 100).toFixed(1);
+            return (
+              <div
+                key={k.kind}
+                className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-[#f8fafc] dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-white/5"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-[#1e293b] dark:text-white">
+                    {meta.title}
+                    {k.enabled && (
+                      <span className="ml-2 text-[10px] font-medium text-[#0d9488] dark:text-teal-400">
+                        auto-applying
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-[11px] text-[#94a3b8] dark:text-white/40">{meta.blurb}</p>
+                  <p className="text-[11px] mt-0.5 text-[#64748b] dark:text-white/50">
+                    {k.eligibility.total > 0
+                      ? `${k.eligibility.total} reviewed · ${pct}% accepted — `
+                      : ""}
+                    {k.enabled
+                      ? "On: suggestions at or above the confidence threshold apply themselves."
+                      : k.eligibility.reason}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => toggleAutonomy(k.kind, !k.enabled)}
+                  disabled={mutation.isPending || (!k.enabled && !canEnable)}
+                  className={`touch-target relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-[#0d9488]/30 disabled:opacity-40 ${
+                    k.enabled ? "bg-[#0d9488]" : "bg-[#e2e8f0] dark:bg-white/10"
+                  }`}
+                  aria-label={`Toggle auto-apply for ${meta.title}`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      k.enabled ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+            );
+          })}
+          <div className="px-4 py-3 rounded-xl bg-[#f8fafc] dark:bg-[#0f172a] border border-dashed border-[#e2e8f0] dark:border-white/10">
+            <p className="text-[11px] text-[#94a3b8] dark:text-white/40">
+              Always applied by a human, at any accuracy:{" "}
+              {(config.walledKinds ?? [])
+                .map((kind) => WALLED_KIND_LABELS[kind] ?? kind)
+                .join(", ")}
+              . These change money movement, the chart, or counterparties — AI only suggests.
+            </p>
+          </div>
         </div>
       </div>
 

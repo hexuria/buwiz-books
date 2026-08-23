@@ -8,7 +8,9 @@ import {
   canAutoApply,
   STRUCTURAL_MANUAL_KINDS,
   AUTONOMY_CRITERIA,
+  AUTONOMY_ALLOWED_KINDS,
 } from "../../../src/lib/ai/autonomy";
+import { PROPOSAL_APPLIERS } from "../../../src/lib/ai/proposal-appliers";
 
 describe("STRUCTURAL_MANUAL_KINDS", () => {
   it("includes the ledger-linking kinds", () => {
@@ -110,6 +112,48 @@ describe("canAutoApply", () => {
         threshold: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("AUTONOMY_ALLOWED_KINDS (positive allowlist)", () => {
+  it("never overlaps the structurally-manual wall", () => {
+    for (const kind of AUTONOMY_ALLOWED_KINDS) {
+      expect(STRUCTURAL_MANUAL_KINDS.has(kind)).toBe(false);
+    }
+  });
+
+  it("every allowed kind has a registered applier that can actually act", () => {
+    for (const kind of AUTONOMY_ALLOWED_KINDS) {
+      expect(PROPOSAL_APPLIERS[kind], `applier for ${kind}`).toBeDefined();
+    }
+  });
+
+  it("refuses acknowledge-only kinds even when flipped on at full confidence", () => {
+    // prefill / create_txn approvals ARE the human feedback label — apply()
+    // writes nothing. Auto-applying them would delete the training signal.
+    for (const kind of ["prefill", "create_txn"] as const) {
+      expect(
+        canAutoApply({
+          kind,
+          autonomy: { [kind]: "auto_apply_high_confidence" },
+          confidence: 1.0,
+          threshold: 0,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it("still allows the allowlisted kinds", () => {
+    for (const kind of AUTONOMY_ALLOWED_KINDS) {
+      expect(
+        canAutoApply({
+          kind,
+          autonomy: { [kind]: "auto_apply_high_confidence" },
+          confidence: 0.99,
+          threshold: 0.9,
+        }),
+      ).toBe(true);
+    }
   });
 });
 
