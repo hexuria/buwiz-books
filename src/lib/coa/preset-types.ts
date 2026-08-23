@@ -74,7 +74,8 @@ export type CoaPresetId =
   | "general_small_business"
   | "saas_startup"
   | "freelancer"
-  | "retail_ecommerce";
+  | "retail_ecommerce"
+  | "philippines_smb";
 
 export interface CoaPreset {
   /**

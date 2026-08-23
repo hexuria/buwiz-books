@@ -7,6 +7,7 @@
 import type { CoaPreset, CoaPresetId } from "../preset-types";
 import { FREELANCER } from "./freelancer";
 import { GENERAL_SMALL_BUSINESS } from "./general-small-business";
+import { PHILIPPINES_SMB } from "./philippines-smb";
 import { RETAIL_ECOMMERCE } from "./retail-ecommerce";
 import { SAAS_STARTUP } from "./saas-startup";
 
@@ -15,6 +16,7 @@ export const COA_PRESETS: Record<CoaPresetId, CoaPreset> = {
   saas_startup: SAAS_STARTUP,
   freelancer: FREELANCER,
   retail_ecommerce: RETAIL_ECOMMERCE,
+  philippines_smb: PHILIPPINES_SMB,
 };
 
 export const DEFAULT_PRESET_ID: CoaPresetId = "general_small_business";
