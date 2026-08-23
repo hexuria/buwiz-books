@@ -4,6 +4,7 @@
  * Powers the "Manage Connection" pattern .
  */
 import { createServerFn } from "@tanstack/react-start";
+import { escapeLikePattern } from "../../lib/sql-escape";
 import type { DbExecutor } from "../../db";
 import { categoryConnections } from "../../db/schema/connections";
 import { accounts } from "../../db/schema/accounts";
@@ -55,7 +56,9 @@ async function autoCreatePartyForConnection(
   const [existing] = await db
     .select({ id: parties.id })
     .from(parties)
-    .where(and(eq(parties.organizationId, orgId), ilike(parties.name, displayName)))
+    .where(
+      and(eq(parties.organizationId, orgId), ilike(parties.name, escapeLikePattern(displayName))),
+    )
     .limit(1);
 
   const partyId = existing?.id;

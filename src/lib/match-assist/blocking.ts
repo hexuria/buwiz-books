@@ -73,7 +73,12 @@ export function findSplitCombinations(
 ): Array<{ journalLineIds: string[]; total: number }> {
   const results: Array<{ journalLineIds: string[]; total: number }> = [];
   // Bounded search: blocking already trims the pool, and maxParts is small.
-  const pool = candidates.slice(0, 12);
+  // Only same-sign candidates: a +500/-200 pair "summing" to 300 is a pair
+  // of offsetting entries, not a split of one statement charge (audit P6).
+  const targetSign = Math.sign(target);
+  const pool = candidates
+    .filter((candidate) => candidate.amount === 0 || Math.sign(candidate.amount) === targetSign)
+    .slice(0, 12);
 
   const walk = (start: number, picked: LedgerTransactionForMatching[], sum: number) => {
     if (picked.length >= 2 && centsEqual(sum, target)) {

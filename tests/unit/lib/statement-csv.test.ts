@@ -95,11 +95,25 @@ describe("parseStatementCsv", () => {
     ]);
   });
 
-  it("reports unparseable rows as issues instead of guessing", () => {
+  // P6 deliberate change: dropping a meaningful share of data rows is a
+  // FAILED parse, not a success with footnotes — 1 of 2 rows dropped used
+  // to report ok:true and the reconciliation started half-blind.
+  it("fails the parse when a meaningful share of rows drop", () => {
     const csv = ["Date,Description,Amount", "notadate,X,10.00", "2026-03-01,OK,5.00"].join("\n");
     const result = parseStatementCsv(csv);
+    expect(result.ok).toBe(false);
+    expect(result.droppedRows).toBe(1);
+    expect(result.issues[0]).toMatch(/unparseable date/i);
+    expect(result.issues.at(-1)).toMatch(/1 dropped/);
+  });
+
+  it("tolerates a stray junk row when the statement substantially parses", () => {
+    const rows = ["Date,Description,Amount", "notadate,junk,1.00"];
+    for (let i = 1; i <= 9; i++) rows.push(`2026-03-0${i > 8 ? 9 : i},Row ${i},${i}.00`);
+    const result = parseStatementCsv(rows.join("\n"));
     expect(result.ok).toBe(true);
-    expect(result.transactions).toHaveLength(1);
+    expect(result.droppedRows).toBe(1);
+    expect(result.transactions).toHaveLength(9);
     expect(result.issues[0]).toMatch(/unparseable date/i);
   });
 

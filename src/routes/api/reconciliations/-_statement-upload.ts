@@ -2,6 +2,7 @@
  * Reconciliation API — Statement Upload, OCR, Document Attachment, PDF Generation
  */
 import { createServerFn } from "@tanstack/react-start";
+import { centsToMoney, moneyToCents } from "@/lib/money";
 import { isDateInLockedPeriod } from "../../../lib/period-close";
 import { z } from "zod";
 import {
@@ -1173,22 +1174,24 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
                 .orderBy(asc(journalHeaders.transactionDate))
             : [];
 
-        const openingBal = Number.parseFloat(recon.statementBeginningBalance ?? "0");
-        let runningBal = openingBal;
+        // Integer cents (audit P6): float subtraction drifted the generated
+        // statement's amounts and running balances at the 8th decimal.
+        const openingCents = moneyToCents(recon.statementBeginningBalance ?? "0", "balance");
+        let runningCents = openingCents;
 
         const transactions = ledgerTxns.map((txn) => {
-          const debitAmt = txn.debit ? Number.parseFloat(txn.debit) : 0;
-          const creditAmt = txn.credit ? Number.parseFloat(txn.credit) : 0;
-          const amount = debitAmt - creditAmt;
-          runningBal += amount;
+          const debitCents = txn.debit ? moneyToCents(txn.debit, "debit") : 0;
+          const creditCents = txn.credit ? moneyToCents(txn.credit, "credit") : 0;
+          const amountCents = debitCents - creditCents;
+          runningCents += amountCents;
 
           return {
             id: txn.id,
             date: txn.transactionDate,
             description: txn.partyName ?? txn.description ?? "Transaction",
             detail: txn.headerMemo ?? undefined,
-            amount,
-            runningBalance: runningBal,
+            amount: amountCents / 100,
+            runningBalance: runningCents / 100,
           };
         });
 
@@ -1202,8 +1205,8 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
           entityName,
           periodStart: recon.periodStart,
           periodEnd: recon.periodEnd,
-          openingBalance: openingBal,
-          closingBalance: Number.parseFloat(recon.statementEndingBalance ?? "0"),
+          openingBalance: openingCents / 100,
+          closingBalance: moneyToCents(recon.statementEndingBalance ?? "0", "balance") / 100,
           transactions,
         });
 
@@ -1301,10 +1304,12 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
             reconciliationId: parsed.reconciliationId,
             transactionDate: t.date,
             description: t.description,
-            amount: String(t.amount),
+            amount: centsToMoney(Math.round(t.amount * 100)),
             sortOrder: sortIndex++,
             source: "ocr",
-            ocrConfidence: "1.0",
+            // The column is 0-100; "1.0" recorded a generated line as 1%
+            // confident (audit P6). This line IS the ledger, so 100.
+            ocrConfidence: "100",
             ocrBbox: box?.bbox ?? null,
             ocrPage: box?.page ?? null,
             // Native auto-match: we created this perfectly from the ledger!
@@ -1378,10 +1383,13 @@ export const generateReconciliationStatement = createServerFn({ method: "POST" }
           runningBalance: 0, // Calculated below
         }));
 
-        let balance = Number(reconData.recon.statementBeginningBalance || 0);
+        let balanceCents = moneyToCents(
+          reconData.recon.statementBeginningBalance || "0",
+          "balance",
+        );
         txns.forEach((t) => {
-          balance += t.amount;
-          t.runningBalance = balance;
+          balanceCents += Math.round(t.amount * 100);
+          t.runningBalance = balanceCents / 100;
         });
 
         const pdfData: BankStatementData = {
