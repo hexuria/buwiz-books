@@ -14,7 +14,7 @@
  * simply does not need it for the read.
  */
 import { eq } from "drizzle-orm";
-import { db } from "@/db";
+import { withOrgContext } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { taxReferenceDatasets } from "@/db/schema/tax-reference";
 import { createLogger } from "@/lib/logger";
@@ -27,7 +27,12 @@ export async function processTaxReferenceStalenessJob(
   job: ProcessingJob,
   _context: JobContext,
 ): Promise<JobHandlerResult> {
-  const datasets = await db.select().from(taxReferenceDatasets);
+  // The datasets table is global and org-less; reading it under the job's
+  // org context is harmless and keeps this handler free of the module-level
+  // connection like every sibling.
+  const datasets = await withOrgContext(job.organizationId, "system", "admin", (tx) =>
+    tx.select().from(taxReferenceDatasets),
+  );
   const inputs: StalenessInput[] = datasets.map((dataset) => ({
     datasetKey: dataset.version,
     lastVerifiedAt: dataset.lastVerifiedAt ? dataset.lastVerifiedAt.toISOString() : null,
@@ -54,16 +59,18 @@ export async function processTaxReferenceStalenessJob(
     summary: report.summary,
   });
 
-  await db
-    .update(processingJobs)
-    .set({
-      status: "completed",
-      lockedBy: null,
-      lockedUntil: null,
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(eq(processingJobs.id, job.id));
+  await withOrgContext(job.organizationId, "system", "admin", (tx) =>
+    tx
+      .update(processingJobs)
+      .set({
+        status: "completed",
+        lockedBy: null,
+        lockedUntil: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(processingJobs.id, job.id)),
+  );
 
   return { processed: true, jobId: job.id };
 }

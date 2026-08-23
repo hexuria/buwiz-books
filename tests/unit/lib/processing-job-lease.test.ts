@@ -1,4 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The lease module now imports withOrgContext as a value, which constructs
+// the db client at import time; these tests only exercise the pure claim
+// predicates, so stub the module out.
+vi.mock("@/db", () => ({
+  db: {},
+  withOrgContext: (_orgId: string, _userId: string, _role: string, fn: (tx: unknown) => unknown) =>
+    fn({}),
+}));
+
 import {
   isProcessingJobClaimable,
   isProcessingJobExpiredAndExhausted,

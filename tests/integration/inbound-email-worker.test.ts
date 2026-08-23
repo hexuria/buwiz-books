@@ -74,47 +74,52 @@ vi.mock("@/lib/inbox/email-attachment-extraction", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/inbox/email-attachment-extraction")>();
   const { and, eq } = await import("drizzle-orm");
   const { documents } = await import("@/db/schema/documents");
+  // The handler calls the tx-level ensureDocumentMatchingExtraction (it
+  // already holds an org-context transaction); the root-db wrapper stays
+  // mocked too for any caller that still goes through it.
+  const fakeExtraction = vi.fn(
+    async (
+      database: typeof import("@/db").db,
+      input: { organizationId: string; documentId: string; filename: string },
+    ) => {
+      const result = resendState.extractedByFilename[input.filename];
+      if (!result) throw new Error(`No extraction result for ${input.filename}`);
+      const [existing] = await database
+        .select()
+        .from(documents)
+        .where(
+          and(
+            eq(documents.organizationId, input.organizationId),
+            eq(documents.id, input.documentId),
+          ),
+        )
+        .limit(1);
+      const [updated] = await database
+        .update(documents)
+        .set({
+          metadata: {
+            ...existing.metadata,
+            inboxExtraction: {
+              version: 1,
+              cachedAt: "2026-07-24T00:00:00.000Z",
+              result,
+            },
+          },
+        })
+        .where(
+          and(
+            eq(documents.organizationId, input.organizationId),
+            eq(documents.id, input.documentId),
+          ),
+        )
+        .returning();
+      return updated;
+    },
+  );
   return {
     ...actual,
-    ensureEmailAttachmentExtraction: vi.fn(
-      async (
-        database: typeof import("@/db").db,
-        input: { organizationId: string; documentId: string; filename: string },
-      ) => {
-        const result = resendState.extractedByFilename[input.filename];
-        if (!result) throw new Error(`No extraction result for ${input.filename}`);
-        const [existing] = await database
-          .select()
-          .from(documents)
-          .where(
-            and(
-              eq(documents.organizationId, input.organizationId),
-              eq(documents.id, input.documentId),
-            ),
-          )
-          .limit(1);
-        const [updated] = await database
-          .update(documents)
-          .set({
-            metadata: {
-              ...existing.metadata,
-              inboxExtraction: {
-                version: 1,
-                cachedAt: "2026-07-24T00:00:00.000Z",
-                result,
-              },
-            },
-          })
-          .where(
-            and(
-              eq(documents.organizationId, input.organizationId),
-              eq(documents.id, input.documentId),
-            ),
-          )
-          .returning();
-        return updated;
-      },
-    ),
+    ensureEmailAttachmentExtraction: fakeExtraction,
+    ensureDocumentMatchingExtraction: fakeExtraction,
   };
 });
 

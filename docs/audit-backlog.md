@@ -151,6 +151,24 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
   blocks.
 - Deferred by decision: per-org inbound-email sender allowlist (PR-20 records the trade-off).
 
+### Deferred from PR-12 (background DB discipline)
+
+- **match-assist facade still takes the module connection** —
+  `src/lib/jobs/handlers/match-assist.ts` passes bare `db` into
+  `runMatchAssist` / `runTxnPrefill` (`src/lib/match-assist/run.ts`,
+  `prefill.ts`), whose internals interleave short queries with model calls
+  and filter by orgId manually. Convert the facade to own its org context the
+  way `runStep` now does (short `withOrgContext` transactions around each
+  query, model calls outside), then remove the documented allowlist entry in
+  `tests/unit/background-db-discipline.test.ts`.
+- **AI facade runtime's remaining module-db reads** —
+  `src/lib/ai/facade-runtime.ts` still reads org metadata, credentials, and
+  spend state on the module connection (`loadOrgMetadata`,
+  `assertWithinSpendCap`, `getOrgCredentials`). `getOrgAiSettings` was
+  converted in PR-12; the rest of the runtime should follow the same
+  executor/withOrgContext pattern before the RLS hardening drops the IS NULL
+  escape.
+
 ## Tenancy, auth & reporting
 
 - M `src/routes/api/-export-import.ts:895-907` — `executeImport` never applies the per-entity

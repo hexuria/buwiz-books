@@ -14,7 +14,7 @@ import { reconciliations, statementLines } from "../../db/schema/reconciliations
 import { activityLogs } from "../../db/schema/activity-logs";
 import { eq, desc, asc, and, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { allocateInvoiceNumber } from "../../lib/sequence";
+import { allocateInvoiceNumber, peekNextInvoiceNumber } from "../../lib/sequence";
 import { getClosedThrough, isDateLocked } from "../../lib/period-close";
 import { journalsClearedByFinalizedReconciliation } from "../../lib/reconciliation-claimed-lines";
 import { resolveFunctionalCurrency } from "../../lib/functional-currency";
@@ -219,8 +219,10 @@ export const getInvoice = createServerFn({ method: "GET" }).handler(
 // ============================================================================
 
 export const getNextInvoiceNumber = createServerFn({ method: "GET" }).handler(async () => {
-  return withSessionOrgContext(async ({ orgId }) => {
-    return allocateInvoiceNumber(orgId);
+  return withSessionOrgContext(async ({ orgId, db }) => {
+    // Peek only — the number is assigned when the invoice is saved. The old
+    // behavior allocated here, so every draft-screen open consumed a value.
+    return peekNextInvoiceNumber(orgId, db);
   });
 });
 
@@ -277,7 +279,10 @@ async function assertInvoiceReferences(
 }
 
 const createInvoiceSchema = z.object({
-  invoiceNumber: z.string().min(1),
+  // Optional: omitted (the normal path) means the server assigns the next
+  // sequence number at save time; a provided value is honored as a custom
+  // number, still subject to the per-org unique constraint.
+  invoiceNumber: z.string().min(1).optional(),
   customerId: z.string().uuid(),
   issueDate: z.string(),
   dueDate: z.string(),
@@ -305,12 +310,32 @@ export const createInvoice = createServerFn({ method: "POST" }).handler(
           parsed.taxAmount,
         );
 
+        // Allocation happens HERE, not on the draft screen's GET (checkpoint
+        // C6: peek on open, assign on save). Historical custom numbers can
+        // occupy sequence values, so skip over collisions; the per-org unique
+        // constraint stays the true guard under concurrency.
+        let invoiceNumber = parsed.invoiceNumber?.trim() || null;
+        if (!invoiceNumber) {
+          for (let attempt = 0; attempt < 5 && !invoiceNumber; attempt++) {
+            const candidate = await allocateInvoiceNumber(orgId, db);
+            const [clash] = await db
+              .select({ id: invoices.id })
+              .from(invoices)
+              .where(and(eq(invoices.organizationId, orgId), eq(invoices.invoiceNumber, candidate)))
+              .limit(1);
+            if (!clash) invoiceNumber = candidate;
+          }
+          if (!invoiceNumber) {
+            throw new Error("Could not assign an invoice number. Please try again.");
+          }
+        }
+
         return await db.transaction(async (tx) => {
           const [invoice] = await tx
             .insert(invoices)
             .values({
               organizationId: orgId,
-              invoiceNumber: parsed.invoiceNumber,
+              invoiceNumber,
               customerId: parsed.customerId,
               issueDate: parsed.issueDate,
               dueDate: parsed.dueDate,

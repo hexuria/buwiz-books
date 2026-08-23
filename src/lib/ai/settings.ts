@@ -8,7 +8,7 @@
 // ============================================================================
 
 import { eq } from "drizzle-orm";
-import { db } from "../../db";
+import type { DbExecutor } from "../../db";
 import { organizationAiSettings } from "../../db/schema/ai";
 import type { AiProvider } from "./errors";
 import type { OrgAiSettings } from "./settings-policy";
@@ -46,12 +46,15 @@ export function invalidateOrgAiSettings(orgId: string): void {
   cache.delete(orgId);
 }
 
-export async function getOrgAiSettings(orgId: string): Promise<OrgAiSettings> {
+export async function getOrgAiSettings(
+  executor: DbExecutor,
+  orgId: string,
+): Promise<OrgAiSettings> {
   const cached = cache.get(orgId);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.value;
 
   try {
-    const [row] = await db
+    const [row] = await executor
       .select()
       .from(organizationAiSettings)
       .where(eq(organizationAiSettings.organizationId, orgId))

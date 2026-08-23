@@ -12,6 +12,12 @@
 // ============================================================================
 
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
+// The bare `db` import is the DOCUMENTED exception in this directory: it is
+// passed only into the match-assist facade (runMatchAssist / runTxnPrefill),
+// whose internals interleave short queries with model calls and manually
+// filter every query by orgId. Converting the facade to own its org context
+// the way runStep does is tracked in docs/audit-backlog.md - do not add new
+// bare-db uses here.
 import { db, withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { reconciliations, statementLines } from "@/db/schema/reconciliations";
@@ -192,7 +198,7 @@ export async function processMatchAssistJob(
     // transaction, so the step body opens short org-context transactions for
     // its reads/writes and lets the façade call happen between them.
     let suggested = 0;
-    await runStep(db, run, "arbitrate", async () => {
+    await runStep(run, "arbitrate", async () => {
       const result = await runMatchAssist(db, {
         orgId,
         reconciliationId,
@@ -211,12 +217,12 @@ export async function processMatchAssistJob(
       };
     });
 
-    await extendProcessingJobLease(db, job.id, ctx.workerId);
+    await extendProcessingJobLease(orgId, job.id, ctx.workerId);
 
     // ── Prefill whatever still has nothing ────────────────────────────────
     let prefilled = 0;
     if (payload.prefill) {
-      await runStep(db, run, "prefill", async () => {
+      await runStep(run, "prefill", async () => {
         const stillUnmatched = await orgTx((tx) =>
           tx
             .select({

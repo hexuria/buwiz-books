@@ -8,7 +8,13 @@ const { assertWithinSpendCapMock, generateStructuredMock, getOrgAiSettingsMock, 
     resolveChainMock: vi.fn(),
   }));
 
-vi.mock("../../../src/db", () => ({ db: {} }));
+vi.mock("../../../src/db", () => ({
+  db: {},
+  // Pass the mocked settings read straight through; the runtime only uses
+  // the context wrapper as a scoping envelope.
+  withOrgContext: (_orgId: string, _userId: string, _role: string, fn: (tx: unknown) => unknown) =>
+    fn({}),
+}));
 vi.mock("../../../src/lib/ai/adapters/gemini", () => ({
   generateStructured: generateStructuredMock,
 }));

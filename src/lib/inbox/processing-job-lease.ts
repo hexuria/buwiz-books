@@ -1,5 +1,5 @@
 import { and, asc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
-import type { DbExecutor } from "@/db";
+import { withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { terminalizeProcessingJobFailure } from "./terminal-processing-failure";
 
@@ -151,24 +151,33 @@ export async function claimNextProcessingJob(
  * Extend a held lease mid-job (long multi-stage handlers extend between
  * stages so a slow stage doesn't look abandoned). Fenced by worker ID:
  * only the current lease owner can extend.
+ *
+ * Takes the job's orgId, not an executor: every caller was passing the
+ * module-level connection, leaving this per-stage write with no org context
+ * at all. The single short UPDATE now runs inside its own withOrgContext
+ * transaction (system context - the job row is the authorization record).
+ * The claim in claimNextProcessingJob remains the one documented cross-org
+ * read.
  */
 export async function extendProcessingJobLease(
-  database: DbExecutor,
+  orgId: string,
   jobId: string,
   workerId: string,
   leaseMs: number = DEFAULT_PROCESSING_JOB_LEASE_MS,
   now: Date = new Date(),
 ): Promise<boolean> {
-  const extended = await database
-    .update(processingJobs)
-    .set({ lockedUntil: new Date(now.getTime() + leaseMs), updatedAt: now })
-    .where(
-      and(
-        eq(processingJobs.id, jobId),
-        eq(processingJobs.status, "running"),
-        eq(processingJobs.lockedBy, workerId),
-      ),
-    )
-    .returning({ id: processingJobs.id });
+  const extended = await withOrgContext(orgId, "system", "admin", (tx) =>
+    tx
+      .update(processingJobs)
+      .set({ lockedUntil: new Date(now.getTime() + leaseMs), updatedAt: now })
+      .where(
+        and(
+          eq(processingJobs.id, jobId),
+          eq(processingJobs.status, "running"),
+          eq(processingJobs.lockedBy, workerId),
+        ),
+      )
+      .returning({ id: processingJobs.id }),
+  );
   return extended.length > 0;
 }
