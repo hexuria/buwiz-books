@@ -85,7 +85,7 @@ export async function createProposalWithAutonomy(
 ): Promise<{ proposal: ProposalRow; autoApplied: boolean }> {
   const proposal = await createProposal(ctx.db, { ...input, orgId: ctx.orgId });
 
-  const settings = await getOrgAiSettings(ctx.orgId);
+  const settings = await getOrgAiSettings(ctx.db, ctx.orgId);
   const eligible = canAutoApply({
     kind: input.kind,
     autonomy: settings.autonomy,

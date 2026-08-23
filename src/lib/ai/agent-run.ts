@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { and, eq } from "drizzle-orm";
-import type { DbExecutor } from "../../db";
+import { withOrgContext, type DbExecutor } from "../../db";
 import { agentRuns, agentRunSteps, type AgentRunKind } from "../../db/schema/ai";
 
 export interface StartRunInput {
@@ -45,54 +45,74 @@ export interface RunStepResult<T> {
  * (runId, step) exists, fn is skipped and the recorded outputRef returned —
  * handlers must be able to re-derive their state from the DB via that ref.
  * Failures are recorded on the step row and rethrown.
+ *
+ * Org context is runStep's OWN responsibility (it takes run.orgId, not an
+ * executor): every caller was passing the module-level connection, so the
+ * memoization rows were written with no org context at all — silently
+ * unscoped today, silently invisible once the planned RLS hardening drops
+ * the IS NULL escape.
  */
 export async function runStep<T = unknown>(
-  db: DbExecutor,
   run: { runId: string; orgId: string; processingJobId?: string },
   step: string,
   fn: () => Promise<{ value?: T; output?: Record<string, unknown> }>,
 ): Promise<RunStepResult<T>> {
-  const [existing] = await db
-    .select()
-    .from(agentRunSteps)
-    .where(
-      and(
-        eq(agentRunSteps.runId, run.runId),
-        eq(agentRunSteps.step, step),
-        eq(agentRunSteps.status, "completed"),
-      ),
-    )
-    .limit(1);
+  // Worker paths hold system context: no interactive session exists, and the
+  // run row itself is the authorization record. Each bookkeeping query gets
+  // its own short transaction; fn stays outside so the in-flight step row is
+  // visible to concurrent workers and no model call holds a connection.
+  const scoped = <R>(op: (tx: DbExecutor) => Promise<R>): Promise<R> =>
+    withOrgContext(run.orgId, "system", "admin", op);
+
+  const [existing] = await scoped((tx) =>
+    tx
+      .select()
+      .from(agentRunSteps)
+      .where(
+        and(
+          eq(agentRunSteps.runId, run.runId),
+          eq(agentRunSteps.step, step),
+          eq(agentRunSteps.status, "completed"),
+        ),
+      )
+      .limit(1),
+  );
   if (existing) {
     return { skipped: true, output: existing.outputRef ?? null, value: null };
   }
 
-  const [stepRow] = await db
-    .insert(agentRunSteps)
-    .values({
-      organizationId: run.orgId,
-      runId: run.runId,
-      step,
-      processingJobId: run.processingJobId,
-    })
-    .returning({ id: agentRunSteps.id });
+  const [stepRow] = await scoped((tx) =>
+    tx
+      .insert(agentRunSteps)
+      .values({
+        organizationId: run.orgId,
+        runId: run.runId,
+        step,
+        processingJobId: run.processingJobId,
+      })
+      .returning({ id: agentRunSteps.id }),
+  );
 
   try {
     const { value, output } = await fn();
-    await db
-      .update(agentRunSteps)
-      .set({ status: "completed", outputRef: output ?? null, finishedAt: new Date() })
-      .where(eq(agentRunSteps.id, stepRow.id));
+    await scoped((tx) =>
+      tx
+        .update(agentRunSteps)
+        .set({ status: "completed", outputRef: output ?? null, finishedAt: new Date() })
+        .where(eq(agentRunSteps.id, stepRow.id)),
+    );
     return { skipped: false, output: output ?? null, value: value ?? null };
   } catch (err) {
-    await db
-      .update(agentRunSteps)
-      .set({
-        status: "failed",
-        error: { message: err instanceof Error ? err.message : String(err) },
-        finishedAt: new Date(),
-      })
-      .where(eq(agentRunSteps.id, stepRow.id));
+    await scoped((tx) =>
+      tx
+        .update(agentRunSteps)
+        .set({
+          status: "failed",
+          error: { message: err instanceof Error ? err.message : String(err) },
+          finishedAt: new Date(),
+        })
+        .where(eq(agentRunSteps.id, stepRow.id)),
+    );
     throw err;
   }
 }

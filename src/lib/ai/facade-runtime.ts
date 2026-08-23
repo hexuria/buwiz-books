@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db } from "../../db";
+import { db, withOrgContext } from "../../db";
 import { organization } from "../../db/schema/auth";
 import { generateStructuredAnthropic } from "./adapters/anthropic";
 import { generateStructured } from "./adapters/gemini";
@@ -140,7 +140,11 @@ async function invokeHop<TOut>(
 
 export const productionAiCompletionRuntime: AiCompletionRuntime = {
   async prepare({ task, orgId, modelOverride }) {
-    const settings = await getOrgAiSettings(orgId);
+    // The runtime interface only carries orgId; open a short org-context
+    // transaction for the settings read instead of the module connection.
+    const settings = await withOrgContext(orgId, "system", "admin", (tx) =>
+      getOrgAiSettings(tx, orgId),
+    );
     if (settings.killSwitch) return { kind: "disabled" };
     if (!isTaskAllowed(settings, task)) return { kind: "task_not_allowed" };
 

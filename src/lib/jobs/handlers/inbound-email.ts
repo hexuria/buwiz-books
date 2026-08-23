@@ -9,7 +9,7 @@
  */
 import { Resend } from "resend";
 import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/db";
+import { withOrgContext, type DbExecutor } from "@/db";
 import {
   inboxItems,
   ingestionEvents,
@@ -33,7 +33,7 @@ import {
   deriveEmailBodySourceFacts,
   factsCorroborateSameEconomicEvent,
 } from "@/lib/inbox/email-body-source";
-import { ensureEmailAttachmentExtraction } from "@/lib/inbox/email-attachment-extraction";
+import { ensureDocumentMatchingExtraction } from "@/lib/inbox/email-attachment-extraction";
 import { isPdfPasswordRequiredError } from "@/lib/pdf-unlock";
 import { deriveEmailAttachmentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import type { DocumentSourceFacts } from "@/lib/inbox/email-attachment-source";
@@ -89,30 +89,40 @@ export async function processInboundEmailJob(
   if (!apiKey) throw new Error("RESEND_API_KEY is not configured.");
   if (!isR2Configured()) throw new Error("Document storage is not configured.");
 
-  const [emailItemContext] = await db
-    .select({
-      inboxItem: inboxItems,
-      candidate: transactionCandidates,
-    })
-    .from(inboxItems)
-    .innerJoin(transactionCandidates, eq(inboxItems.candidateId, transactionCandidates.id))
-    .where(
-      and(
-        eq(inboxItems.organizationId, job.organizationId),
-        eq(inboxItems.id, payload.inboxItemId),
-      ),
-    )
-    .limit(1);
-  const [parentEmailSource] = await db
-    .select()
-    .from(sourceRecords)
-    .where(
-      and(
-        eq(sourceRecords.organizationId, job.organizationId),
-        eq(sourceRecords.id, payload.sourceRecordId),
-      ),
-    )
-    .limit(1);
+  // Worker paths hold system context: no interactive session exists, and the
+  // job row itself is the authorization record. Each DB phase runs in its own
+  // short org-context transaction; the Resend fetches happen between them.
+  const orgTx = <T>(fn: (tx: DbExecutor) => Promise<T>): Promise<T> =>
+    withOrgContext(job.organizationId, "system", "admin", fn);
+
+  const [emailItemContext] = await orgTx((tx) =>
+    tx
+      .select({
+        inboxItem: inboxItems,
+        candidate: transactionCandidates,
+      })
+      .from(inboxItems)
+      .innerJoin(transactionCandidates, eq(inboxItems.candidateId, transactionCandidates.id))
+      .where(
+        and(
+          eq(inboxItems.organizationId, job.organizationId),
+          eq(inboxItems.id, payload.inboxItemId!),
+        ),
+      )
+      .limit(1),
+  );
+  const [parentEmailSource] = await orgTx((tx) =>
+    tx
+      .select()
+      .from(sourceRecords)
+      .where(
+        and(
+          eq(sourceRecords.organizationId, job.organizationId),
+          eq(sourceRecords.id, payload.sourceRecordId!),
+        ),
+      )
+      .limit(1),
+  );
   if (!emailItemContext || !parentEmailSource) {
     throw new Error("Inbound email source, candidate, or Inbox item was not found.");
   }
@@ -177,29 +187,33 @@ export async function processInboundEmailJob(
       continue;
     }
     const classifiedDocumentType = documentType(attachment.filename, attachment.content_type);
-    const ensured = await ensureDocument(db, {
-      organizationId: job.organizationId,
-      filename: attachment.filename,
-      contentType: attachment.content_type,
-      fileBuffer: buffer,
-      documentType: classifiedDocumentType,
-      metadata: {
-        ocrText: emailResponse.data.text ?? undefined,
-      },
-    });
+    const ensured = await orgTx((tx) =>
+      ensureDocument(tx, {
+        organizationId: job.organizationId,
+        filename: attachment.filename,
+        contentType: attachment.content_type,
+        fileBuffer: buffer,
+        documentType: classifiedDocumentType,
+        metadata: {
+          ocrText: emailResponse.data.text ?? undefined,
+        },
+      }),
+    );
     let canonicalDocument = ensured.document;
     let extractionError: string | null = null;
     try {
-      canonicalDocument = await ensureEmailAttachmentExtraction(db, {
-        organizationId: job.organizationId,
-        documentId: ensured.document.id,
-        fileBuffer: buffer,
-        mimeType: attachment.content_type,
-        filename: attachment.filename,
-        documentType: classifiedDocumentType,
-        fallbackCurrency: emailContext.candidate.originalCurrency,
-        fallbackDate: emailContext.candidate.transactionDate,
-      });
+      canonicalDocument = await orgTx((tx) =>
+        ensureDocumentMatchingExtraction(tx, {
+          organizationId: job.organizationId,
+          documentId: ensured.document.id,
+          fileBuffer: buffer,
+          mimeType: attachment.content_type,
+          filename: attachment.filename,
+          documentType: classifiedDocumentType,
+          fallbackCurrency: emailContext.candidate.originalCurrency,
+          fallbackDate: emailContext.candidate.transactionDate,
+        }),
+      );
     } catch (error) {
       extractionError = isPdfPasswordRequiredError(error)
         ? "This attachment is a password-protected PDF. Add the statement password on the matching bank account (Entities → Banks), then retry processing to extract it."
@@ -239,7 +253,7 @@ export async function processInboundEmailJob(
       extractedFrom: facts.extractedFrom,
       extractionError,
     };
-    const childSourceRecord = await db.transaction(async (tx) => {
+    const childSourceRecord = await orgTx(async (tx) => {
       await tx.execute(sql`
         SELECT pg_advisory_xact_lock(
           hashtextextended(
@@ -416,7 +430,7 @@ export async function processInboundEmailJob(
       text: bodyText || undefined,
       html: bodyText ? undefined : bodyHtml || undefined,
     };
-    const bodySource = await db.transaction(async (tx) => {
+    const bodySource = await orgTx(async (tx) => {
       await tx.execute(sql`
         SELECT pg_advisory_xact_lock(
           hashtextextended(
@@ -549,7 +563,7 @@ export async function processInboundEmailJob(
     );
   }
 
-  const finalized = await db.transaction(async (tx) => {
+  const finalized = await orgTx(async (tx) => {
     const [completedJob] = await tx
       .update(processingJobs)
       .set({

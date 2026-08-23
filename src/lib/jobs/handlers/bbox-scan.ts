@@ -16,7 +16,7 @@
  * type tag, since consumers look it up in colour and label tables.
  */
 import { and, eq, inArray } from "drizzle-orm";
-import { db, withOrgContext } from "@/db";
+import { withOrgContext } from "@/db";
 import { documents } from "@/db/schema/documents";
 import { processingJobs } from "@/db/schema/inbox";
 import { aiComplete } from "@/lib/ai/facade";
@@ -60,17 +60,19 @@ export async function processBboxScanJob(
   if (!payload.documentId) throw new Error("Bounding-box scan job payload is incomplete.");
   const documentId = payload.documentId;
 
-  const [document] = await db
-    .select({
-      id: documents.id,
-      r2Key: documents.r2Key,
-      mimeType: documents.mimeType,
-      previewPageR2Keys: documents.previewPageR2Keys,
-      previewImageR2Key: documents.previewImageR2Key,
-    })
-    .from(documents)
-    .where(and(eq(documents.id, documentId), eq(documents.organizationId, orgId)))
-    .limit(1);
+  const [document] = await withOrgContext(orgId, "system", "admin", (tx) =>
+    tx
+      .select({
+        id: documents.id,
+        r2Key: documents.r2Key,
+        mimeType: documents.mimeType,
+        previewPageR2Keys: documents.previewPageR2Keys,
+        previewImageR2Key: documents.previewImageR2Key,
+      })
+      .from(documents)
+      .where(and(eq(documents.id, documentId), eq(documents.organizationId, orgId)))
+      .limit(1),
+  );
   if (!document) throw new Error("Bounding-box scan document no longer exists.");
   if (!document.r2Key) throw new Error("Bounding-box scan document has no storage object key.");
   if (!isR2Configured()) throw new Error("Document storage is not configured.");
@@ -123,7 +125,7 @@ export async function processBboxScanJob(
   let pagesFailed = 0;
 
   for (let page = 0; page < pagesScanned; page += 1) {
-    await extendProcessingJobLease(db, job.id, workerId);
+    await extendProcessingJobLease(orgId, job.id, workerId);
     try {
       const media = isPdf
         ? {
@@ -190,23 +192,25 @@ export async function processBboxScanJob(
     });
   }
 
-  const [completed] = await db
-    .update(processingJobs)
-    .set({
-      status: "completed",
-      lockedBy: null,
-      lockedUntil: null,
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(processingJobs.id, job.id),
-        eq(processingJobs.status, "running"),
-        eq(processingJobs.lockedBy, workerId),
-      ),
-    )
-    .returning({ id: processingJobs.id });
+  const [completed] = await withOrgContext(orgId, "system", "admin", (tx) =>
+    tx
+      .update(processingJobs)
+      .set({
+        status: "completed",
+        lockedBy: null,
+        lockedUntil: null,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(processingJobs.id, job.id),
+          eq(processingJobs.status, "running"),
+          eq(processingJobs.lockedBy, workerId),
+        ),
+      )
+      .returning({ id: processingJobs.id }),
+  );
   if (!completed) return { processed: false, reason: "lease_lost", jobId: job.id };
 
   return {

@@ -23,7 +23,7 @@
 // ============================================================================
 
 import { and, eq, inArray } from "drizzle-orm";
-import { db, withOrgContext, type DbExecutor } from "@/db";
+import { withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { organization } from "@/db/schema/auth";
 import {
@@ -168,7 +168,7 @@ export async function processCoaScaffoldJob(
     // ── Step 1: draft the missing accounts ──────────────────────────────
     let draftProposalId: string | null = null;
     let draftedCount = 0;
-    await runStep(db, run, "draft", async () => {
+    await runStep(run, "draft", async () => {
       // The model call must NOT run inside an open transaction.
       const result = await aiComplete<CoaDraftOutput>({
         task: "coa_draft",
@@ -253,7 +253,7 @@ export async function processCoaScaffoldJob(
     // ── Step 2: posting defaults ────────────────────────────────────────
     let mappingProposalId: string | null = null;
     let suggestedCount = 0;
-    await runStep(db, run, "mappings", async () => {
+    await runStep(run, "mappings", async () => {
       const accountKeyById = new Map<string, string>();
       for (const [key, id] of keyToAccountId) accountKeyById.set(id, key);
 

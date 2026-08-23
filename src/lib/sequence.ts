@@ -36,6 +36,23 @@ export async function allocateInvoiceNumber(orgId: string, tx?: DbExecutor): Pro
   return `INV-${String(nextValue).padStart(4, "0")}`;
 }
 
+/**
+ * Preview the next invoice number WITHOUT consuming it. The draft screen
+ * calls this on open; the number is only allocated when the invoice is
+ * actually saved (createInvoice), so abandoning a draft or opening two
+ * drafts no longer burns sequence values — the GET used to allocate, which
+ * was a mutation on read.
+ */
+export async function peekNextInvoiceNumber(orgId: string, tx?: DbExecutor): Promise<string> {
+  const executor = tx ?? db;
+  const [row] = await executor
+    .select({ currentValue: numberSequences.currentValue })
+    .from(numberSequences)
+    .where(eq(numberSequences.scope, `invoice:${orgId}`))
+    .limit(1);
+  return `INV-${String((row?.currentValue ?? 0) + 1).padStart(4, "0")}`;
+}
+
 export async function seedSequenceFromExistingMax(scope: string, value: number): Promise<void> {
   const [existing] = await db
     .select({ currentValue: numberSequences.currentValue })

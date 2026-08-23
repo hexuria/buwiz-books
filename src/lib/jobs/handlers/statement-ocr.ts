@@ -24,7 +24,7 @@
  * because a bad statement is not a transient fault and must not burn retries.
  */
 import { and, eq, gte, inArray, lte, ne, sql } from "drizzle-orm";
-import { db, withOrgContext, type DbExecutor } from "@/db";
+import { withOrgContext, type DbExecutor } from "@/db";
 import { organization } from "@/db/schema/auth";
 import { documents } from "@/db/schema/documents";
 import { processingJobs } from "@/db/schema/inbox";
@@ -322,8 +322,8 @@ async function recordRunValidation(
     .where(eq(agentRuns.id, runId));
 }
 
-async function completeJob(job: ProcessingJob, workerId: string): Promise<boolean> {
-  const [completed] = await db
+async function completeJob(tx: DbExecutor, job: ProcessingJob, workerId: string): Promise<boolean> {
+  const [completed] = await tx
     .update(processingJobs)
     .set({
       status: "completed",
@@ -364,7 +364,7 @@ export async function processStatementOcrJob(
   const run = { runId, orgId, processingJobId: job.id };
 
   const finish = async (extra: Record<string, unknown>): Promise<JobHandlerResult> => {
-    if (!(await completeJob(job, workerId))) {
+    if (!(await orgTx(orgId, (tx) => completeJob(tx, job, workerId)))) {
       return { processed: false, reason: "lease_lost", jobId: job.id };
     }
     return { processed: true, jobId: job.id, reconciliationId, documentId, runId, ...extra };
@@ -389,7 +389,6 @@ export async function processStatementOcrJob(
 
   // ── a. triage — deterministic routing; CSV never reaches a vision model ──
   const triage = await runStep<{ source: "csv" | "ocr" } & StageOutcome>(
-    db,
     run,
     "triage",
     async () => {
@@ -429,11 +428,11 @@ export async function processStatementOcrJob(
   const source: "csv" | "ocr" =
     triage.value?.source ?? (triage.output?.source as "csv" | "ocr" | undefined) ?? "ocr";
 
-  await extendProcessingJobLease(db, job.id, workerId);
+  await extendProcessingJobLease(orgId, job.id, workerId);
 
   // ── b. ocr — the ONLY model call, and it runs outside every transaction ──
   if (source === "ocr") {
-    const ocr = await runStep<StageOutcome>(db, run, "ocr", async () => {
+    const ocr = await runStep<StageOutcome>(run, "ocr", async () => {
       const buffer = await downloadStatement(context);
       const mimeType = context.mimeType || "application/pdf";
       let media: Array<{ mimeType: string; dataBase64: string }> | null = null;
@@ -482,7 +481,7 @@ export async function processStatementOcrJob(
     if (ocr.value?.blocked) return block(ocr.value.reason);
   }
 
-  await extendProcessingJobLease(db, job.id, workerId);
+  await extendProcessingJobLease(orgId, job.id, workerId);
 
   const parsed = await orgTx(orgId, (tx) => readStash(tx, orgId, documentId, runId));
   if (!parsed?.parsed) {
@@ -492,7 +491,7 @@ export async function processStatementOcrJob(
   const statement = parsed.parsed;
 
   // ── c. validate — the gate that used to be computed and then ignored ──
-  const validate = await runStep<StageOutcome>(db, run, "validate", async () => {
+  const validate = await runStep<StageOutcome>(run, "validate", async () => {
     const validation = validateStatement(statement, {
       organizationName: context.organizationName,
       periodStart: context.periodStart,
@@ -529,10 +528,10 @@ export async function processStatementOcrJob(
   });
   if (validate.value?.blocked) return block(validate.value.reason);
 
-  await extendProcessingJobLease(db, job.id, workerId);
+  await extendProcessingJobLease(orgId, job.id, workerId);
 
   // ── d. insert_lines — batched, and user decisions survive re-OCR ──
-  await runStep(db, run, "insert_lines", async () =>
+  await runStep(run, "insert_lines", async () =>
     orgTx(orgId, async (tx) => {
       await tx
         .update(reconciliations)
@@ -656,10 +655,10 @@ export async function processStatementOcrJob(
     }),
   );
 
-  await extendProcessingJobLease(db, job.id, workerId);
+  await extendProcessingJobLease(orgId, job.id, workerId);
 
   // ── e. auto_match — ledger fetch + matcher + auto-link + unmatched flags ──
-  await runStep(db, run, "auto_match", async () =>
+  await runStep(run, "auto_match", async () =>
     orgTx(orgId, async (tx) => {
       // The lines this run owns are exactly the freshly inserted, still
       // undecided OCR lines — the same set on a fresh run and on a resume.
@@ -793,10 +792,10 @@ export async function processStatementOcrJob(
     }),
   );
 
-  await extendProcessingJobLease(db, job.id, workerId);
+  await extendProcessingJobLease(orgId, job.id, workerId);
 
   // ── f. persist_suggestions — refresh pending, respect dismissal memory ──
-  await runStep(db, run, "persist_suggestions", async () =>
+  await runStep(run, "persist_suggestions", async () =>
     orgTx(orgId, async (tx) => {
       const stash = await readStash(tx, orgId, documentId, runId);
       const candidates = stash?.matching?.suggestions ?? [];

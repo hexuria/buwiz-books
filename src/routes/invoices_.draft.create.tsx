@@ -174,7 +174,8 @@ function InvoiceCreatePage() {
     if (!customerId) return;
 
     createMutation.mutate({
-      invoiceNumber,
+      // invoiceNumber deliberately omitted: the preview above is a peek, and
+      // the server assigns the real number when the invoice is saved (C6).
       customerId,
       issueDate,
       dueDate,
@@ -267,6 +268,9 @@ function InvoiceCreatePage() {
                 readOnly
                 className="w-full px-3 py-2.5 rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-[#f8fafc] dark:bg-[#0f172a] text-base sm:text-sm text-[#64748b] dark:text-white/50"
               />
+              <p className="mt-1 text-[11px] text-[#94a3b8] dark:text-white/40">
+                Assigned when the invoice is saved.
+              </p>
             </div>
 
             {/* Issue Date */}
