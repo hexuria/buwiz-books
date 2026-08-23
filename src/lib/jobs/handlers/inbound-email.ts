@@ -471,8 +471,14 @@ export async function processInboundEmailJob(
             eq(sourceRecords.externalId, bodyFacts.externalId),
           ),
         )
+        // Superseded rows last — the attachment path has always ordered this
+        // way; the body path picked whichever row the planner returned (P8).
+        .orderBy(
+          sql`case when ${sourceRecords.recordState} <> 'superseded' then 0 else 1 end`,
+          sql`${sourceRecords.updatedAt} desc`,
+        )
         .limit(1);
-      const [created] = existing
+      let [created] = existing
         ? [existing]
         : await tx
             .insert(sourceRecords)
@@ -504,6 +510,25 @@ export async function processInboundEmailJob(
             })
             .onConflictDoNothing()
             .returning();
+      if (!created) {
+        // Lost the insert race: CONVERGE on the winner's row like the
+        // attachment path does, instead of failing the whole email job (P8).
+        [created] = await tx
+          .select()
+          .from(sourceRecords)
+          .where(
+            and(
+              eq(sourceRecords.organizationId, job.organizationId),
+              eq(sourceRecords.sourceId, integrationSourceId),
+              eq(sourceRecords.externalId, bodyFacts.externalId),
+            ),
+          )
+          .orderBy(
+            sql`case when ${sourceRecords.recordState} <> 'superseded' then 0 else 1 end`,
+            sql`${sourceRecords.updatedAt} desc`,
+          )
+          .limit(1);
+      }
       if (!created) throw new Error("Email body source could not be created idempotently.");
       const [current] = await tx
         .update(sourceRecords)

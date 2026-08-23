@@ -1,5 +1,5 @@
 import type { CandidateLineInput, CreateCandidateInput, ReviewFindingDraft } from "./types";
-import { compareMoney, multiplyMoney } from "./money";
+import { compareMoney, multiplyMoney, sumMoney } from "./money";
 
 export interface BookRuleAccount {
   id: string;
@@ -149,14 +149,24 @@ export function evaluateBookRules(input: {
     });
   }
 
-  const expenseTotal = lines.reduce((total, line, index) => {
-    if (!expenseLineIndexes.includes(index)) return total;
-    return total + Number(line.debit ?? 0);
-  }, 0);
+  // Exact scale-8 sum (audit P8 — float drift joined the money ratchet).
+  const expenseTotalMoney = sumMoney(
+    lines.map((line, index) => (expenseLineIndexes.includes(index) ? (line.debit ?? "0") : "0")),
+  );
+  const expenseTotal = Number(expenseTotalMoney);
+  // The threshold converts with the candidate's OWN exchange rate only when
+  // that rate is actually the right pair — i.e. the candidate's original
+  // currency IS the threshold's currency (rate maps it into functional).
+  // The old code applied that rate to ANY threshold currency, converting
+  // with a wholly unrelated pair. When no correct pair is available the
+  // threshold is used as-is, which is the pre-conversion behavior made
+  // explicit rather than a silently wrong multiplication.
   const thresholdInFunctionalCurrency =
     settings.missingReceiptCurrency === settings.functionalCurrency
       ? settings.missingReceiptThreshold
-      : multiplyMoney(settings.missingReceiptThreshold, candidate.exchangeRate ?? "1");
+      : settings.missingReceiptCurrency === candidate.originalCurrency
+        ? multiplyMoney(settings.missingReceiptThreshold, candidate.exchangeRate ?? "1")
+        : settings.missingReceiptThreshold;
   const hasReceipt = documents.some((document) => document.documentType === "receipt");
   if (
     expenseTotal > 0 &&

@@ -1,4 +1,5 @@
-import { and, eq, gte, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, ne, or, sql, desc } from "drizzle-orm";
+import { createLogger } from "@/lib/logger";
 import type { DbExecutor } from "@/db";
 import { documents } from "@/db/schema/documents";
 import {
@@ -29,6 +30,8 @@ import {
   type TransactionDirection,
 } from "./duplicate-matcher";
 import type { InboxServiceContext } from "./types";
+
+const logger = createLogger("inbox.duplicate-engine");
 
 export interface DuplicateEngineConfig extends DuplicateMatcherConfig {
   mode: "off" | "shadow" | "enforce";
@@ -293,8 +296,17 @@ async function findCandidateSourceIds(
               ),
             ),
           )
+          // Deterministic order so the 500-cap trims the OLDEST candidates
+          // first instead of whatever the planner returned (audit P8).
+          .orderBy(desc(sourceRecords.effectiveDate), desc(sourceRecords.createdAt))
           .limit(500)
       : [];
+  if (comparableIds.length === 500) {
+    logger.warn("Duplicate candidate discovery hit the 500-row cap — oldest candidates trimmed", {
+      orgId,
+      sourceRecordId: source.sourceRecordId,
+    });
+  }
   return [
     ...new Set([
       ...exactDocumentIds.map(({ sourceRecordId }) => sourceRecordId),

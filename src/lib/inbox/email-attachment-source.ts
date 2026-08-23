@@ -100,15 +100,27 @@ function validDate(value: unknown): string | null {
 
 function decimalAmount(value: unknown): string | null {
   if (typeof value === "number") {
-    return Number.isFinite(value) ? Math.abs(value).toString() : null;
+    if (!Number.isFinite(value)) return null;
+    const rendered = Math.abs(value).toString();
+    // toString() emits exponential notation outside ~1e-7..1e21, which the
+    // downstream money parser rejects opaquely (audit P8). Amounts that
+    // extreme are garbage extraction anyway — refuse rather than mangle.
+    return rendered.includes("e") ? null : rendered;
   }
   const raw = nonEmptyString(value);
   if (!raw) return null;
   const negativeParentheses = /^\(.*\)$/.test(raw);
-  const stripped = raw
-    .replace(/[(),\s]/g, "")
-    .replace(/[^\d.+-]/g, "")
-    .replace(/^\+/, "");
+  let normalized = raw.replace(/[()\s]/g, "").replace(/^\+/, "");
+  // European decimal comma: "1.234,56" (dot-grouped, comma-decimal) — the
+  // old strip removed the comma and produced 1.23456 (audit P8). Detect the
+  // shape before touching separators.
+  if (/^-?\d{1,3}(?:\.\d{3})+,\d{1,2}$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (/^-?\d+,\d{1,2}$/.test(normalized)) {
+    // Bare comma-decimal: "1234,56".
+    normalized = normalized.replace(",", ".");
+  }
+  const stripped = normalized.replace(/,/g, "").replace(/[^\d.+-]/g, "");
   if (!/^-?\d+(?:\.\d+)?$/.test(stripped)) return null;
   const absolute = (negativeParentheses ? stripped.replace(/^-/, "") : stripped).replace(/^-/, "");
   return absolute || null;

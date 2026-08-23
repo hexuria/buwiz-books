@@ -100,8 +100,14 @@ export async function resolveFxRate(input: {
       `No ${input.originalCurrency}/${input.functionalCurrency} rate is available. Enter a manual rate or configure Open Exchange Rates.`,
     );
   }
+  // Callers hold this fetch inside an open transaction (the candidate
+  // pipeline's FOR UPDATE scope), so an unbounded provider hang pinned row
+  // locks indefinitely (audit P8). Ten seconds caps the damage; moving the
+  // fetch fully outside the transaction is the service-shape follow-up
+  // recorded in the backlog.
   const response = await fetch(
     `https://openexchangerates.org/api/historical/${input.transactionDate}.json?app_id=${encodeURIComponent(appId)}`,
+    { signal: AbortSignal.timeout(10_000) },
   );
   if (!response.ok) {
     throw new Error(`Open Exchange Rates returned HTTP ${response.status}.`);

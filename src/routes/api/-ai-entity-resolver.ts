@@ -60,6 +60,8 @@ export interface EntityResolutionResult {
   primaryPartyId?: string;
   /** Suggested pay category (bank account) for pay_in/pay_out pre-fill */
   suggestedPayCategoryId?: string;
+  /** Entities that FAILED to resolve — surfaced, never silently dropped (P8). */
+  errors: Array<{ entityName: string; entityType: string; message: string }>;
   /** Display name for the suggested pay category */
   suggestedPayCategoryName?: string;
 }
@@ -115,6 +117,7 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
           primaryPartyId: undefined,
           suggestedPayCategoryId: undefined,
           suggestedPayCategoryName: undefined,
+          errors: [],
         };
 
         for (const entity of input.entities) {
@@ -167,6 +170,13 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
               entityName: entity.name,
               entityType: entity.entityType,
               orgId,
+            });
+            // A vanished entity read as "the model found nothing" — the
+            // caller now sees exactly which entity failed and why (P8).
+            result.errors.push({
+              entityName: entity.name,
+              entityType: entity.entityType,
+              message: error instanceof Error ? error.message : String(error),
             });
           }
         }

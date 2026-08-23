@@ -80,11 +80,54 @@ export function documentFileType(filename: string): FileType {
  * and delete the new generation. A concurrent losing uploader returns the winning row and
  * best-effort removes only its own unreferenced generation.
  */
+/**
+ * Content types the vault accepts (Program 2 decision D7). The stored type
+ * is echoed to R2 and later served from the storage origin, so an
+ * attacker-supplied text/html would be a stored-XSS primitive (audit P8);
+ * and the model consumes the declared type downstream. octet-stream is
+ * accepted only when the filename extension maps to an allowed type — and
+ * the MAPPED type is what gets stored, never the caller's echo.
+ */
+const ALLOWED_DOCUMENT_MIME_TYPES = new Set([
+  "application/pdf",
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/heic",
+  "text/csv",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+const EXTENSION_MIME_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  heic: "image/heic",
+  csv: "text/csv",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+export function resolveAllowedContentType(filename: string, contentType: string): string {
+  const declared = (contentType || "").split(";")[0].trim().toLowerCase();
+  if (ALLOWED_DOCUMENT_MIME_TYPES.has(declared)) return declared;
+  const extension = filename.split(".").pop()?.toLowerCase() ?? "";
+  const mapped = EXTENSION_MIME_TYPES[extension];
+  if ((declared === "application/octet-stream" || declared === "") && mapped) return mapped;
+  throw new Error(
+    `Unsupported document type "${contentType || "unknown"}" for "${filename}". ` +
+      `Accepted: PDF, PNG, JPEG, WEBP, HEIC, CSV, XLS/XLSX.`,
+  );
+}
+
 export async function ensureDocument(
   db: DbExecutor,
   input: EnsureDocumentInput,
   storage: DocumentStorage = defaultStorage,
 ): Promise<EnsureDocumentResult> {
+  const safeContentType = resolveAllowedContentType(input.filename, input.contentType);
   const contentHash = hashDocumentContent(input.fileBuffer);
   const existing = await findDocumentByHash(db, input.organizationId, contentHash);
   if (existing) {
@@ -96,7 +139,7 @@ export async function ensureDocument(
   }
 
   const storageKey = contentAddressedDocumentKey(input.organizationId, contentHash);
-  const uploaded = await storage.upload(storageKey, input.fileBuffer, input.contentType);
+  const uploaded = await storage.upload(storageKey, input.fileBuffer, safeContentType);
   const storagePath = `r2://${uploaded.r2Bucket}/${uploaded.r2Key}`;
 
   const [created] = await db
@@ -109,7 +152,7 @@ export async function ensureDocument(
       fileType: documentFileType(input.filename),
       storagePath,
       fileSizeBytes: input.fileBuffer.length,
-      mimeType: input.contentType,
+      mimeType: safeContentType,
       contentHash,
       r2Key: uploaded.r2Key,
       r2Bucket: uploaded.r2Bucket,
