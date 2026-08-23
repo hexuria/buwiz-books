@@ -41,7 +41,7 @@ describeDb("Document Attachments Flow", () => {
       transactionNumber: `JNL-${crypto.randomUUID().slice(0, 8)}`,
       transactionDate: "2026-01-01",
       transactionType: "journal",
-      status: "posted",
+      status: "draft",
     });
 
     // Setup two documents
@@ -274,7 +274,7 @@ describeDb("Document Attachments Flow", () => {
       transactionNumber: `JNL-${crypto.randomUUID().slice(0, 8)}`,
       transactionDate: "2026-01-01",
       transactionType: "journal",
-      status: "posted",
+      status: "draft",
       duplicateOfHeaderId: TXN_1,
     });
     await db.insert(documents).values({

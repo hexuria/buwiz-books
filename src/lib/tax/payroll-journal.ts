@@ -200,6 +200,7 @@ export async function postPayrollRun(
       memo: `Payroll: ${run.periodStart} to ${run.periodEnd}`,
       totalAmount: totalDebits,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: run.id,
       sourceDocumentType: "payroll_run",
       createdBy: input.userId,

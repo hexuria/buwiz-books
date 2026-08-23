@@ -145,3 +145,31 @@ describe("batch and balances wiring", () => {
     expect(source).not.toContain("multiplyMoney(originalDebit");
   });
 });
+
+describe("postedAt stamping ratchet (P3)", () => {
+  it("every posted-status journal write in the posting libs stamps postedAt", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const files = [
+      "src/lib/journal-amendment.ts",
+      "src/lib/invoice-payments.ts",
+      "src/lib/manual-bill-payment.ts",
+      "src/lib/bill-journal.ts",
+      "src/lib/invoice-journal.ts",
+      "src/lib/tax/annualization-posting.ts",
+      "src/lib/tax/post-cwt-receivable.ts",
+      "src/lib/tax/post-ewt-remittance.ts",
+      "src/lib/tax/payroll-journal.ts",
+      "src/routes/api/transactions/-_mutations.ts",
+    ];
+    for (const file of files) {
+      const source = readFileSync(join(__dirname, "../..", file), "utf-8");
+      const posted = source.match(/status: "posted",/g) ?? [];
+      const stamped = source.match(/status: "posted",\s*\n\s*postedAt: new Date\(\),/g) ?? [];
+      expect(
+        stamped.length,
+        `${file}: ${posted.length} posted write(s), ${stamped.length} stamped`,
+      ).toBe(posted.length);
+    }
+  });
+});

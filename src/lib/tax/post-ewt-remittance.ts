@@ -119,6 +119,7 @@ export async function postEwtRemittance(
       memo: `${summary.formCode} remittance ${summary.periodStart} to ${summary.periodEnd}${nettingNote}`,
       totalAmount: amountToPost,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentType: "tax_remittance",
       createdBy: input.userId,
       idempotencyKey: `ewt-remittance:${input.organizationId}:${summary.formCode}:${summary.periodStart}:${summary.periodEnd}`,

@@ -25,12 +25,13 @@
  * silently changes a figure that has already been reported; the correction
  * belongs in the period in which it was discovered.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { activityLogs } from "@/db/schema/activity-logs";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
 import { isDateInLockedPeriod } from "@/lib/period-close";
+import { journalsClearedByFinalizedReconciliation } from "@/lib/reconciliation-claimed-lines";
 
 export class NotPostedError extends Error {
   constructor(headerId: string, status: string) {
@@ -108,8 +109,35 @@ export async function amendPostedJournal(
   if (!original) throw new Error("Journal not found");
   if (original.status !== "posted") throw new NotPostedError(input.headerId, original.status);
 
+  // A journal parked as someone's duplicate must be resolved through the
+  // duplicate flow, not amended around it (2026-08 audit, ledger core).
+  if (original.duplicateOfHeaderId) {
+    throw new Error(
+      `Journal ${input.headerId} is marked as a duplicate of ${original.duplicateOfHeaderId}; ` +
+        `resolve the duplicate case instead of amending.`,
+    );
+  }
+
+  // A journal cleared by a FINALIZED reconciliation is part of a bank
+  // statement that has been signed off — reversing it would silently
+  // unbalance that reconciliation. Reopen the reconciliation first.
+  const clearedByFinalized = await journalsClearedByFinalizedReconciliation(
+    db,
+    input.organizationId,
+    [input.headerId],
+  );
+  if (clearedByFinalized) {
+    throw new Error(
+      `Journal ${input.headerId} is cleared by a finalized reconciliation; ` +
+        `reopen that reconciliation before amending.`,
+    );
+  }
+
   // One reversal per original. The database enforces this too (a partial unique
-  // index), but failing here gives the caller the existing reversal's id.
+  // index scoped to non-voided reversals), but failing here gives the caller
+  // the existing reversal's id. EXCLUDE voided reversals to match the index:
+  // counting them froze the original as unamendable the moment its first
+  // reversal was itself voided.
   const [existingReversal] = await db
     .select({ id: journalHeaders.id })
     .from(journalHeaders)
@@ -117,6 +145,7 @@ export async function amendPostedJournal(
       and(
         eq(journalHeaders.reversesHeaderId, input.headerId),
         eq(journalHeaders.organizationId, input.organizationId),
+        ne(journalHeaders.status, "voided"),
       ),
     )
     .limit(1);
@@ -162,6 +191,7 @@ export async function amendPostedJournal(
       transactionCurrency: original.transactionCurrency,
       exchangeRateId: original.exchangeRateId,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: original.sourceDocumentId,
       sourceDocumentType: original.sourceDocumentType,
       createdBy: input.userId,
@@ -226,6 +256,7 @@ export async function amendPostedJournal(
         transactionCurrency: original.transactionCurrency,
         exchangeRateId: original.exchangeRateId,
         status: "posted",
+        postedAt: new Date(),
         sourceDocumentId: original.sourceDocumentId,
         sourceDocumentType: original.sourceDocumentType,
         createdBy: input.userId,

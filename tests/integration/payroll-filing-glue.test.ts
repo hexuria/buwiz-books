@@ -260,23 +260,25 @@ describeDb("payroll filing glue", () => {
     )[0].id as string;
 
     async function post(date: string, amount: string): Promise<string> {
-      const [header] = await db
-        .insert(journalHeaders)
-        .values({
-          organizationId,
-          transactionDate: date,
-          transactionType: "journal",
-          source: "manual",
-          status: "posted",
-          totalAmount: amount,
-          functionalCurrency: "PHP",
-        })
-        .returning();
-      await db.insert(journalLines).values([
-        { journalHeaderId: header.id, accountId: cash, debit: amount, sortOrder: 0 },
-        { journalHeaderId: header.id, accountId: wtc, credit: amount, sortOrder: 1 },
-      ]);
-      return header.id as string;
+      return db.transaction(async (tx: any) => {
+        const [header] = await tx
+          .insert(journalHeaders)
+          .values({
+            organizationId,
+            transactionDate: date,
+            transactionType: "journal",
+            source: "manual",
+            status: "posted",
+            totalAmount: amount,
+            functionalCurrency: "PHP",
+          })
+          .returning();
+        await tx.insert(journalLines).values([
+          { journalHeaderId: header.id, accountId: cash, debit: amount, sortOrder: 0 },
+          { journalHeaderId: header.id, accountId: wtc, credit: amount, sortOrder: 1 },
+        ]);
+        return header.id as string;
+      });
     }
 
     const thisRunJournal = await post("2026-03-15", "1375.05");
@@ -315,22 +317,25 @@ describeDb("payroll filing glue", () => {
         })
         .returning()
     )[0].id as string;
-    const [header] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId,
-        transactionDate: "2026-01-15",
-        transactionType: "journal",
-        source: "manual",
-        status: "posted",
-        totalAmount: "1375.05",
-        functionalCurrency: "PHP",
-      })
-      .returning();
-    await db.insert(journalLines).values([
-      { journalHeaderId: header.id, accountId: cash, debit: "1375.05", sortOrder: 0 },
-      { journalHeaderId: header.id, accountId: wtc, credit: "1375.05", sortOrder: 1 },
-    ]);
+    const header = await db.transaction(async (tx: any) => {
+      const [created] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId,
+          transactionDate: "2026-01-15",
+          transactionType: "journal",
+          source: "manual",
+          status: "posted",
+          totalAmount: "1375.05",
+          functionalCurrency: "PHP",
+        })
+        .returning();
+      await tx.insert(journalLines).values([
+        { journalHeaderId: created.id, accountId: cash, debit: "1375.05", sortOrder: 0 },
+        { journalHeaderId: created.id, accountId: wtc, credit: "1375.05", sortOrder: 1 },
+      ]);
+      return created;
+    });
 
     const runId = await makeRun(organizationId, {
       periodIndex: 1,

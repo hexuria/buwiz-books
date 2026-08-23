@@ -122,9 +122,15 @@ describeDb("tx-fixture", () => {
                    VALUES (${h.id}, ${accountId}, 10, 1)`;
           return h.id as string;
         });
-        await sql`
-          INSERT INTO journal_headers (organization_id, transaction_date, transaction_type, source, status, reverses_header_id)
-          VALUES (${orgId}, '2026-08-03', 'journal', 'manual', 'posted', ${original})`;
+        await sql.begin(async (tx) => {
+          const [r] = await tx`
+            INSERT INTO journal_headers (organization_id, transaction_date, transaction_type, source, status, reverses_header_id)
+            VALUES (${orgId}, '2026-08-03', 'journal', 'manual', 'posted', ${original}) RETURNING id`;
+          await tx`INSERT INTO journal_lines (journal_header_id, account_id, debit, sort_order)
+                   VALUES (${r.id}, ${accountId}, 10, 0)`;
+          await tx`INSERT INTO journal_lines (journal_header_id, account_id, credit, sort_order)
+                   VALUES (${r.id}, ${accountId}, 10, 1)`;
+        });
       });
 
       // Teardown ran; nothing left.

@@ -79,62 +79,64 @@ describeDb("lossless journal unmerge reconciliation safety", () => {
         accountType: "expense",
       },
     ]);
-    await db.insert(journalHeaders).values([
-      {
-        id: canonicalJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-07-24",
-        transactionType: "pay_out",
-        status: "posted",
-        totalAmount: options.canonicalFunctionalAmount,
-        transactionCurrency,
-        functionalCurrency: "USD",
-      },
-      {
-        id: duplicateJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-07-24",
-        transactionType: "pay_out",
-        status: "posted",
-        totalAmount: options.duplicateFunctionalAmount,
-        transactionCurrency,
-        functionalCurrency: "USD",
-      },
-    ]);
-    await db.insert(journalLines).values([
-      {
-        journalHeaderId: canonicalJournalId,
-        accountId: expenseAccountId,
-        debit: options.canonicalFunctionalAmount,
-        originalDebit: options.canonicalOriginalAmount,
-        originalCurrency: transactionCurrency,
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: canonicalJournalId,
-        accountId: assetAccountId,
-        credit: options.canonicalFunctionalAmount,
-        originalCredit: options.canonicalOriginalAmount,
-        originalCurrency: transactionCurrency,
-        sortOrder: 1,
-      },
-      {
-        journalHeaderId: duplicateJournalId,
-        accountId: expenseAccountId,
-        debit: options.duplicateFunctionalAmount,
-        originalDebit: options.duplicateOriginalAmount,
-        originalCurrency: transactionCurrency,
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: duplicateJournalId,
-        accountId: assetAccountId,
-        credit: options.duplicateFunctionalAmount,
-        originalCredit: options.duplicateOriginalAmount,
-        originalCurrency: transactionCurrency,
-        sortOrder: 1,
-      },
-    ]);
+    await db.transaction(async (tx: any) => {
+      await tx.insert(journalHeaders).values([
+        {
+          id: canonicalJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-07-24",
+          transactionType: "pay_out",
+          status: "posted",
+          totalAmount: options.canonicalFunctionalAmount,
+          transactionCurrency,
+          functionalCurrency: "USD",
+        },
+        {
+          id: duplicateJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-07-24",
+          transactionType: "pay_out",
+          status: "posted",
+          totalAmount: options.duplicateFunctionalAmount,
+          transactionCurrency,
+          functionalCurrency: "USD",
+        },
+      ]);
+      await tx.insert(journalLines).values([
+        {
+          journalHeaderId: canonicalJournalId,
+          accountId: expenseAccountId,
+          debit: options.canonicalFunctionalAmount,
+          originalDebit: options.canonicalOriginalAmount,
+          originalCurrency: transactionCurrency,
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: canonicalJournalId,
+          accountId: assetAccountId,
+          credit: options.canonicalFunctionalAmount,
+          originalCredit: options.canonicalOriginalAmount,
+          originalCurrency: transactionCurrency,
+          sortOrder: 1,
+        },
+        {
+          journalHeaderId: duplicateJournalId,
+          accountId: expenseAccountId,
+          debit: options.duplicateFunctionalAmount,
+          originalDebit: options.duplicateOriginalAmount,
+          originalCurrency: transactionCurrency,
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: duplicateJournalId,
+          accountId: assetAccountId,
+          credit: options.duplicateFunctionalAmount,
+          originalCredit: options.duplicateOriginalAmount,
+          originalCurrency: transactionCurrency,
+          sortOrder: 1,
+        },
+      ]);
+    });
     const [canonicalSource, duplicateSource] = await db
       .insert(sourceRecords)
       .values([
@@ -269,62 +271,64 @@ describeDb("lossless journal unmerge reconciliation safety", () => {
       statementEndingBalance: "900.00",
       status: "in_progress",
     });
-    await db.insert(journalHeaders).values([
-      {
-        id: canonicalJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-06-15",
-        transactionType: "pay_out",
-        status: "posted",
-        totalAmount: "100.00",
-        transactionCurrency: "USD",
-        functionalCurrency: "USD",
-      },
-      {
-        id: duplicateJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-06-15",
-        transactionType: "pay_out",
-        status: "posted",
-        totalAmount: "100.00",
-        transactionCurrency: "USD",
-        functionalCurrency: "USD",
-      },
-    ]);
+    const insertedLines = await db.transaction(async (tx: any) => {
+      await tx.insert(journalHeaders).values([
+        {
+          id: canonicalJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-06-15",
+          transactionType: "pay_out",
+          status: "posted",
+          totalAmount: "100.00",
+          transactionCurrency: "USD",
+          functionalCurrency: "USD",
+        },
+        {
+          id: duplicateJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-06-15",
+          transactionType: "pay_out",
+          status: "posted",
+          totalAmount: "100.00",
+          transactionCurrency: "USD",
+          functionalCurrency: "USD",
+        },
+      ]);
 
-    const insertedLines = await db
-      .insert(journalLines)
-      .values([
-        {
-          journalHeaderId: canonicalJournalId,
-          accountId: expenseAccountId,
-          debit: "100.00",
-          sortOrder: 0,
-        },
-        {
-          journalHeaderId: canonicalJournalId,
-          accountId: bankAccountId,
-          credit: "100.00",
-          sortOrder: 1,
-        },
-        {
-          journalHeaderId: duplicateJournalId,
-          accountId: expenseAccountId,
-          debit: "100.00",
-          sortOrder: 0,
-        },
-        {
-          journalHeaderId: duplicateJournalId,
-          accountId: bankAccountId,
-          credit: "100.00",
-          sortOrder: 1,
-        },
-      ])
-      .returning({
-        id: journalLines.id,
-        journalHeaderId: journalLines.journalHeaderId,
-        accountId: journalLines.accountId,
-      });
+      return await tx
+        .insert(journalLines)
+        .values([
+          {
+            journalHeaderId: canonicalJournalId,
+            accountId: expenseAccountId,
+            debit: "100.00",
+            sortOrder: 0,
+          },
+          {
+            journalHeaderId: canonicalJournalId,
+            accountId: bankAccountId,
+            credit: "100.00",
+            sortOrder: 1,
+          },
+          {
+            journalHeaderId: duplicateJournalId,
+            accountId: expenseAccountId,
+            debit: "100.00",
+            sortOrder: 0,
+          },
+          {
+            journalHeaderId: duplicateJournalId,
+            accountId: bankAccountId,
+            credit: "100.00",
+            sortOrder: 1,
+          },
+        ])
+        .returning({
+          id: journalLines.id,
+          journalHeaderId: journalLines.journalHeaderId,
+          accountId: journalLines.accountId,
+        });
+    });
     await db.insert(sourceRecords).values([
       {
         id: canonicalSourceId,
@@ -796,34 +800,36 @@ describeDb("lossless journal unmerge reconciliation safety", () => {
     });
     const thirdJournalId = crypto.randomUUID();
     const thirdSourceId = crypto.randomUUID();
-    await db.insert(journalHeaders).values({
-      id: thirdJournalId,
-      organizationId: fixture.orgId,
-      transactionDate: "2026-07-24",
-      transactionType: "pay_out",
-      status: "posted",
-      totalAmount: "110.00",
-      transactionCurrency: "EUR",
-      functionalCurrency: "USD",
+    await db.transaction(async (tx: any) => {
+      await tx.insert(journalHeaders).values({
+        id: thirdJournalId,
+        organizationId: fixture.orgId,
+        transactionDate: "2026-07-24",
+        transactionType: "pay_out",
+        status: "posted",
+        totalAmount: "110.00",
+        transactionCurrency: "EUR",
+        functionalCurrency: "USD",
+      });
+      await tx.insert(journalLines).values([
+        {
+          journalHeaderId: thirdJournalId,
+          accountId: fixture.expenseAccountId,
+          debit: "110.00",
+          originalDebit: "100.00",
+          originalCurrency: "EUR",
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: thirdJournalId,
+          accountId: fixture.assetAccountId,
+          credit: "110.00",
+          originalCredit: "100.00",
+          originalCurrency: "EUR",
+          sortOrder: 1,
+        },
+      ]);
     });
-    await db.insert(journalLines).values([
-      {
-        journalHeaderId: thirdJournalId,
-        accountId: fixture.expenseAccountId,
-        debit: "110.00",
-        originalDebit: "100.00",
-        originalCurrency: "EUR",
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: thirdJournalId,
-        accountId: fixture.assetAccountId,
-        credit: "110.00",
-        originalCredit: "100.00",
-        originalCurrency: "EUR",
-        sortOrder: 1,
-      },
-    ]);
     await db.insert(sourceRecords).values({
       id: thirdSourceId,
       organizationId: fixture.orgId,
@@ -946,62 +952,64 @@ describeDb("lossless journal unmerge reconciliation safety", () => {
       amountPaid: "100.00",
       balanceDue: "100.00",
     });
-    await db.insert(journalHeaders).values([
-      {
-        id: canonicalJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-07-24",
-        transactionType: "pay_in",
-        source: "payment",
-        status: "posted",
-        totalAmount: "100.00",
-        transactionCurrency: "USD",
-        functionalCurrency: "USD",
-        sourceDocumentType: "invoice",
-        sourceDocumentId: invoiceId,
-        referenceNumber: "INV-INSTALLMENT-4242",
-      },
-      {
-        id: duplicateJournalId,
-        organizationId: orgId,
-        transactionDate: "2026-07-24",
-        transactionType: "pay_in",
-        source: "payment",
-        status: "posted",
-        totalAmount: "100.00",
-        transactionCurrency: "USD",
-        functionalCurrency: "USD",
-        sourceDocumentType: "invoice",
-        sourceDocumentId: invoiceId,
-        referenceNumber: "INV-INSTALLMENT-4242",
-      },
-    ]);
-    await db.insert(journalLines).values([
-      {
-        journalHeaderId: canonicalJournalId,
-        accountId: bankAccountId,
-        debit: "100.00",
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: canonicalJournalId,
-        accountId: receivableAccountId,
-        credit: "100.00",
-        sortOrder: 1,
-      },
-      {
-        journalHeaderId: duplicateJournalId,
-        accountId: bankAccountId,
-        debit: "100.00",
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: duplicateJournalId,
-        accountId: receivableAccountId,
-        credit: "100.00",
-        sortOrder: 1,
-      },
-    ]);
+    await db.transaction(async (tx: any) => {
+      await tx.insert(journalHeaders).values([
+        {
+          id: canonicalJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-07-24",
+          transactionType: "pay_in",
+          source: "payment",
+          status: "posted",
+          totalAmount: "100.00",
+          transactionCurrency: "USD",
+          functionalCurrency: "USD",
+          sourceDocumentType: "invoice",
+          sourceDocumentId: invoiceId,
+          referenceNumber: "INV-INSTALLMENT-4242",
+        },
+        {
+          id: duplicateJournalId,
+          organizationId: orgId,
+          transactionDate: "2026-07-24",
+          transactionType: "pay_in",
+          source: "payment",
+          status: "posted",
+          totalAmount: "100.00",
+          transactionCurrency: "USD",
+          functionalCurrency: "USD",
+          sourceDocumentType: "invoice",
+          sourceDocumentId: invoiceId,
+          referenceNumber: "INV-INSTALLMENT-4242",
+        },
+      ]);
+      await tx.insert(journalLines).values([
+        {
+          journalHeaderId: canonicalJournalId,
+          accountId: bankAccountId,
+          debit: "100.00",
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: canonicalJournalId,
+          accountId: receivableAccountId,
+          credit: "100.00",
+          sortOrder: 1,
+        },
+        {
+          journalHeaderId: duplicateJournalId,
+          accountId: bankAccountId,
+          debit: "100.00",
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: duplicateJournalId,
+          accountId: receivableAccountId,
+          credit: "100.00",
+          sortOrder: 1,
+        },
+      ]);
+    });
     const [stripeSource] = await db
       .insert(integrationSources)
       .values({

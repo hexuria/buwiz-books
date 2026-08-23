@@ -149,61 +149,64 @@ describeDb("portfolio Profit & Loss integration", () => {
           account.organizationId === organizationId && account.accountType === accountType,
       )!.id;
 
-    const headers = await db
-      .insert(journalHeaders)
-      .values([
+    const { headerA, headerB } = await db.transaction(async (tx: any) => {
+      const headers = await tx
+        .insert(journalHeaders)
+        .values([
+          {
+            organizationId: organizationA,
+            transactionDate: "2026-07-15",
+            transactionType: "journal",
+            source: "manual",
+            status: "posted",
+            functionalCurrency: "USD",
+          },
+          {
+            organizationId: organizationB,
+            transactionDate: "2026-07-15",
+            transactionType: "journal",
+            source: "manual",
+            status: "posted",
+            functionalCurrency: "USD",
+          },
+        ])
+        .returning({ id: journalHeaders.id, organizationId: journalHeaders.organizationId });
+      const headerA = headers.find((header: any) => header.organizationId === organizationA)!.id;
+      const headerB = headers.find((header: any) => header.organizationId === organizationB)!.id;
+      await tx.insert(journalLines).values([
         {
-          organizationId: organizationA,
-          transactionDate: "2026-07-15",
-          transactionType: "journal",
-          source: "manual",
-          status: "posted",
-          functionalCurrency: "USD",
+          journalHeaderId: headerA,
+          accountId: accountId(organizationA, "asset"),
+          debit: "1000",
+          credit: "0",
         },
         {
-          organizationId: organizationB,
-          transactionDate: "2026-07-15",
-          transactionType: "journal",
-          source: "manual",
-          status: "posted",
-          functionalCurrency: "USD",
+          journalHeaderId: headerA,
+          accountId: accountId(organizationA, "revenue"),
+          debit: "0",
+          credit: "1000",
         },
-      ])
-      .returning({ id: journalHeaders.id, organizationId: journalHeaders.organizationId });
-    const headerA = headers.find((header) => header.organizationId === organizationA)!.id;
-    const headerB = headers.find((header) => header.organizationId === organizationB)!.id;
-    await db.insert(journalLines).values([
-      {
-        journalHeaderId: headerA,
-        accountId: accountId(organizationA, "asset"),
-        debit: "1000",
-        credit: "0",
-      },
-      {
-        journalHeaderId: headerA,
-        accountId: accountId(organizationA, "revenue"),
-        debit: "0",
-        credit: "1000",
-      },
-      {
-        journalHeaderId: headerB,
-        accountId: accountId(organizationB, "asset"),
-        debit: "1700",
-        credit: "0",
-      },
-      {
-        journalHeaderId: headerB,
-        accountId: accountId(organizationB, "expense"),
-        debit: "300",
-        credit: "0",
-      },
-      {
-        journalHeaderId: headerB,
-        accountId: accountId(organizationB, "revenue"),
-        debit: "0",
-        credit: "2000",
-      },
-    ]);
+        {
+          journalHeaderId: headerB,
+          accountId: accountId(organizationB, "asset"),
+          debit: "1700",
+          credit: "0",
+        },
+        {
+          journalHeaderId: headerB,
+          accountId: accountId(organizationB, "expense"),
+          debit: "300",
+          credit: "0",
+        },
+        {
+          journalHeaderId: headerB,
+          accountId: accountId(organizationB, "revenue"),
+          debit: "0",
+          credit: "2000",
+        },
+      ]);
+      return { headerA, headerB };
+    });
   });
 
   afterEach(async () => {

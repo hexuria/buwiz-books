@@ -41,6 +41,8 @@ try {
     "0048_statement_clearing_exclusivity.sql",
     "0049_contribution_deferred_status.sql",
     "0050_year_state_opening_balance.sql",
+    "0051_void_rewrite_guard.sql",
+    "0052_posted_journal_needs_lines.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
