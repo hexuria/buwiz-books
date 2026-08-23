@@ -8,6 +8,7 @@ import {
   statementLineMatches,
   reconciliationFlags,
   reconciliationSuggestions,
+  reconciliations,
 } from "../../../db/schema/reconciliations";
 import {
   effectiveJournalPredicate,
@@ -15,6 +16,11 @@ import {
   journalLines,
 } from "../../../db/schema/journals";
 import { eq, and, desc, inArray } from "drizzle-orm";
+import { isDateInLockedPeriod } from "../../../lib/period-close";
+import {
+  claimConflictMessage,
+  findClaimedJournalLine,
+} from "../../../lib/reconciliation-claimed-lines";
 import {
   withSessionOrgContext,
   withMutationPermissionOrgContext,
@@ -93,6 +99,36 @@ export const applySuggestion = createServerFn({ method: "POST" })
         if (!suggestion) throw new Error("Suggestion not found");
         if (suggestion.status !== "pending") throw new Error("Suggestion already resolved");
 
+        // The manual match path refuses to touch a finalized or period-locked
+        // reconciliation; applying a stale suggestion is the same mutation and
+        // gets the same gate. Without it, a pending suggestion applied after
+        // finalization silently invalidated the finalized snapshot.
+        const [recon] = await db
+          .select({
+            id: reconciliations.id,
+            status: reconciliations.status,
+            periodEnd: reconciliations.periodEnd,
+          })
+          .from(reconciliations)
+          .where(
+            and(
+              eq(reconciliations.id, suggestion.reconciliationId),
+              eq(reconciliations.organizationId, orgId),
+            ),
+          )
+          .limit(1);
+        if (!recon) throw new Error("Reconciliation not found");
+        if (recon.status === "finalized")
+          throw new Error("Cannot apply a suggestion to a finalized reconciliation");
+        {
+          const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
+          if (locked) {
+            throw new Error(
+              `Cannot modify reconciliation: period is locked through ${closedThrough}. Open the period first.`,
+            );
+          }
+        }
+
         if (
           ["auto_match", "date_fix"].includes(suggestion.suggestionType) &&
           suggestion.journalLineId
@@ -125,6 +161,21 @@ export const applySuggestion = createServerFn({ method: "POST" })
           case "auto_match": {
             // Link statement line to journal line
             if (suggestion.statementLineId && suggestion.journalLineId) {
+              // Both clearing representations are checked, and any split rows
+              // on the target line are replaced by the 1:1 link — mirroring
+              // matchTransaction. Applying a suggestion is the same mutation.
+              const claim = await findClaimedJournalLine(db, orgId, [suggestion.journalLineId], {
+                excludeStatementLineId: suggestion.statementLineId,
+              });
+              if (claim) throw new Error(claimConflictMessage(claim));
+              await db
+                .delete(statementLineMatches)
+                .where(
+                  and(
+                    eq(statementLineMatches.statementLineId, suggestion.statementLineId),
+                    eq(statementLineMatches.organizationId, orgId),
+                  ),
+                );
               await db
                 .update(statementLines)
                 .set({
@@ -149,6 +200,18 @@ export const applySuggestion = createServerFn({ method: "POST" })
             // Match the statement line to the journal line without modifying the ledger date.
             // Date differences between bank clearing and ledger booking are normal.
             if (suggestion.statementLineId && suggestion.journalLineId) {
+              const claim = await findClaimedJournalLine(db, orgId, [suggestion.journalLineId], {
+                excludeStatementLineId: suggestion.statementLineId,
+              });
+              if (claim) throw new Error(claimConflictMessage(claim));
+              await db
+                .delete(statementLineMatches)
+                .where(
+                  and(
+                    eq(statementLineMatches.statementLineId, suggestion.statementLineId),
+                    eq(statementLineMatches.organizationId, orgId),
+                  ),
+                );
               await db
                 .update(statementLines)
                 .set({
@@ -256,6 +319,14 @@ export const applySuggestion = createServerFn({ method: "POST" })
                 "One or more ledger transactions in this split are no longer available. Refresh matching suggestions.",
               );
             }
+
+            // The join table's unique index catches split-vs-split; it cannot
+            // see a 1:1 claim on statement_lines. Check both representations
+            // so the failure is a message, with the 0048 trigger as backstop.
+            const splitClaim = await findClaimedJournalLine(db, orgId, journalLineIds, {
+              excludeStatementLineId: line.id,
+            });
+            if (splitClaim) throw new Error(claimConflictMessage(splitClaim));
 
             // The join table's unique index on journal_line_id is the real
             // guard against double-clearing; inserting inside this

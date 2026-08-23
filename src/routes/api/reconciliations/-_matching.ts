@@ -17,6 +17,7 @@ import {
 } from "../../../db/schema/journals";
 import { parties } from "../../../db/schema/parties";
 import { eq, and, gte, lte, inArray } from "drizzle-orm";
+import { isDateInLockedPeriod } from "../../../lib/period-close";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { resolveCandidateAccountIds } from "../../../lib/resolve-candidate-accounts";
 import { getOrgClaimedJournalLineIds } from "../../../lib/reconciliation-claimed-lines";
@@ -69,6 +70,14 @@ export const reRunMatching = createServerFn({ method: "POST" })
         if (!recon) throw new Error("Reconciliation not found");
         if (recon.status === "finalized")
           throw new Error("Cannot re-run matching on a finalized reconciliation");
+        {
+          const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
+          if (locked) {
+            throw new Error(
+              `Cannot re-run matching: period is locked through ${closedThrough}. Open the period first.`,
+            );
+          }
+        }
 
         // ── 2. Get unmatched statement lines ──
         const unmatchedLines = await db
