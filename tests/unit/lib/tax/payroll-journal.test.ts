@@ -122,13 +122,16 @@ describe("summarizePayrollPosting", () => {
     expect(totals.sssEmployee).toBe("1350");
   });
 
-  it("never derives a negative net pay", () => {
-    // Deductions exceeding gross is a data error; a negative net written as a
-    // debit would silently flip the entry's direction.
-    const { totals } = summarizePayrollPosting([
-      line({ basicSalary: "1000", sssEmployeeShare: "5000", reportedTaxWithheld: "0" }),
-    ]);
-    expect(Number(totals.netPay)).toBeGreaterThanOrEqual(0);
+  it("refuses a line whose deductions exceed gross pay", () => {
+    // Deductions exceeding gross is a data error. Clamping net at zero while
+    // crediting the full deductions produced a journal whose credits exceeded
+    // its debits — which then aborted the whole posting at COMMIT as an
+    // opaque constraint violation. It now fails loudly with the shortfall.
+    expect(() =>
+      summarizePayrollPosting([
+        line({ basicSalary: "1000", sssEmployeeShare: "5000", reportedTaxWithheld: "0" }),
+      ]),
+    ).toThrow(/Deductions exceed gross pay/);
   });
 
   it("includes union dues in deductions and as its own payable", () => {

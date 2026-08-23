@@ -301,6 +301,9 @@ describeDb("payroll run service", () => {
     // Illustration 15 case 1 (Ms. Grace): ₱600,000 basic plus ₱10,000 November
     // overtime, ₱73,334.25 withheld to November → ₱9,165.75 due in December.
     const employee = await makeEmployee("Year end");
+    // Ms. Grace's eleven months predate the system: an OPENING balance the
+    // replay-based compute starts from (the plain ytd columns are derived
+    // output now, rewritten on every compute).
     await db.insert(payrollEmployeeYearState).values({
       organizationId: ORG,
       employeePartyId: employee,
@@ -308,6 +311,9 @@ describeDb("payroll run service", () => {
       periodsElapsed: 11,
       ytdTaxableRegular: "550000",
       ytdTaxWithheld: "73334.25",
+      openingPeriodsElapsed: 11,
+      openingYtdTaxableRegular: "550000",
+      openingYtdTaxWithheld: "73334.25",
     });
 
     const run = await makeRun({
@@ -417,7 +423,11 @@ describeDb("payroll run service", () => {
       expect(result.contributionChecksSkipped).toBe(1);
 
       const [line] = await db.select().from(payrollLines).where(eq(payrollLines.payrollRunId, run));
-      expect(line.contributionCheckStatus).toBe("skipped_non_monthly");
+      // Semi-monthly is no longer a silent skip: the first half DEFERS to the
+      // month-completing run (checkpoint C4), where the check runs over both
+      // halves and the employer shares are recognized. Still no invented
+      // per-period variance.
+      expect(line.contributionCheckStatus).toBe("deferred_month_end");
       expect(line.contributionVarianceAmount).toBeNull();
     });
 

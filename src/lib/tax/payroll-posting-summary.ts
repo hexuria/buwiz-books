@@ -27,6 +27,7 @@ export interface PayrollPostingLine {
   thirteenthMonthAndOtherBenefits: string | null;
   deMinimisBenefits: string | null;
   nonTaxableRetirementSeparation: string | null;
+  otherExempt: string | null;
   sssEmployeeShare: string | null;
   philHealthEmployeeShare: string | null;
   pagIbigEmployeeShare: string | null;
@@ -83,6 +84,11 @@ const GROSS_FIELDS: Array<(l: PayrollPostingLine) => string | null> = [
   (l) => l.thirteenthMonthAndOtherBenefits,
   (l) => l.deMinimisBenefits,
   (l) => l.nonTaxableRetirementSeparation,
+  // otherExempt exists on payroll_lines and feeds the engine, the 1601-C and
+  // the 2316; omitting it here left the salaries debit and the Net Pay
+  // Payable credit short by exactly that amount — the journal still balanced,
+  // so nothing caught the ledger disagreeing with the payslip.
+  (l) => l.otherExempt,
 ];
 
 export function summarizePayrollPosting(lines: ReadonlyArray<PayrollPostingLine>): {
@@ -115,7 +121,18 @@ export function summarizePayrollPosting(lines: ReadonlyArray<PayrollPostingLine>
       line.unionDues,
       line.reportedTaxWithheld ?? line.computedTaxWithheld,
     ].reduce<ScaledMoney>((total, v) => addAll(total, toScaled(v ?? "0")), ZERO);
-    netPay = addAll(netPay, clampAtZero((lineGross - deductions) as ScaledMoney));
+    const lineNet = (lineGross - deductions) as ScaledMoney;
+    if (lineNet < 0n) {
+      // Clamping one side while crediting the full deductions produced a
+      // journal whose credits exceeded its debits — which then aborted the
+      // WHOLE posting at COMMIT as an opaque 0041 violation. A deficiency
+      // larger than final pay is a real payroll condition that needs a human
+      // decision (collect, absorb, or stagger), so fail with a message.
+      throw new Error(
+        `Deductions exceed gross pay by ${fromScaled(-lineNet as ScaledMoney)} for one employee — resolve the shortfall (collect, absorb, or stagger) before posting.`,
+      );
+    }
+    netPay = addAll(netPay, lineNet);
   }
 
   const employerContributionExpense = addAll(sssEmployer, philHealthEmployer, pagIbigEmployer);
