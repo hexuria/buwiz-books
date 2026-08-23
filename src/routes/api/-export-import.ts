@@ -1029,21 +1029,38 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
           number: string | null | undefined,
           name: string | null | undefined,
         ): Promise<string | null> => {
+          // Resolving to an INACTIVE account fails the row loudly instead of
+          // silently linking new records to a retired chart node (or, worse,
+          // dropping the link because we filtered it out of the lookup).
           if (number) {
             const [byNumber] = await db
-              .select({ id: accounts.id })
+              .select({ id: accounts.id, isActive: accounts.isActive })
               .from(accounts)
               .where(and(eq(accounts.organizationId, orgId), eq(accounts.accountNumber, number)))
               .limit(1);
-            if (byNumber) return byNumber.id;
+            if (byNumber) {
+              if (!byNumber.isActive) {
+                throw new Error(
+                  `Referenced account ${number} exists but is inactive — reactivate it or repoint this row`,
+                );
+              }
+              return byNumber.id;
+            }
           }
           if (name) {
             const [byName] = await db
-              .select({ id: accounts.id })
+              .select({ id: accounts.id, isActive: accounts.isActive })
               .from(accounts)
               .where(and(eq(accounts.organizationId, orgId), eq(accounts.name, name)))
               .limit(1);
-            if (byName) return byName.id;
+            if (byName) {
+              if (!byName.isActive) {
+                throw new Error(
+                  `Referenced account "${name}" exists but is inactive — reactivate it or repoint this row`,
+                );
+              }
+              return byName.id;
+            }
           }
           return null;
         };

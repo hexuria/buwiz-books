@@ -41,6 +41,8 @@ import {
   requestAuthorizedReportingProjection,
 } from "../../lib/reporting/projection";
 import { withMutationSessionUserContext, withSessionUserContext } from "../../lib/server-context";
+import { enforceRateLimit } from "../../lib/request-guards";
+import { createLogger } from "../../lib/logger";
 
 const uuidSchema = z.string().uuid();
 const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -124,6 +126,7 @@ function projectionReconciliationTolerance(): number {
   return Number.isFinite(configured) && configured >= 0 ? configured : 0.01;
 }
 
+const logger = createLogger("api.business-groups");
 export const getBusinessGroupsLanding = createServerFn({ method: "GET" }).handler(async () => {
   return withSessionUserContext(async ({ db, userId }) => {
     const accounts = await listEnterpriseAccountsForUser(db, userId);
@@ -240,6 +243,17 @@ export const getBusinessGroupsPerformance = createServerFn({ method: "GET" })
     const groupIds = [...new Set(input.groupIds)];
     const { groups, projected, projectionStates, source, userId } = await withSessionUserContext(
       async ({ db, userId }) => {
+        // This read fans out across every entity of every selected group —
+        // by far the most expensive query surface here. Rate-limit it per
+        // user AND per selected group set (sorted, so re-ordering the same
+        // ids cannot mint fresh buckets).
+        enforceRateLimit({
+          routeKey: "business-groups:performance",
+          orgId: [...groupIds].sort().join(","),
+          userId,
+          limit: 30,
+          windowMs: 60_000,
+        });
         const groups = await getAccessibleGroupEntitiesForGroups(db, groupIds, userId);
         const source = businessGroupReportSource(groups[0].enterpriseAccountId);
         const organizationIds = [
@@ -295,7 +309,16 @@ export const getBusinessGroupsPerformance = createServerFn({ method: "GET" })
               selectedGroupIds: groupIds,
               projectionAsOf: projected.projectionAsOf,
             }),
-          ).catch(() => undefined);
+          ).catch((error: unknown) => {
+            // Shadow-mode reconciliation is the safety net for the projection
+            // cutover — losing its evidence silently defeats the whole check.
+            // Still non-fatal: the user gets their (live) report either way.
+            logger.error("Failed to record projection mismatches", {
+              groupIds,
+              mismatchCount: mismatches.length,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
         }
       }
       return {

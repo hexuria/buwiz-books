@@ -16,6 +16,7 @@ import {
 } from "../../lib/storage";
 import { documents } from "../../db/schema/documents";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+import { roleHasPermission } from "../../lib/permission-policy";
 
 // ============================================================================
 // Schemas
@@ -289,9 +290,11 @@ export const deleteComment = createServerFn({ method: "POST" }).handler(
 
         const isAuthor = existing.authorId === userId;
         if (!isAuthor) {
-          // Non-author needs "moderate" permission (admin/owner/superuser)
-          const canModerate = role === "admin" || role === "owner" || role === "superuser";
-          if (!canModerate) throw new Error("Not authorized to delete this comment");
+          // Non-author deletion is moderation — evaluate the real permission
+          // statement rather than an inline role list that drifts from it.
+          if (!roleHasPermission(role, "comment", "moderate")) {
+            throw new Error("Not authorized to delete this comment");
+          }
         }
 
         // Collect all descendant comment IDs for cascade soft-delete

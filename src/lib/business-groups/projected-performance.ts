@@ -338,6 +338,9 @@ export async function computeProjectedBusinessGroupsPerformance(
     );
   }
   const offset = (page - 1) * pageSize;
+  const readySyncAges = allEntityReadiness
+    .map((readiness) => readiness.syncAgeSeconds)
+    .filter((age): age is number => age !== null);
   const readinessByOrganization = new Map(
     allEntityReadiness.map((readiness) => [readiness.organizationId, readiness] as const),
   );
@@ -359,7 +362,9 @@ export async function computeProjectedBusinessGroupsPerformance(
       generatedAt: new Date().toISOString(),
       projectionAsOf,
       projectionLagSeconds,
-      projectionSyncAgeSeconds: null,
+      // Ready ≠ fresh: report the WORST bank-sync age across the ready
+      // entities so the caller can see how stale "ready" actually is.
+      projectionSyncAgeSeconds: readySyncAges.length > 0 ? Math.max(...readySyncAges) : null,
       projectionStatus: "ready",
       incompleteEntityCount: 0,
       ...boundedReadiness,

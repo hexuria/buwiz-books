@@ -1014,8 +1014,13 @@ export const getCategoryTransactions = createServerFn({ method: "GET" })
         return result;
       });
     } catch (error) {
+      // Surface the failure instead of dressing it as "no transactions" —
+      // an RLS misfire or bad join looked exactly like an empty category,
+      // which in accounting software is a lie about the books.
       logger.error("getCategoryTransactions error", { error });
-      return [];
+      throw new Error(
+        "Failed to load category transactions. Retry, and report this if it persists.",
+      );
     }
   });
 

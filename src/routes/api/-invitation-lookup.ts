@@ -6,6 +6,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getRequest } from "@tanstack/react-start/server";
+// INTENTIONAL module-level db (same pattern as -public-invoice.ts): these are
+// pre-auth public reads for the join page — there is no session to scope an
+// org context with. Every query below is keyed by the invitation's own id and
+// returns only masked, invitation-local fields; nothing here may fan out into
+// tenant data beyond the invitation row and its org's display name/logo.
 import { db } from "../../db";
 import { invitation, organization, user, member } from "../../db/schema/auth";
 import { eq, and } from "drizzle-orm";

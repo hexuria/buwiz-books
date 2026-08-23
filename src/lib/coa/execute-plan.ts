@@ -294,7 +294,9 @@ export async function assertMappingCompleteness(db: DbExecutor, orgId: string): 
 
   if (missing.length > 0) {
     throw new Error(
-      `Chart-of-accounts apply incomplete: ${missing.length} mapping(s) unresolved (${missing.join(", ")})`,
+      `Chart-of-accounts apply incomplete: ${missing.length} mapping(s) unresolved (${missing.join(", ")}). ` +
+        "If these were skipped because an earlier chart already mapped them to accounts that no " +
+        "longer resolve, re-apply the preset with overwriteExistingMappings to repoint them.",
     );
   }
 }

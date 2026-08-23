@@ -17,7 +17,7 @@ import { accounts } from "../../db/schema/accounts";
 import { effectiveJournalPredicate, journalHeaders, journalLines } from "../../db/schema/journals";
 import { eq, and, or, inArray, lte, asc, sql } from "drizzle-orm";
 import { daysPastDue, getBucketIndex } from "../../lib/report-utils";
-import { withSessionOrgContext, withSessionUserContext } from "../../lib/server-context";
+import { withPermissionOrgContext, withSessionUserContext } from "../../lib/server-context";
 import { mappedAccountFamilyIds } from "../../lib/coa/resolve-mapped-account";
 import {
   computeBalanceSheet,
@@ -55,7 +55,7 @@ function portfolioReportSource(enterpriseAccountId: string) {
 
 export const getBalanceSheet = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { asOf, compare } = balanceSheetSchema.parse(rawData ?? {});
       return computeBalanceSheet(orgId, asOf, compare, db);
     });
@@ -64,7 +64,7 @@ export const getBalanceSheet = createServerFn({ method: "GET" }).handler(
 
 export const getProfitLoss = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { dateFrom, dateTo, compare } = reportPeriodSchema.parse(rawData ?? {});
       return computeProfitLoss(orgId, dateFrom, dateTo, compare, db);
     });
@@ -103,7 +103,7 @@ export const getPortfolioProfitLoss = createServerFn({ method: "GET" })
 
 export const getCashFlow = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { dateFrom, dateTo } = reportPeriodSchema.parse(rawData ?? {});
       return computeCashFlow(orgId, dateFrom, dateTo, db);
     });
@@ -112,7 +112,7 @@ export const getCashFlow = createServerFn({ method: "GET" }).handler(
 
 export const getTrialBalance = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { dateTo } = reportPeriodSchema.parse(rawData ?? {});
       return computeTrialBalance(orgId, dateTo, db);
     });
@@ -121,7 +121,7 @@ export const getTrialBalance = createServerFn({ method: "GET" }).handler(
 
 export const getApAging = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { asOf, buckets } = agingSchema.parse(rawData ?? {});
 
       // Match the configured A/P account AND everything under it, UNIONed with
@@ -252,7 +252,7 @@ export const getApAging = createServerFn({ method: "GET" }).handler(
 
 export const getArAging = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    return withSessionOrgContext(async ({ orgId, db }) => {
+    return withPermissionOrgContext("report", "view", async ({ orgId, db }) => {
       const { asOf, buckets } = agingSchema.parse(rawData ?? {});
 
       // See the A/P note above: union, never narrow.

@@ -1,7 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { DbExecutor } from "../../db";
 import { parties } from "../../db/schema/parties";
 import { accounts } from "../../db/schema/accounts";
 import { bills } from "../../db/schema/bills";
+import { invoices } from "../../db/schema/invoices";
 import { effectiveJournalPredicate, journalHeaders, journalLines } from "../../db/schema/journals";
 import { asc, eq, and, or, sql, gte, lte } from "drizzle-orm";
 
@@ -209,6 +211,10 @@ export const createParty = createServerFn({ method: "POST" })
       async ({ orgId, db }) => {
         const parsed = createPartySchema.parse(rawData);
 
+        if (parsed.defaultAccountId) {
+          await assertAssignableDefaultAccount(db, orgId, parsed.defaultAccountId);
+        }
+
         const [party] = await db
           .insert(parties)
           .values({
@@ -269,6 +275,10 @@ export const updateParty = createServerFn({ method: "POST" })
       async ({ orgId, db }) => {
         const parsed = updatePartySchema.parse(rawData);
         const { id, ...updates } = parsed;
+
+        if (updates.defaultAccountId != null) {
+          await assertAssignableDefaultAccount(db, orgId, updates.defaultAccountId);
+        }
 
         const updateFields: Record<string, unknown> = { updatedAt: new Date() };
         for (const [key, value] of Object.entries(updates)) {
@@ -376,6 +386,25 @@ const hardDeletePartySchema = z.object({
   id: z.string().uuid(),
 });
 
+/**
+ * A party's default posting account must be THIS org's and active — an id
+ * from another tenant or a deactivated account would otherwise ride along
+ * silently and only fail (or worse, post) much later at journal time.
+ */
+async function assertAssignableDefaultAccount(
+  db: DbExecutor,
+  orgId: string,
+  accountId: string,
+): Promise<void> {
+  const [account] = await db
+    .select({ id: accounts.id, isActive: accounts.isActive })
+    .from(accounts)
+    .where(and(eq(accounts.id, accountId), eq(accounts.organizationId, orgId)))
+    .limit(1);
+  if (!account) throw new Error("Default account not found in this organization");
+  if (!account.isActive) throw new Error("Default account is inactive — pick an active account");
+}
+
 export const hardDeleteParty = createServerFn({ method: "POST" })
   .inputValidator((data: z.input<typeof hardDeletePartySchema>) =>
     hardDeletePartySchema.parse(data),
@@ -401,11 +430,25 @@ export const hardDeleteParty = createServerFn({ method: "POST" })
         const [billRef] = await db
           .select({ count: sql<number>`count(*)::int` })
           .from(bills)
-          .where(eq(bills.vendorId, id));
+          .where(and(eq(bills.vendorId, id), eq(bills.organizationId, orgId)));
 
         if (billRef && billRef.count > 0) {
           throw new Error(
             `Cannot delete: ${billRef.count} bill(s) reference this vendor. Remove those references first.`,
+          );
+        }
+
+        // Customers get the same protection vendors always had: invoices
+        // reference parties too, and hard-deleting a billed customer used to
+        // sail through and break every invoice row pointing at it.
+        const [invoiceRef] = await db
+          .select({ count: sql<number>`count(*)::int` })
+          .from(invoices)
+          .where(and(eq(invoices.customerId, id), eq(invoices.organizationId, orgId)));
+
+        if (invoiceRef && invoiceRef.count > 0) {
+          throw new Error(
+            `Cannot delete: ${invoiceRef.count} invoice(s) reference this customer. Remove those references first.`,
           );
         }
 

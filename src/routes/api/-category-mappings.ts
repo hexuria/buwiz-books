@@ -4,8 +4,10 @@
  * Replaces the localStorage-based persistence.
  */
 import { createServerFn } from "@tanstack/react-start";
+import type { DbExecutor } from "../../db";
 import { categoryMappings } from "../../db/schema/category-mappings";
 import { assertMappingTargetAssignable } from "../../lib/coa/account-guards";
+import { allMappingKeys } from "../../lib/coa/mapping-registry";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
@@ -127,6 +129,34 @@ export const upsertCategoryMapping = createServerFn({ method: "POST" }).handler(
 );
 
 // ============================================================================
+
+/**
+ * The chart-of-accounts contract is "fully mapped or untouched" — the preset
+ * executor guarantees every expected (mappingType, sourceKey) resolves.
+ * Deleting mappings legitimately breaks that (revert-to-default is a real
+ * workflow), but the caller deserves to know posting fallbacks are now in
+ * play. Returns the expected keys of THIS type that no longer have a row.
+ */
+async function missingMappingKeysForType(
+  db: DbExecutor,
+  orgId: string,
+  mappingType: string,
+): Promise<string[]> {
+  const expected = allMappingKeys().filter((key) => key.mappingType === mappingType);
+  if (expected.length === 0) return [];
+  const rows = await db
+    .select({ sourceKey: categoryMappings.sourceKey })
+    .from(categoryMappings)
+    .where(
+      and(
+        eq(categoryMappings.organizationId, orgId),
+        eq(categoryMappings.mappingType, mappingType),
+      ),
+    );
+  const present = new Set(rows.map((row) => row.sourceKey));
+  return expected.filter((key) => !present.has(key.sourceKey)).map((key) => key.sourceKey);
+}
+
 // Delete a single mapping (revert to default)
 // ============================================================================
 
@@ -154,7 +184,15 @@ export const deleteCategoryMapping = createServerFn({ method: "POST" }).handler(
             ),
           );
 
-        return { success: true };
+        const missingKeys = await missingMappingKeysForType(db, orgId, mappingType);
+        return {
+          success: true,
+          missingKeys,
+          warning:
+            missingKeys.length > 0
+              ? `${missingKeys.length} expected ${mappingType} mapping(s) now have no target (${missingKeys.join(", ")}). Posting falls back to defaults until they are remapped.`
+              : undefined,
+        };
       },
     );
   },
@@ -186,7 +224,15 @@ export const resetCategoryMappings = createServerFn({ method: "POST" }).handler(
             ),
           );
 
-        return { success: true };
+        const missingKeys = await missingMappingKeysForType(db, orgId, mappingType);
+        return {
+          success: true,
+          missingKeys,
+          warning:
+            missingKeys.length > 0
+              ? `All ${mappingType} mappings were reset — ${missingKeys.length} expected key(s) now post via defaults (${missingKeys.join(", ")}). Re-apply a chart preset or remap them to restore explicit targets.`
+              : undefined,
+        };
       },
     );
   },
