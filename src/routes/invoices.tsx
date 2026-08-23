@@ -3,9 +3,9 @@
  * 4-column board or expandable list grouped by status
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { listInvoices } from "./api/-invoices";
+import { listInvoices, refreshOverdueInvoices } from "./api/-invoices";
 import type { InvoiceListItem } from "./api/-invoices";
 import { INVOICE_MAPPING_CONFIG } from "../lib/invoice-mapping-config";
 export { INVOICE_MAPPING_CONFIG };
@@ -134,6 +134,21 @@ function InvoicesPage() {
       (listInvoices as (opts: { data: unknown }) => Promise<InvoiceListItem[]>)({ data: {} }),
     staleTime: Number.POSITIVE_INFINITY,
   });
+
+  // Persist the overdue transitions the list only derives for display —
+  // the GET stopped writing (a read must stay a read), so the page owns
+  // firing the sweep once per visit. Failures are non-fatal: display
+  // derivation already shows the right status.
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    (refreshOverdueInvoices as () => Promise<{ transitioned: number }>)()
+      .then(({ transitioned }) => {
+        if (transitioned > 0) {
+          queryClient.invalidateQueries({ queryKey: keys.invoices.all() });
+        }
+      })
+      .catch(() => undefined);
+  }, [queryClient]);
 
   const isListView = view === "list";
 

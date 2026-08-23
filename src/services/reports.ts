@@ -20,6 +20,21 @@ export async function aggregateBalances(
   dateFrom: string | null,
   dateTo: string,
   executor: DbExecutor,
+  options?: {
+    /**
+     * "posted_only" (default): voids are retroactive — a voided journal never
+     * counts, whatever the report date. Period reports (P&L, cash flow, trial
+     * balance) keep this view.
+     *
+     * "point_in_time": a journal voided AFTER the report's as-of date still
+     * existed on that date and counts. This is the AP/AR aging convention
+     * (-reports.ts), and the balance sheet adopts it (audit D5) so the A/P
+     * and A/R control accounts tie to the aging totals for ANY as-of date —
+     * previously a bill voided in July vanished from a June 30 balance sheet
+     * while June 30 aging still reported it.
+     */
+    voidedMode?: "posted_only" | "point_in_time";
+  },
 ): Promise<ReportRow[]> {
   const conditions = [
     eq(journalHeaders.organizationId, orgId),
@@ -30,8 +45,19 @@ export async function aggregateBalances(
     conditions.push(gte(journalHeaders.transactionDate, dateFrom));
   }
 
-  // Only include posted transactions
-  conditions.push(eq(journalHeaders.status, "posted"));
+  if (options?.voidedMode === "point_in_time") {
+    // Keep textually in lockstep with the aging predicate in -reports.ts.
+    conditions.push(sql`(
+      ${journalHeaders.status} = 'posted'
+      OR (
+        ${journalHeaders.status} = 'voided'
+        AND ${journalHeaders.voidedAt}::date > ${dateTo}::date
+      )
+    )`);
+  } else {
+    // Only include posted transactions
+    conditions.push(eq(journalHeaders.status, "posted"));
+  }
   conditions.push(effectiveJournalPredicate());
 
   const rows = await executor
@@ -68,14 +94,21 @@ export async function computeBalanceSheet(
   compare: string = "none",
   executor: DbExecutor,
 ) {
-  const rows = await aggregateBalances(orgId, null, asOf, executor);
+  // D5: point-in-time voids, so the balance sheet agrees with AP/AR aging at
+  // any as-of date (see aggregateBalances). Deliberate divergence from the
+  // period reports below.
+  const rows = await aggregateBalances(orgId, null, asOf, executor, {
+    voidedMode: "point_in_time",
+  });
 
   // Comparison period — a balance sheet compares to a prior AS-OF date (one month earlier),
   // not a mirrored span. Keep the cumulative (dateFrom=null) query; only the end date changes.
   let priorRows: ReportRow[] | null = null;
   if (compare !== "none") {
     const { getPriorAsOfDate } = await import("../lib/report-utils");
-    priorRows = await aggregateBalances(orgId, null, getPriorAsOfDate(asOf), executor);
+    priorRows = await aggregateBalances(orgId, null, getPriorAsOfDate(asOf), executor, {
+      voidedMode: "point_in_time",
+    });
   }
 
   return buildBalanceSheet(rows, asOf, priorRows);

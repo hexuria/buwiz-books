@@ -2,6 +2,10 @@ import { roles } from "./permissions";
 
 const ROLE_MAP: Record<string, { statements: Record<string, readonly string[]> }> = {
   owner: roles.superuser,
+  // Some auth flows surface the raw role string "superuser" (the statement
+  // set owner maps to). Without its own key those callers resolved to NO
+  // permissions and every check silently failed closed.
+  superuser: roles.superuser,
   admin: roles.admin,
   member: roles.member,
   client_approver: roles.clientApprover,

@@ -4,6 +4,11 @@
  * Implements accrual-basis double-entry: A/R journal on send, payment journal on receipt.
  */
 import { createServerFn } from "@tanstack/react-start";
+import {
+  deriveDisplayStatus,
+  overdueCutoffDate,
+  sweepOverdueInvoices,
+} from "../../lib/invoices/overdue";
 import { serverBrand } from "@/config/brand";
 import type { DbExecutor } from "../../db";
 import { invoices, invoiceLineItems } from "../../db/schema/invoices";
@@ -116,28 +121,11 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
         .where(eq(invoices.organizationId, orgId))
         .orderBy(desc(invoices.createdAt));
 
-      // Auto-transition sent/viewed invoices to overdue when their due date has passed
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const overdueIds = rows
-        .filter((r) => {
-          if (r.status !== "sent" && r.status !== "viewed") return false;
-          if (!r.dueDate) return false;
-          return new Date(r.dueDate) < today;
-        })
-        .map((r) => r.id);
-
-      let patchedRows = rows;
-      if (overdueIds.length > 0) {
-        await db
-          .update(invoices)
-          .set({ status: "overdue", updatedAt: new Date() })
-          .where(and(eq(invoices.organizationId, orgId), inArray(invoices.id, overdueIds)));
-        // Rebuild with corrected status so the return reflects DB state immediately
-        patchedRows = rows.map((r) =>
-          overdueIds.includes(r.id) ? { ...r, status: "overdue" as const } : r,
-        );
-      }
+      // A GET must not write. Overdue is DERIVED for display here; persisting
+      // the transition is refreshOverdueInvoices below (the invoices page
+      // fires it on load), so retries/prefetches of this list stay pure reads.
+      const cutoff = overdueCutoffDate();
+      const patchedRows = rows.map((r) => deriveDisplayStatus(r, cutoff));
 
       // Apply optional status filter
       const filtered = status ? patchedRows.filter((r) => r.status === status) : patchedRows;
@@ -152,6 +140,23 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
 
 const getInvoiceSchema = z.object({
   id: z.string().uuid(),
+});
+
+/**
+ * Persist the sent/viewed → overdue transitions the list only displays.
+ * Explicitly a mutation (permissioned + rate-limited) — the old behavior of
+ * sweeping inside the GET meant any read could write.
+ */
+export const refreshOverdueInvoices = createServerFn({ method: "POST" }).handler(async () => {
+  return withMutationPermissionOrgContext(
+    "invoice",
+    "update",
+    { routeKey: "invoice:overdue-sweep", limit: 12, windowMs: 60_000 },
+    async ({ orgId, db }) => {
+      const transitioned = await sweepOverdueInvoices(db, orgId);
+      return { transitioned };
+    },
+  );
 });
 
 export const getInvoice = createServerFn({ method: "GET" }).handler(
@@ -810,7 +815,7 @@ export const deleteInvoice = createServerFn({ method: "POST" }).handler(
         const { id } = deleteInvoiceSchema.parse(rawData);
 
         const [invoice] = await db
-          .select({ status: invoices.status })
+          .select({ status: invoices.status, journalHeaderId: invoices.journalHeaderId })
           .from(invoices)
           .where(and(eq(invoices.id, id), eq(invoices.organizationId, orgId)));
 
@@ -820,6 +825,27 @@ export const deleteInvoice = createServerFn({ method: "POST" }).handler(
 
         if (invoice.status !== "draft" && invoice.status !== "voided") {
           throw new Error("Only draft or voided invoices can be deleted");
+        }
+
+        // A voided invoice with ledger history stays: deleting the row would
+        // orphan its posted/voided journals' provenance. Check both the
+        // direct link and any journal that names this invoice as its source
+        // document (payments, reversals).
+        const [linkedJournal] = await db
+          .select({ id: journalHeaders.id })
+          .from(journalHeaders)
+          .where(
+            and(
+              eq(journalHeaders.organizationId, orgId),
+              eq(journalHeaders.sourceDocumentType, "invoice"),
+              eq(journalHeaders.sourceDocumentId, id),
+            ),
+          )
+          .limit(1);
+        if (invoice.journalHeaderId || linkedJournal) {
+          throw new Error(
+            "This invoice has ledger history (posted or voided journal entries). Keep the voided record — deleting it would orphan the audit trail.",
+          );
         }
 
         await db.delete(invoiceLineItems).where(eq(invoiceLineItems.invoiceId, id));
@@ -929,33 +955,6 @@ export const sendInvoiceEmailFn = createServerFn({ method: "POST" }).handler(
           resolvedFromEmail = ownerRow?.email ?? "";
         }
 
-        // Build the invoice PDF attachment.
-        const { invoicePdfBuffer } = await import("../../lib/generate-invoice-pdf");
-        const invoiceCurrency = await resolveFunctionalCurrency(db, orgId);
-        const pdfContent = invoicePdfBuffer({
-          currency: invoiceCurrency,
-          invoiceNumber: invoice.invoiceNumber,
-          issueDate: invoice.issueDate,
-          dueDate: invoice.dueDate,
-          status: invoice.status,
-          orgName: resolvedFromCompany,
-          customerName: customer?.name ?? null,
-          lineItems: pdfLineItems.map((li) => ({
-            description: li.description,
-            quantity: String(li.quantity),
-            unitPrice: String(li.unitPrice),
-            amount: String(li.amount),
-          })),
-          subtotal: String(invoice.subtotal),
-          discountAmount: String(invoice.discountAmount ?? "0"),
-          taxAmount: String(invoice.taxAmount ?? "0"),
-          total: String(invoice.total),
-          amountPaid: String(invoice.amountPaid ?? "0"),
-          balanceDue: String(invoice.balanceDue),
-          notes: invoice.notes,
-          paymentTerms: invoice.paymentTerms,
-        }).toString("base64");
-
         // Transition to sent + create A/R journal entry if still in draft
         const [currentInvoice] = await db
           .select({
@@ -1013,6 +1012,35 @@ export const sendInvoiceEmailFn = createServerFn({ method: "POST" }).handler(
             ...(journalHeaderId ? { journalHeaderId } : {}),
           })
           .where(and(eq(invoices.id, invoiceId), eq(invoices.organizationId, orgId)));
+
+        // Build the PDF from the POST-transition snapshot: the customer's
+        // copy must say "sent", not "draft" — it used to be rendered before
+        // the status write and first-sends went out stamped as drafts.
+        const { invoicePdfBuffer } = await import("../../lib/generate-invoice-pdf");
+        const invoiceCurrency = await resolveFunctionalCurrency(db, orgId);
+        const pdfContent = invoicePdfBuffer({
+          currency: invoiceCurrency,
+          invoiceNumber: invoice.invoiceNumber,
+          issueDate: invoice.issueDate,
+          dueDate: invoice.dueDate,
+          status: "sent",
+          orgName: resolvedFromCompany,
+          customerName: customer?.name ?? null,
+          lineItems: pdfLineItems.map((li) => ({
+            description: li.description,
+            quantity: String(li.quantity),
+            unitPrice: String(li.unitPrice),
+            amount: String(li.amount),
+          })),
+          subtotal: String(invoice.subtotal),
+          discountAmount: String(invoice.discountAmount ?? "0"),
+          taxAmount: String(invoice.taxAmount ?? "0"),
+          total: String(invoice.total),
+          amountPaid: String(invoice.amountPaid ?? "0"),
+          balanceDue: String(invoice.balanceDue),
+          notes: invoice.notes,
+          paymentTerms: invoice.paymentTerms,
+        }).toString("base64");
 
         return {
           to,
