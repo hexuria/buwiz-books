@@ -169,6 +169,15 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
   executor/withOrgContext pattern before the RLS hardening drops the IS NULL
   escape.
 
+### Deferred from PR-20 (inbound email)
+
+- **Per-organization sender allowlists** — inbound email currently accepts
+  any sender (Svix-signed webhook, human-reviewed candidates; decision
+  recorded in docs/inbox-workflow.md). An org-configurable allowlist of
+  accepted `from` domains/addresses would cut review noise from spoofed or
+  stray senders. Needs UI, settings storage, and a reject-vs-quarantine
+  policy call.
+
 ## Tenancy, auth & reporting
 
 - M `src/routes/api/-export-import.ts:895-907` — `executeImport` never applies the per-entity

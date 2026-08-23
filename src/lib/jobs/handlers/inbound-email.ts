@@ -40,6 +40,15 @@ import type { DocumentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import { createLogger } from "@/lib/logger";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
+/**
+ * Same ceiling as the interactive upload path (-documents.ts): an inbound
+ * attachment larger than this is recorded as a failed attachment instead of
+ * being buffered into memory. The download also carries a timeout — the old
+ * fetch had neither, so one huge or hung provider URL could pin the worker.
+ */
+const MAX_INBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 60_000;
+
 const logger = createLogger("api.internal.inbox-worker");
 
 function documentType(filename: string, contentType: string) {
@@ -170,11 +179,24 @@ export async function processInboundEmailJob(
           attachmentResponse.error?.message ?? `Attachment ${attachment.filename} failed.`,
         );
       }
-      const download = await fetch(attachmentResponse.data.download_url);
+      const download = await fetch(attachmentResponse.data.download_url, {
+        signal: AbortSignal.timeout(ATTACHMENT_DOWNLOAD_TIMEOUT_MS),
+      });
       if (!download.ok) {
         throw new Error(`Attachment download failed with HTTP ${download.status}.`);
       }
+      const declaredLength = Number(download.headers.get("content-length") ?? "0");
+      if (declaredLength > MAX_INBOUND_ATTACHMENT_BYTES) {
+        throw new Error(
+          `Attachment is ${declaredLength} bytes — larger than the ${MAX_INBOUND_ATTACHMENT_BYTES}-byte inbound limit.`,
+        );
+      }
       buffer = Buffer.from(await download.arrayBuffer());
+      if (buffer.byteLength > MAX_INBOUND_ATTACHMENT_BYTES) {
+        throw new Error(
+          `Attachment is ${buffer.byteLength} bytes — larger than the ${MAX_INBOUND_ATTACHMENT_BYTES}-byte inbound limit.`,
+        );
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       failedAttachments.push({ filename: attachment.filename, error: msg });
