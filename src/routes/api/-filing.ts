@@ -21,6 +21,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { payrollRuns } from "../../db/schema/payroll";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import {
   assemblePayrollFilingWorkspace,
   assertWorkspaceAllowsFile,
@@ -89,6 +91,7 @@ export const takeFilingSnapshot = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "filing:snapshot", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId } = snapshotSchema.parse(rawData);
         const run = await loadRun(db, orgId, runId, true);
         const assembled = await assemblePayrollFilingWorkspace(db, orgId, run);
@@ -163,6 +166,7 @@ export const markPeriodFiled = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "filing:file", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId, filingReference } = fileSchema.parse(rawData);
         const run = await loadRun(db, orgId, runId, true);
         if (run.filingReference) {

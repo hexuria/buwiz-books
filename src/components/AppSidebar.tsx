@@ -19,6 +19,11 @@ import { OrganizationSwitcher } from "./OrganizationSwitcher";
 import { useActiveOrganization } from "../hooks/useActiveOrganization";
 import { useIsCompactNav } from "../hooks/useBreakpoint";
 import { useScrollLock } from "../hooks/useOverlayBehavior";
+import { useQuery } from "@tanstack/react-query";
+import { keys } from "../lib/query-keys";
+import { applyPhTaxGate } from "../lib/tax/nav-gate";
+import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
+import { getTaxModuleState } from "../routes/api/-tax-module-state";
 
 // ─── Nav Item Config ─────────────────────────────────────────────────────────
 
@@ -721,6 +726,16 @@ export default function AppSidebar({ collapsed, onToggleCollapse, children }: Ap
   const { mode: themeMode, setMode: setThemeMode } = useTheme();
   const { data: session } = useSession();
   const { data: safeActiveOrg } = useActiveOrganization();
+
+  // D6 country gate: Payroll + Tax entries follow the PH module state —
+  // hidden when off, badged when archived. While the state is loading the
+  // nav stays as-is (no flash of appearing/disappearing sections).
+  const { data: phTaxStatus } = useQuery({
+    queryKey: keys.tax.moduleState(),
+    queryFn: () => (getTaxModuleState as () => Promise<PhTaxModuleStatus>)(),
+    staleTime: 60_000,
+  });
+  const navItems = applyPhTaxGate(NAV_ITEMS, phTaxStatus?.state);
   const activeOrg = safeActiveOrg
     ? { id: safeActiveOrg.id, name: safeActiveOrg.name, slug: safeActiveOrg.slug ?? "" }
     : null;
@@ -825,7 +840,7 @@ export default function AppSidebar({ collapsed, onToggleCollapse, children }: Ap
 
           {/* ── Navigation items ──── */}
           <nav className="flex-1 py-1.5 flex flex-col gap-0.5">
-            {NAV_ITEMS.map((item) =>
+            {navItems.map((item) =>
               item.children ? (
                 <SectionItem
                   key={item.label}

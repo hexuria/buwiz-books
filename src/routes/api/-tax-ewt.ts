@@ -6,6 +6,8 @@ import { taxCertificates } from "../../db/schema/tax-certificates";
 import { orgTaxProfiles } from "../../db/schema/tax-reference";
 import { taxComputedReturns, taxWithholdingPayments } from "../../db/schema/tax-stage-remainder";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { isPlaceholderTin } from "../../lib/tax/alphalist-preflight";
 import { ATC_EXPECTED_RATE_BPS, normalizeTin } from "../../lib/tax/certificate-2307";
 import { assessEwt, buildQap, computeEwt, remittanceObligationsFor } from "../../lib/tax/ewt";
@@ -57,6 +59,7 @@ export const captureWithholdingPayment = createServerFn({ method: "POST" }).hand
       "create",
       { routeKey: "tax:ewt-capture", limit: 30, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = captureSchema.parse(rawData);
         const payeeTin = normalizeTin(input.payeeTin);
         if (isPlaceholderTin(payeeTin)) {
@@ -150,6 +153,7 @@ export const saveStoredQap = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:save-qap", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = qapSchema.parse(rawData);
         const payments = await db
           .select({
@@ -216,6 +220,7 @@ export const issueWithholding2307 = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:issue-2307", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = issueSchema.parse(rawData);
         const [payment] = await db
           .select()
@@ -308,6 +313,7 @@ export const remitWithholding = createServerFn({ method: "POST" }).handler(
       "create",
       { routeKey: "tax:ewt-remit", limit: 10, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = remitSchema.parse(rawData);
         // One transaction: the poster documents that it needs a
         // transaction-scoped executor (header+lines+certificate pin must be

@@ -6,6 +6,8 @@ import { parties } from "../../db/schema/parties";
 import { partyTaxProfiles } from "../../db/schema/party-tax";
 import { orgTaxRegistrations } from "../../db/schema/tax-stage-remainder";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { isPlaceholderTin } from "../../lib/tax/alphalist-preflight";
 
 export const listPayeeTaxProfiles = createServerFn({ method: "GET" }).handler(async () => {
@@ -42,6 +44,7 @@ export const upsertPayeeTaxProfile = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:payee-profile", limit: 30, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = payeeSchema.parse(rawData);
         if (isPlaceholderTin(input.tin)) {
           throw new Error("That payee TIN is a placeholder; dummy TINs are banned.");
@@ -129,6 +132,7 @@ export const addTaxRegistration = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:registration", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = registrationSchema.parse(rawData);
         const [row] = await db
           .insert(orgTaxRegistrations)

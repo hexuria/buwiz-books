@@ -128,6 +128,7 @@ export const keys = {
   },
   tax: {
     all: () => ["tax"] as const,
+    moduleState: () => ["tax", "module-state"] as const,
     certificates: () => ["tax", "certificates"] as const,
     settings: () => ["tax", "settings"] as const,
     deadlines: (year: number) => ["tax", "deadlines", year] as const,

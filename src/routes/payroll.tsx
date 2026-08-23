@@ -1,5 +1,6 @@
 /** Payroll filing index — create a period, add a TIN profile, capture prior 2316, open a run. */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -13,8 +14,18 @@ import {
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/payroll")({
-  component: PayrollIndexPage,
+  component: PayrollIndexPageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function PayrollIndexPageGated() {
+  return (
+    <PhTaxGate>
+      <PayrollIndexPage />
+    </PhTaxGate>
+  );
+}
 
 function PayrollIndexPage() {
   const navigate = useNavigate();

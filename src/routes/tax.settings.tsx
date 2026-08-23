@@ -1,5 +1,6 @@
 /** Org-level tax identity: eFPS, fiscal year, classification, branches, year elections. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
@@ -11,7 +12,7 @@ import {
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/tax/settings")({
-  component: TaxSettingsPage,
+  component: TaxSettingsPageGated,
 });
 
 type TaxSettings = {
@@ -40,6 +41,16 @@ type TaxSettings = {
     irrevocable: boolean;
   }>;
 };
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxSettingsPageGated() {
+  return (
+    <PhTaxGate>
+      <TaxSettingsPage />
+    </PhTaxGate>
+  );
+}
 
 function TaxSettingsPage() {
   const queryClient = useQueryClient();

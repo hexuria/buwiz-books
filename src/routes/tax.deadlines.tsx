@@ -1,5 +1,6 @@
 /** Filing calendar from the Stage 4 deadline engine. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { getTaxSettings, listDeadlineOverrides } from "./api/-tax-settings";
@@ -7,8 +8,18 @@ import { buildDeadlineCalendar, type DeadlineEntry } from "../lib/tax/deadlines"
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/tax/deadlines")({
-  component: TaxDeadlinesPage,
+  component: TaxDeadlinesPageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxDeadlinesPageGated() {
+  return (
+    <PhTaxGate>
+      <TaxDeadlinesPage />
+    </PhTaxGate>
+  );
+}
 
 function TaxDeadlinesPage() {
   const [year, setYear] = useState(2026);

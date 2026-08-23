@@ -1,5 +1,6 @@
 /** Stage 3b: record tax we withheld from a supplier, build the QAP, issue 2307, remit. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -15,8 +16,18 @@ import { issueStoredQapDat } from "./api/-tax-ewt";
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/tax/ewt")({
-  component: TaxEwtPage,
+  component: TaxEwtPageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxEwtPageGated() {
+  return (
+    <PhTaxGate>
+      <TaxEwtPage />
+    </PhTaxGate>
+  );
+}
 
 function TaxEwtPage() {
   const queryClient = useQueryClient();

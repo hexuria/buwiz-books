@@ -5,6 +5,7 @@
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keys } from "../lib/query-keys";
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "@/lib/auth-client";
@@ -27,6 +28,12 @@ import {
   getOrgAiSettingsForUi,
   updateOrgAiSettings,
 } from "./api/-org-settings";
+import {
+  getTaxModuleState,
+  getAccountingCurrency,
+  updateOrganizationCountry,
+} from "./api/-tax-module-state";
+import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
 import type {
   OrgSettings,
   OrgMember,
@@ -386,8 +393,120 @@ function GeneralSection({
               {settings?.slug ?? "—"}
             </div>
           </div>
+
+          <CountrySection queryClient={queryClient} />
         </div>
       </section>
+    </div>
+  );
+}
+
+function CountrySection({ queryClient }: { queryClient: any }) {
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  const { data: status } = useQuery({
+    queryKey: keys.tax.moduleState(),
+    queryFn: () => (getTaxModuleState as () => Promise<PhTaxModuleStatus>)(),
+  });
+  const { data: currency } = useQuery({
+    queryKey: ["org-accounting-currency"],
+    queryFn: () => (getAccountingCurrency as () => Promise<{ baseCurrency: string }>)(),
+  });
+
+  const mutation = useMutation({
+    mutationFn: (country: string | null) =>
+      (updateOrganizationCountry as (opts: { data: unknown }) => Promise<unknown>)({
+        data: { country },
+      }),
+    onSuccess: () => {
+      setError("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+      queryClient.invalidateQueries({ queryKey: keys.tax.moduleState() });
+    },
+    onError: (err: unknown) =>
+      setError(err instanceof Error ? err.message : "Failed to update country."),
+  });
+
+  const current = status?.country ?? "";
+
+  const onChange = (nextRaw: string) => {
+    const next = nextRaw === "" ? null : nextRaw;
+    if (next === (status?.country ?? null)) return;
+
+    // Switching AWAY from PH with records: pre-flight summary, no deletes.
+    if (status?.country === "PH" && next !== "PH" && (status?.totalRecords ?? 0) > 0) {
+      const r = status.records;
+      const summary = [
+        r.payrollRuns > 0 ? `${r.payrollRuns} payroll run(s)` : null,
+        r.taxCertificates > 0 ? `${r.taxCertificates} withholding certificate(s)` : null,
+        r.computedReturns > 0 ? `${r.computedReturns} computed return(s)` : null,
+        r.withholdingRemittances > 0 ? `${r.withholdingRemittances} remittance(s)` : null,
+        r.taxProfiles > 0 ? `${r.taxProfiles} tax profile(s)` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      const ok = window.confirm(
+        `Change country away from the Philippines?
+
+This organization has ${summary}. Nothing is deleted: the PH tax module becomes read-only (archived), stays exportable, and switching back restores it exactly as it is. New payroll/tax writes will be refused while archived.`,
+      );
+      if (!ok) return;
+    }
+
+    // Activating PH with a non-PHP book currency: warn, don't block.
+    if (next === "PH" && currency && currency.baseCurrency !== "PHP") {
+      const ok = window.confirm(
+        `This organization keeps its books in ${currency.baseCurrency}, not PHP. Philippine payroll and BIR forms are peso-denominated — enabling the module is allowed, but amounts will not convert automatically. Continue?`,
+      );
+      if (!ok) return;
+    }
+
+    mutation.mutate(next);
+  };
+
+  return (
+    <div>
+      <label
+        htmlFor="org-country"
+        className="block text-xs font-medium text-[#64748b] dark:text-white/50 mb-1.5"
+      >
+        Country
+      </label>
+      <select
+        id="org-country"
+        value={current}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={mutation.isPending || !status}
+        className="w-full sm:w-72 px-4 py-2.5 rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#111827] text-base sm:text-sm text-[#1e293b] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#0d9488]/30 focus:border-[#0d9488] transition-all"
+      >
+        <option value="">Not set</option>
+        {COUNTRY_OPTIONS.map((c) => (
+          <option key={c.code} value={c.code}>
+            {c.name}
+          </option>
+        ))}
+      </select>
+      <p className="mt-1.5 text-[11px] text-[#94a3b8] dark:text-white/40">
+        Setting the country to Philippines enables payroll, withholding, and BIR filing. Switching
+        away archives those records read-only — nothing is ever deleted, and switching back restores
+        them.
+        {status?.state === "archived" && (
+          <span className="block mt-0.5 text-[#92400e] dark:text-amber-300 font-medium">
+            PH tax records are currently archived ({status.totalRecords} record
+            {status.totalRecords === 1 ? "" : "s"}).
+          </span>
+        )}
+      </p>
+      {saved && (
+        <p className="mt-1 text-xs text-[#0d9488] dark:text-teal-400 font-medium">
+          ✓ Country updated
+        </p>
+      )}
+      {error && (
+        <p className="mt-1 text-xs text-[#ef4444] dark:text-red-400 font-medium">{error}</p>
+      )}
     </div>
   );
 }
@@ -1418,6 +1537,22 @@ const AI_TASK_TITLES: Record<string, string> = {
   txn_prefill: "Transaction prefill",
   match_assist: "Match assist",
 };
+
+// Curated ISO 3166-1 alpha-2 list for the organization country select. The
+// gate only distinguishes PH from everything else; the rest are offered for
+// forward compatibility and honest bookkeeping of where the org operates.
+const COUNTRY_OPTIONS: { code: string; name: string }[] = [
+  { code: "PH", name: "Philippines" },
+  { code: "US", name: "United States" },
+  { code: "SG", name: "Singapore" },
+  { code: "AU", name: "Australia" },
+  { code: "CA", name: "Canada" },
+  { code: "GB", name: "United Kingdom" },
+  { code: "HK", name: "Hong Kong" },
+  { code: "JP", name: "Japan" },
+  { code: "AE", name: "United Arab Emirates" },
+  { code: "NZ", name: "New Zealand" },
+];
 
 const AUTONOMY_KIND_TITLES: Record<string, { title: string; blurb: string }> = {
   document_type: {

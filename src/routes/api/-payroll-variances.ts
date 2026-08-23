@@ -25,6 +25,8 @@ import { z } from "zod";
 import { parties } from "../../db/schema/parties";
 import { payrollLines, payrollRuns } from "../../db/schema/payroll";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { isNonZeroMoney } from "../../lib/tax/assemble-payroll-filing-workspace";
 
 export interface PayrollVarianceLine {
@@ -166,6 +168,7 @@ export const acknowledgePayrollVariances = createServerFn({ method: "POST" }).ha
       "update",
       { routeKey: "payroll:acknowledge", limit: 30, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId, note } = acknowledgeSchema.parse(rawData);
 
         const [run] = await db
