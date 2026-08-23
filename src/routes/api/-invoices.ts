@@ -6,7 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
   deriveDisplayStatus,
-  overdueCutoffDate,
+  orgOverdueCutoffDate,
   sweepOverdueInvoices,
 } from "../../lib/invoices/overdue";
 import { serverBrand } from "@/config/brand";
@@ -124,7 +124,7 @@ export const listInvoices = createServerFn({ method: "GET" }).handler(
       // A GET must not write. Overdue is DERIVED for display here; persisting
       // the transition is refreshOverdueInvoices below (the invoices page
       // fires it on load), so retries/prefetches of this list stay pure reads.
-      const cutoff = overdueCutoffDate();
+      const cutoff = await orgOverdueCutoffDate(db, orgId);
       const patchedRows = rows.map((r) => deriveDisplayStatus(r, cutoff));
 
       // Apply optional status filter

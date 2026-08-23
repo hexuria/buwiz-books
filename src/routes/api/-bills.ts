@@ -166,7 +166,12 @@ const updateBillSchema = z.object({
   billDate: z.string().optional(),
   dueDate: z.string().optional(),
   memo: z.string().optional(),
-  amount: z.string().optional(),
+  // Same discipline as line amounts: a negative or non-numeric header amount
+  // strands the bill as unpayable.
+  amount: z
+    .string()
+    .regex(/^\d+(?:\.\d+)?$/, "Amount must be a non-negative number")
+    .optional(),
   approverId: z.string().optional(), // better-auth uses text IDs, not UUIDs
 });
 

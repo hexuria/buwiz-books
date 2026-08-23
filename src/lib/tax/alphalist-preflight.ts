@@ -169,6 +169,17 @@ export function preflightAlphalist(rows: readonly AlphalistRow[]): PreflightFind
     // ── Branch code ────────────────────────────────────────────────────────
     if (row.branchCode && !/^\d{4,5}$/.test(row.branchCode)) {
       add("ALPHA-005", "fatal", `branch code "${row.branchCode}" must be four or five digits`);
+    } else if (row.branchCode && row.branchCode.length === 5 && !/^0+$/.test(row.branchCode)) {
+      // All-zero codes mean "head office" at either width — truncation is
+      // lossless there and warning on every head-office row would be noise.
+      // Legal input, lossy output: every .DAT layout field is 4 characters
+      // and the encoders slice(0, 4) — "00001" and "00012" both become
+      // "0001"-adjacent garbage. The filer should know a digit drops.
+      add(
+        "ALPHA-008",
+        "warning",
+        `branch code "${row.branchCode}" is five digits — .DAT output truncates it to "${row.branchCode.slice(0, 4)}"`,
+      );
     }
 
     // ── Name ───────────────────────────────────────────────────────────────

@@ -201,6 +201,14 @@ export const markPeriodFiled = createServerFn({ method: "POST" }).handler(
 
         const assembled = await assemblePayrollFilingWorkspace(db, orgId, run);
         assertWorkspaceAllowsFile(assembled.workspace);
+        // Record-level, not workspace-level: filing a period whose OWN row
+        // carries no snapshot checksum is how "filed with no evidence" rows
+        // are minted (see canTransition's matching refusal).
+        if (!run.snapshotChecksum) {
+          throw new Error(
+            "No as-filed snapshot is on this period's record — take the snapshot first; it is the only evidence of what was reported.",
+          );
+        }
 
         await db
           .update(payrollRuns)

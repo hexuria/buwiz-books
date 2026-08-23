@@ -28,7 +28,11 @@ function TaxDeadlinesPage() {
     queryFn: () =>
       (
         getTaxSettings as () => Promise<{
-          profile: { efpsEnrolled: boolean; efpsIndustryGroup: "A" | "B" | "C" | "D" | "E" | null };
+          profile: {
+            efpsEnrolled: boolean;
+            efpsIndustryGroup: "A" | "B" | "C" | "D" | "E" | null;
+            fiscalYearEndMonth: number;
+          };
         }>
       )(),
   });
@@ -47,6 +51,7 @@ function TaxDeadlinesPage() {
       year,
       filingChannel: profile?.efpsEnrolled ? "efps" : "ebirforms",
       efpsGroup: profile?.efpsIndustryGroup ?? undefined,
+      fiscalYearEndMonth: profile?.fiscalYearEndMonth ?? 12,
       overrides: mapped,
     });
   }, [settings.data, overrides.data, year]);

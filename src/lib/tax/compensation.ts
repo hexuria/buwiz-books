@@ -149,14 +149,19 @@ export function segregate(input: CompensationInput): SegregatedCompensation {
   const taxableRegular = clampAtZero((grossRegular - employeeContributions) as ScaledMoney);
 
   const sup = input.supplementary ?? {};
-  const taxableSupplementary = addAll(
-    s(sup.commission),
-    s(sup.profitSharing),
-    s(sup.directorsFees),
-    s(sup.overtimePay),
-    s(sup.hazardPay),
-    s(sup.taxableThirteenthMonthAndOtherBenefits),
-    s(sup.otherTaxableSupplementary),
+  // Clamped like the regular bucket: a reversal-heavy import can sum a
+  // bucket negative, and a negative bucket would silently shrink OTHER
+  // income in the bracket walk.
+  const taxableSupplementary = clampAtZero(
+    addAll(
+      s(sup.commission),
+      s(sup.profitSharing),
+      s(sup.directorsFees),
+      s(sup.overtimePay),
+      s(sup.hazardPay),
+      s(sup.taxableThirteenthMonthAndOtherBenefits),
+      s(sup.otherTaxableSupplementary),
+    ) as ScaledMoney,
   );
 
   const nt = input.nonTaxable ?? {};
