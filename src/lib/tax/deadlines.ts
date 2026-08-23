@@ -18,6 +18,13 @@ export interface DeadlineInput {
   year: number;
   filingChannel: FilingChannel;
   efpsGroup?: EfpsGroup | null;
+  /**
+   * Fiscal year-end month from /tax/settings (default 12 = calendar year).
+   * VAT quarters follow the TAXPAYER'S adopted year: with a June year-end,
+   * 2550Q quarters end in September, December, March, and June — the fixed
+   * calendar quarters were wrong for every non-December filer.
+   */
+  fiscalYearEndMonth?: number;
   /** ISO date of an official override, e.g. RMC 30-2026. */
   overrides?: Partial<Record<DeadlineFormCode, string>>;
 }
@@ -43,13 +50,19 @@ function lastDayOfMonth(year: number, month: number): number {
 function quarterDue(
   year: number,
   quarter: 1 | 2 | 3 | 4,
+  fiscalYearEndMonth = 12,
 ): {
   periodStart: string;
   periodEnd: string;
   dueDate: string;
 } {
-  const endMonth = ({ 1: 3, 2: 6, 3: 9, 4: 12 } as const)[quarter];
-  const periodStart = iso(year, endMonth - 2, 1);
+  // Quarter ends walk back from the fiscal year-end month in steps of three,
+  // normalized into the calendar year being displayed. FYE 12 reproduces the
+  // familiar Mar/Jun/Sep/Dec ends exactly.
+  const endMonth = ((fiscalYearEndMonth - (4 - quarter) * 3 - 1 + 24) % 12) + 1;
+  const startMonth = ((endMonth - 3 + 12) % 12) + 1;
+  const startYear = startMonth > endMonth ? year - 1 : year;
+  const periodStart = iso(startYear, startMonth, 1);
   const periodEnd = iso(year, endMonth, lastDayOfMonth(year, endMonth));
   const due = new Date(`${periodEnd}T00:00:00Z`);
   due.setUTCDate(due.getUTCDate() + 25);
@@ -94,7 +107,7 @@ export function buildDeadlineCalendar(input: DeadlineInput): DeadlineEntry[] {
   }
 
   for (const quarter of [1, 2, 3, 4] as const) {
-    const q = quarterDue(input.year, quarter);
+    const q = quarterDue(input.year, quarter, input.fiscalYearEndMonth ?? 12);
     entries.push({
       formCode: "2550Q",
       label: "2550Q quarterly VAT",

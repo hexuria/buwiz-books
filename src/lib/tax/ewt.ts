@@ -259,8 +259,11 @@ export function remittanceObligationsFor(month: number, year: number): Remittanc
   const monthInQuarter = ((month - 1) % 3) + 1;
 
   if (monthInQuarter < 3) {
-    const dueYear = month === 12 ? year + 1 : year;
-    const dueMonth = month === 12 ? 1 : month + 1;
+    // month is 1, 2, 4, 5, 7, 8, 10, or 11 here — never December, which is
+    // always a quarter's third month and handled below. The year can never
+    // roll over in this arm.
+    const dueYear = year;
+    const dueMonth = month + 1;
     return [
       {
         formCode: "0619E",
@@ -340,7 +343,10 @@ export function buildQap(input: {
   let notIssued = 0;
 
   for (const payment of input.payments) {
-    const key = `${payment.payeeTin}${payment.atc}`;
+    // Explicit VISIBLE separator. This used to be an invisible \x01 control
+    // byte — it worked, but a control character as a load-bearing delimiter
+    // is a trap for every editor, diff, and grep that touches this file.
+    const key = `${payment.payeeTin}|${payment.atc}`;
     const amount = toScaled(payment.incomePayment);
     const withheld = toScaled(payment.taxWithheld);
 

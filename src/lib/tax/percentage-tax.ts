@@ -241,7 +241,9 @@ export function monitorThreshold(grossReceipts: string): ThresholdStatus {
   const receipts = toScaled(grossReceipts);
   const threshold = toScaled(VAT_THRESHOLD);
   const remaining = (threshold - receipts) as ScaledMoney;
-  const utilization = Number(receipts) / Number(threshold);
+  // Ratio via bigint basis points — Number() on scale-8 money loses integer
+  // precision past 2^53 and float division is banned on money paths.
+  const utilization = Number((receipts * 10000n) / threshold) / 10000;
 
   let advisory: string | null = null;
   if (receipts > threshold) {

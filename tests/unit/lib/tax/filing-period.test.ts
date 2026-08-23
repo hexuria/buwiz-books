@@ -8,16 +8,28 @@ import {
   type TransitionContext,
 } from "@/lib/tax/filing-period";
 
-const period = (over: Partial<FilingPeriod> = {}): FilingPeriod => ({
-  formCode: "1601C",
-  periodStart: "2026-01-01",
-  periodEnd: "2026-01-31",
-  state: "open",
-  filingReference: null,
-  snapshotChecksum: null,
-  amendmentSequence: 0,
-  ...over,
-});
+const period = (over: Partial<FilingPeriod> = {}): FilingPeriod => {
+  const base: FilingPeriod = {
+    formCode: "1601C",
+    periodStart: "2026-01-01",
+    periodEnd: "2026-01-31",
+    state: "open",
+    filingReference: null,
+    snapshotChecksum: null,
+    amendmentSequence: 0,
+    ...over,
+  };
+  // P14 integrity gate: a filed/amended period without its as-filed evidence
+  // is a corrupted record and refuses every transition. Fixtures that only
+  // exercise transition LEGALITY get complete evidence by default; a test
+  // pinning the integrity gate itself passes the nulls explicitly.
+  if (base.state === "filed" || base.state === "amended") {
+    base.filingReference = "filingReference" in over ? (over.filingReference ?? null) : "REF-FIX";
+    base.snapshotChecksum =
+      "snapshotChecksum" in over ? (over.snapshotChecksum ?? null) : "checksum-fix";
+  }
+  return base;
+};
 
 const ready = (over: Partial<TransitionContext> = {}): TransitionContext => ({
   unacknowledgedVariances: 0,
@@ -31,7 +43,13 @@ const ready = (over: Partial<TransitionContext> = {}): TransitionContext => ({
 describe("the filing ladder", () => {
   it("moves open → computed → filed", () => {
     expect(canTransition(period(), "computed", ready()).allowed).toBe(true);
-    expect(canTransition(period({ state: "computed" }), "filed", ready()).allowed).toBe(true);
+    expect(
+      canTransition(
+        period({ state: "computed", snapshotChecksum: "checksum-fix" }),
+        "filed",
+        ready(),
+      ).allowed,
+    ).toBe(true);
   });
 
   it("allows recomputation, so a corrected import is re-run rather than unwound", () => {
@@ -114,7 +132,9 @@ describe("gates on filing", () => {
         filingReference: null,
       }),
     );
-    expect(result.blockers).toHaveLength(4);
+    // P14 added the record-level checksum blocker (the fixture's computed
+    // period has no snapshotChecksum on the row) — five blockers now.
+    expect(result.blockers).toHaveLength(5);
   });
 
   it("blocks computation while opening balances are incomplete", () => {
@@ -133,7 +153,13 @@ describe("applyTransition", () => {
   });
 
   it("increments the amendment sequence only on amendment", () => {
-    const filed = applyTransition(period({ state: "computed" }), "filed", ready());
+    // The snapshot lands on the RECORD while computed (P14: filing checks the
+    // row, not just the caller's claim).
+    const filed = applyTransition(
+      period({ state: "computed", snapshotChecksum: "checksum-fix" }),
+      "filed",
+      ready(),
+    );
     expect(filed.amendmentSequence).toBe(0);
     const amended = applyTransition(filed, "amended", ready());
     expect(amended.amendmentSequence).toBe(1);

@@ -86,9 +86,12 @@ export function selectSssBracket(compensation: ScaledMoney): (typeof SSS_MSC_BRA
   const last = SSS_MSC_BRACKETS[SSS_MSC_BRACKETS.length - 1];
   for (const bracket of SSS_MSC_BRACKETS) {
     const msc = toScaled(bracket[0]);
-    // Upper edge of this bracket: MSC + 249.99.
-    const upper = (msc + toScaled("249.99")) as ScaledMoney;
-    if (compensation <= upper) return bracket;
+    // Upper edge: strictly below MSC + 250. The circular prints the ranges
+    // as "... to MSC + 249.99" in centavos, but our amounts carry 8 decimals
+    // — a prorated 5,249.995 belongs to THIS bracket, and "<= 249.99"
+    // wrongly promoted anything in the (249.99, 250) sliver.
+    const upper = (msc + toScaled("250")) as ScaledMoney;
+    if (compensation < upper) return bracket;
   }
   return compensation < toScaled(first[0]) ? first : last;
 }

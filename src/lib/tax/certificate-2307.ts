@@ -75,9 +75,10 @@ export function impliedRateBps(incomePayment: string, taxWithheld: string): numb
   const payment = toScaled(incomePayment);
   if (payment === ZERO) return null;
   const withheld = toScaled(taxWithheld);
-  // Basis points, rounded to the nearest whole — certificates are stated to
-  // two decimals and an exact rate rarely survives the arithmetic.
-  return Number((withheld * 10000n) / payment);
+  // Basis points rounded HALF-UP to the nearest whole — bigint division
+  // truncates, and truncation read 9.999…% as 999 bps, flagging correct
+  // certificates one basis point under their table rate.
+  return Number((withheld * 20000n + payment) / (2n * payment));
 }
 
 /**

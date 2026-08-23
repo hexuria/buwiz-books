@@ -23,10 +23,20 @@ export interface Form2307PdfInput {
 function peso(value: string): string {
   const negative = value.trim().startsWith("-");
   const bare = negative ? value.trim().slice(1) : value.trim();
+  // ROUND to centavos (half-up) — slicing the fraction TRUNCATED, so an
+  // 8-decimal 1234.567 printed as 1,234.56 and the certificate disagreed
+  // with every rounded figure derived from the same amount.
   const [whole, fraction = ""] = bare.split(".");
-  const cents = `${fraction}00`.slice(0, 2);
-  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  return `${negative ? "(" : ""}${grouped}.${cents}${negative ? ")" : ""}`;
+  let wholeDigits = whole === "" ? "0" : whole;
+  let cents = Number(`0.${fraction || "0"}`);
+  let centsRounded = Math.round(cents * 100);
+  if (centsRounded === 100) {
+    wholeDigits = (BigInt(wholeDigits) + 1n).toString();
+    centsRounded = 0;
+  }
+  const grouped = wholeDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  const centsText = String(centsRounded).padStart(2, "0");
+  return `${negative ? "(" : ""}${grouped}.${centsText}${negative ? ")" : ""}`;
 }
 
 export function generateForm2307Pdf(input: Form2307PdfInput): jsPDF {

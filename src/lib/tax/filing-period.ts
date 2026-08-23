@@ -109,6 +109,23 @@ export function canTransition(
   const blockers: string[] = [];
   const refuse = (reason: string) => blockers.push(reason);
 
+  // A period CLAIMING to be filed while missing its as-filed evidence is a
+  // corrupted record, not a state — nothing may transition off it until the
+  // checksum/reference are recovered. Silently amending it would launder the
+  // gap into a new "original".
+  if (period.state === "filed" || period.state === "amended") {
+    if (!period.snapshotChecksum) {
+      refuse(
+        `this ${period.state} period has NO as-filed snapshot checksum — the record is ` +
+          `incomplete and must be investigated before any further transition`,
+      );
+    }
+    if (!period.filingReference) {
+      refuse(`this ${period.state} period has no filing reference on record`);
+    }
+    if (blockers.length > 0) return { allowed: false, blockers, nextState: null };
+  }
+
   const legal: Record<FilingPeriodState, FilingPeriodState[]> = {
     open: ["computed"],
     // Recomputation is deliberate: a corrected import is re-run rather than
@@ -157,6 +174,12 @@ export function canTransition(
       // only record of the FIGURES as reported, and the only thing that names
       // the reference-dataset version they were computed against.
       refuse("no as-filed snapshot has been taken — it is the only evidence of what was reported");
+    }
+    if (!period.snapshotChecksum) {
+      // The context boolean is the caller's CLAIM; the period row is the
+      // record. Marking a period filed while its own checksum column is null
+      // is how "filed with no evidence" rows were minted.
+      refuse("the as-filed snapshot checksum is not on the period record");
     }
     if (!context.filingReference) {
       refuse("no filing reference recorded");
