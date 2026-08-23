@@ -93,6 +93,7 @@ export async function createPaymentJournalEntry(
       partyId: invoice.customerId,
       totalAmount: paymentMoney,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: invoice.id,
       sourceDocumentType: "invoice",
       createdBy: userId,
@@ -324,6 +325,7 @@ export async function createArJournalEntry(
       partyId: invoice.customerId,
       totalAmount: balance.totalDebitsExact, // schema: cached sum of debit lines
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: invoice.id,
       sourceDocumentType: "invoice",
       createdBy: userId,

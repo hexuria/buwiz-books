@@ -49,23 +49,26 @@ describeDb("bill void — ledger semantics", () => {
   }
 
   async function postAccrual(amount: string): Promise<string> {
-    const [header] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId: ORG,
-        transactionDate: "2026-03-15",
-        transactionType: "pay_out",
-        source: "bill",
-        status: "posted",
-        sourceDocumentType: "bill",
-        totalAmount: amount,
-      })
-      .returning();
-    // A minimal balanced accrual: Dr expense, Cr A/P.
-    await db.insert(journalLines).values([
-      { journalHeaderId: header.id, accountId, debit: amount, sortOrder: 0 },
-      { journalHeaderId: header.id, accountId, credit: amount, sortOrder: 1 },
-    ]);
+    const header = await db.transaction(async (tx: any) => {
+      const [created] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: ORG,
+          transactionDate: "2026-03-15",
+          transactionType: "pay_out",
+          source: "bill",
+          status: "posted",
+          sourceDocumentType: "bill",
+          totalAmount: amount,
+        })
+        .returning();
+      // A minimal balanced accrual: Dr expense, Cr A/P.
+      await tx.insert(journalLines).values([
+        { journalHeaderId: created.id, accountId, debit: amount, sortOrder: 0 },
+        { journalHeaderId: created.id, accountId, credit: amount, sortOrder: 1 },
+      ]);
+      return created;
+    });
     return header.id;
   }
 
@@ -92,23 +95,26 @@ describeDb("bill void — ledger semantics", () => {
       .set({ status: "voided" })
       .where(eq(journalHeaders.id, headerId));
 
-    const [reversal] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId: ORG,
-        transactionDate: "2026-04-01",
-        transactionType: "pay_out",
-        source: "system",
-        status: "posted",
-        sourceDocumentType: "bill",
-        memo: "REVERSAL (old behaviour)",
-        totalAmount: "7000",
-      })
-      .returning();
-    await db.insert(journalLines).values([
-      { journalHeaderId: reversal.id, accountId, credit: "7000", sortOrder: 0 },
-      { journalHeaderId: reversal.id, accountId, debit: "7000", sortOrder: 1 },
-    ]);
+    const reversal = await db.transaction(async (tx: any) => {
+      const [created] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: ORG,
+          transactionDate: "2026-04-01",
+          transactionType: "pay_out",
+          source: "system",
+          status: "posted",
+          sourceDocumentType: "bill",
+          memo: "REVERSAL (old behaviour)",
+          totalAmount: "7000",
+        })
+        .returning();
+      await tx.insert(journalLines).values([
+        { journalHeaderId: created.id, accountId, credit: "7000", sortOrder: 0 },
+        { journalHeaderId: created.id, accountId, debit: "7000", sortOrder: 1 },
+      ]);
+      return created;
+    });
 
     // The original is gone from reports AND a reversal still sits in them —
     // the bill's effect counted against the books twice.

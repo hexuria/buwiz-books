@@ -97,6 +97,7 @@ export async function postBillAccrualJournal(
       partyId: bill.vendorId,
       totalAmount,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: bill.id,
       sourceDocumentType: "bill",
       createdBy: userId,

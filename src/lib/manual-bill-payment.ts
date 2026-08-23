@@ -107,6 +107,7 @@ async function createBillPaymentJournal(
       partyId: input.bill.vendorId,
       totalAmount: input.paymentAmount,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: input.bill.id,
       sourceDocumentType: "bill",
       createdBy: input.userId,

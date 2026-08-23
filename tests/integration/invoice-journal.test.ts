@@ -120,16 +120,18 @@ describeDb("createArJournalEntry", () => {
       total: "98.00",
       lineRevenueAccounts: [REVENUE],
     });
-    const headerId = await createArJournalEntry(db, ORG, "test-user", {
-      id: invId,
-      invoiceNumber: "INV-TEST",
-      customerId: CUSTOMER,
-      issueDate: "2026-03-15",
-      total: "98.00",
-      subtotal: "100.00",
-      discountAmount: "10.00",
-      taxAmount: "8.00",
-    });
+    const headerId = await db.transaction((tx: any) =>
+      createArJournalEntry(tx, ORG, "test-user", {
+        id: invId,
+        invoiceNumber: "INV-TEST",
+        customerId: CUSTOMER,
+        issueDate: "2026-03-15",
+        total: "98.00",
+        subtotal: "100.00",
+        discountAmount: "10.00",
+        taxAmount: "8.00",
+      }),
+    );
     expect(headerId).toBeTruthy();
 
     const lines = await db
@@ -164,16 +166,18 @@ describeDb("createArJournalEntry", () => {
       lineRevenueAccounts: [REVENUE, null], // one line missing an account
     });
     await expect(
-      createArJournalEntry(db, ORG, "test-user", {
-        id: invId,
-        invoiceNumber: "INV-PARTIAL",
-        customerId: CUSTOMER,
-        issueDate: "2026-03-15",
-        total: "200.00",
-        subtotal: "200.00",
-        discountAmount: "0",
-        taxAmount: "0",
-      }),
+      db.transaction((tx: any) =>
+        createArJournalEntry(tx, ORG, "test-user", {
+          id: invId,
+          invoiceNumber: "INV-PARTIAL",
+          customerId: CUSTOMER,
+          issueDate: "2026-03-15",
+          total: "200.00",
+          subtotal: "200.00",
+          discountAmount: "0",
+          taxAmount: "0",
+        }),
+      ),
     ).rejects.toThrow(/no revenue account/i);
   });
 
@@ -186,27 +190,31 @@ describeDb("createArJournalEntry", () => {
       lineRevenueAccounts: [null],
     });
     await expect(
-      createArJournalEntry(db, ORG, "test-user", {
-        id: invId,
-        invoiceNumber: "INV-NOACCT",
-        customerId: CUSTOMER,
-        issueDate: "2026-03-15",
-        total: "50.00",
-        subtotal: "50.00",
-        discountAmount: "0",
-        taxAmount: "0",
-      }),
+      db.transaction((tx: any) =>
+        createArJournalEntry(tx, ORG, "test-user", {
+          id: invId,
+          invoiceNumber: "INV-NOACCT",
+          customerId: CUSTOMER,
+          issueDate: "2026-03-15",
+          total: "50.00",
+          subtotal: "50.00",
+          discountAmount: "0",
+          taxAmount: "0",
+        }),
+      ),
     ).rejects.toThrow(/every line item needs a revenue account/i);
   });
 
   it("posts a balanced payment journal (DR bank / CR A/R)", async () => {
-    const headerId = await createPaymentJournalEntry(
-      db,
-      ORG,
-      "test-user",
-      { id: crypto.randomUUID(), invoiceNumber: "INV-PAY", customerId: CUSTOMER },
-      BANK,
-      75.5,
+    const headerId = await db.transaction((tx: any) =>
+      createPaymentJournalEntry(
+        tx,
+        ORG,
+        "test-user",
+        { id: crypto.randomUUID(), invoiceNumber: "INV-PAY", customerId: CUSTOMER },
+        BANK,
+        75.5,
+      ),
     );
     const lines = await db
       .select({

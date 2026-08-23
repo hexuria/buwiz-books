@@ -152,36 +152,38 @@ describeDb("Business Group reporting projection", () => {
     groupId = group.id;
     await db.transaction((tx) => addOrganizationToGroup(tx, { groupId, organizationId, userId }));
 
-    const headers = await db
-      .insert(journalHeaders)
-      .values([
-        {
-          organizationId,
-          transactionDate: "2026-05-15",
-          transactionType: "pay_in",
-          source: "manual",
-          status: "posted",
-          functionalCurrency: "USD",
-        },
-        {
-          organizationId,
-          transactionDate: "2026-06-15",
-          transactionType: "pay_in",
-          source: "manual",
-          status: "posted",
-          functionalCurrency: "USD",
-        },
-      ])
-      .returning({ id: journalHeaders.id, transactionDate: journalHeaders.transactionDate });
-    priorHeaderId = headers.find((header) => header.transactionDate === "2026-05-15")!.id;
-    currentHeaderId = headers.find((header) => header.transactionDate === "2026-06-15")!.id;
-    await db.insert(journalLines).values([
-      { journalHeaderId: priorHeaderId, accountId: cashId, debit: "1000", credit: "0" },
-      { journalHeaderId: priorHeaderId, accountId: revenueId, debit: "0", credit: "1000" },
-      { journalHeaderId: currentHeaderId, accountId: cashId, debit: "1500", credit: "300" },
-      { journalHeaderId: currentHeaderId, accountId: revenueId, debit: "0", credit: "1500" },
-      { journalHeaderId: currentHeaderId, accountId: expenseId, debit: "300", credit: "0" },
-    ]);
+    await db.transaction(async (tx: any) => {
+      const headers = await tx
+        .insert(journalHeaders)
+        .values([
+          {
+            organizationId,
+            transactionDate: "2026-05-15",
+            transactionType: "pay_in",
+            source: "manual",
+            status: "posted",
+            functionalCurrency: "USD",
+          },
+          {
+            organizationId,
+            transactionDate: "2026-06-15",
+            transactionType: "pay_in",
+            source: "manual",
+            status: "posted",
+            functionalCurrency: "USD",
+          },
+        ])
+        .returning({ id: journalHeaders.id, transactionDate: journalHeaders.transactionDate });
+      priorHeaderId = headers.find((header: any) => header.transactionDate === "2026-05-15")!.id;
+      currentHeaderId = headers.find((header: any) => header.transactionDate === "2026-06-15")!.id;
+      await tx.insert(journalLines).values([
+        { journalHeaderId: priorHeaderId, accountId: cashId, debit: "1000", credit: "0" },
+        { journalHeaderId: priorHeaderId, accountId: revenueId, debit: "0", credit: "1000" },
+        { journalHeaderId: currentHeaderId, accountId: cashId, debit: "1500", credit: "300" },
+        { journalHeaderId: currentHeaderId, accountId: revenueId, debit: "0", credit: "1500" },
+        { journalHeaderId: currentHeaderId, accountId: expenseId, debit: "300", credit: "0" },
+      ]);
+    });
   });
 
   afterEach(async () => {

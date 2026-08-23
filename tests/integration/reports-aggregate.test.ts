@@ -32,32 +32,37 @@ describeDb("aggregateBalances", () => {
     amount: string;
     duplicateOfHeaderId?: string;
   }) {
-    const [h] = await db
-      .insert(journalHeaders)
-      .values({
-        organizationId: opts.org ?? ORG,
-        transactionDate: opts.date,
-        transactionType: "journal",
-        status: opts.status,
-        duplicateOfHeaderId: opts.duplicateOfHeaderId,
-      })
-      .returning();
-    await db.insert(journalLines).values([
-      {
-        journalHeaderId: h.id,
-        accountId: opts.debitAccount,
-        debit: opts.amount,
-        credit: null,
-        sortOrder: 0,
-      },
-      {
-        journalHeaderId: h.id,
-        accountId: opts.creditAccount,
-        debit: null,
-        credit: opts.amount,
-        sortOrder: 1,
-      },
-    ]);
+    // Header+lines commit atomically: 0052 refuses a posted header that
+    // ever commits lineless.
+    const h = await db.transaction(async (tx: any) => {
+      const [header] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: opts.org ?? ORG,
+          transactionDate: opts.date,
+          transactionType: "journal",
+          status: opts.status,
+          duplicateOfHeaderId: opts.duplicateOfHeaderId,
+        })
+        .returning();
+      await tx.insert(journalLines).values([
+        {
+          journalHeaderId: header.id,
+          accountId: opts.debitAccount,
+          debit: opts.amount,
+          credit: null,
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: header.id,
+          accountId: opts.creditAccount,
+          debit: null,
+          credit: opts.amount,
+          sortOrder: 1,
+        },
+      ]);
+      return header;
+    });
     return h.id;
   }
 

@@ -385,6 +385,7 @@ export async function recordCardInvoicePayment(
         functionalCurrency: baseCurrency,
         transactionCurrency: paymentCurrency,
         status: "posted",
+        postedAt: new Date(),
         sourceDocumentId: invoice.id,
         sourceDocumentType: "invoice",
         referenceNumber: input.externalRef,

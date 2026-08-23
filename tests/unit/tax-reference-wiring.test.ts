@@ -474,7 +474,7 @@ describe("tax reference catalog wiring", () => {
     });
   });
 
-  describe("later foundation migrations (0041-0050)", () => {
+  describe("later foundation migrations (0041-0052)", () => {
     const FOUNDATION_FILES = [
       "0037_tax_reference_core.sql",
       "0038_payroll_compliance.sql",
@@ -490,9 +490,11 @@ describe("tax reference catalog wiring", () => {
       "0048_statement_clearing_exclusivity.sql",
       "0049_contribution_deferred_status.sql",
       "0050_year_state_opening_balance.sql",
+      "0051_void_rewrite_guard.sql",
+      "0052_posted_journal_needs_lines.sql",
     ];
 
-    it("names 0041-0050 in order in the foundation runner", () => {
+    it("names 0041-0052 in order in the foundation runner", () => {
       const runner = read(FOUNDATION);
       let previous = -1;
       for (const file of FOUNDATION_FILES) {

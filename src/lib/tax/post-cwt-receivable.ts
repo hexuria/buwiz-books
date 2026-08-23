@@ -87,6 +87,7 @@ export async function postCwtReceivable(
       memo: `CWT receivable: ${certificate.payorRegisteredName} ${certificate.atc}`,
       totalAmount: summary.taxWithheld,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentId: certificate.id,
       sourceDocumentType: "tax_certificate",
       createdBy: input.userId,

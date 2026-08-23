@@ -68,36 +68,39 @@ type TestOrg = Awaited<ReturnType<typeof setupOrg>>;
 
 /** Post a balanced expense journal. Amounts are strings — decimal(20,8) everywhere. */
 async function postExpense(fixture: TestOrg, date: string, amount: string) {
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: fixture.orgId,
-      transactionNumber: `TXN-${randomUUID().slice(0, 8)}`,
-      transactionDate: date,
-      transactionType: "pay_out",
-      status: "posted",
-      memo: "Review agent fixture",
-      totalAmount: amount,
-      createdBy: fixture.userId,
-    })
-    .returning();
-  // journal_lines carries no organization_id — its RLS policy derives tenancy from the header.
-  await db.insert(journalLines).values([
-    {
-      journalHeaderId: header.id,
-      accountId: fixture.expense.id,
-      debit: amount,
-      credit: "0",
-      sortOrder: 1,
-    },
-    {
-      journalHeaderId: header.id,
-      accountId: fixture.bank.id,
-      debit: "0",
-      credit: amount,
-      sortOrder: 2,
-    },
-  ]);
+  const header = await db.transaction(async (tx: any) => {
+    const [created] = await tx
+      .insert(journalHeaders)
+      .values({
+        organizationId: fixture.orgId,
+        transactionNumber: `TXN-${randomUUID().slice(0, 8)}`,
+        transactionDate: date,
+        transactionType: "pay_out",
+        status: "posted",
+        memo: "Review agent fixture",
+        totalAmount: amount,
+        createdBy: fixture.userId,
+      })
+      .returning();
+    // journal_lines carries no organization_id — its RLS policy derives tenancy from the header.
+    await tx.insert(journalLines).values([
+      {
+        journalHeaderId: created.id,
+        accountId: fixture.expense.id,
+        debit: amount,
+        credit: "0",
+        sortOrder: 1,
+      },
+      {
+        journalHeaderId: created.id,
+        accountId: fixture.bank.id,
+        debit: "0",
+        credit: amount,
+        sortOrder: 2,
+      },
+    ]);
+    return created;
+  });
   return header;
 }
 

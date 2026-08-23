@@ -176,6 +176,7 @@ export async function postAnnualization(
       memo: `Year-end annualization true-up ${input.taxableYear}`,
       totalAmount: totalDebits,
       status: "posted",
+      postedAt: new Date(),
       sourceDocumentType: "annualization",
       createdBy: input.userId,
       idempotencyKey: `annualization:${input.organizationId}:${input.taxableYear}`,
