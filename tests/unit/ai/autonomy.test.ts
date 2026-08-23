@@ -15,32 +15,59 @@ describe("STRUCTURAL_MANUAL_KINDS", () => {
     expect(STRUCTURAL_MANUAL_KINDS.has("match")).toBe(true);
     expect(STRUCTURAL_MANUAL_KINDS.has("split")).toBe(true);
   });
+
+  it("PR-19: party creation, date moves and categorization stay human-applied", () => {
+    expect(STRUCTURAL_MANUAL_KINDS.has("create_party")).toBe(true);
+    expect(STRUCTURAL_MANUAL_KINDS.has("date_fix")).toBe(true);
+    expect(STRUCTURAL_MANUAL_KINDS.has("categorize")).toBe(true);
+  });
+
+  it("category_mapping deliberately stays flippable", () => {
+    expect(STRUCTURAL_MANUAL_KINDS.has("category_mapping")).toBe(false);
+  });
 });
 
 describe("canAutoApply", () => {
-  const enabled = { categorize: "auto_apply_high_confidence" };
+  // PR-19 walled `categorize`; category_mapping is the deliberately
+  // flippable kind (reversible, type-checked on write and read).
+  const enabled = { category_mapping: "auto_apply_high_confidence" };
 
   it("allows a high-confidence proposal for a flipped-on kind", () => {
     expect(
-      canAutoApply({ kind: "categorize", autonomy: enabled, confidence: 0.95, threshold: 0.9 }),
+      canAutoApply({
+        kind: "category_mapping",
+        autonomy: enabled,
+        confidence: 0.95,
+        threshold: 0.9,
+      }),
     ).toBe(true);
   });
 
   it("refuses when the org has not flipped the task on", () => {
     expect(
-      canAutoApply({ kind: "categorize", autonomy: {}, confidence: 1.0, threshold: 0.9 }),
+      canAutoApply({ kind: "category_mapping", autonomy: {}, confidence: 1.0, threshold: 0.9 }),
     ).toBe(false);
   });
 
   it("refuses below the org's threshold", () => {
     expect(
-      canAutoApply({ kind: "categorize", autonomy: enabled, confidence: 0.5, threshold: 0.9 }),
+      canAutoApply({
+        kind: "category_mapping",
+        autonomy: enabled,
+        confidence: 0.5,
+        threshold: 0.9,
+      }),
     ).toBe(false);
   });
 
   it("refuses when confidence is unknown", () => {
     expect(
-      canAutoApply({ kind: "categorize", autonomy: enabled, confidence: null, threshold: 0.9 }),
+      canAutoApply({
+        kind: "category_mapping",
+        autonomy: enabled,
+        confidence: null,
+        threshold: 0.9,
+      }),
     ).toBe(false);
   });
 
@@ -68,10 +95,20 @@ describe("canAutoApply", () => {
 
   it("defaults to a strict threshold when the org set none", () => {
     expect(
-      canAutoApply({ kind: "categorize", autonomy: enabled, confidence: 0.85, threshold: null }),
+      canAutoApply({
+        kind: "category_mapping",
+        autonomy: enabled,
+        confidence: 0.85,
+        threshold: null,
+      }),
     ).toBe(false);
     expect(
-      canAutoApply({ kind: "categorize", autonomy: enabled, confidence: 0.95, threshold: null }),
+      canAutoApply({
+        kind: "category_mapping",
+        autonomy: enabled,
+        confidence: 0.95,
+        threshold: null,
+      }),
     ).toBe(true);
   });
 });

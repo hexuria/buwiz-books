@@ -147,7 +147,8 @@ export async function persistLlmMatchSuggestions(
     // Confidence: normalize to the matcher domain, then apply the hard cap.
     // AI_NATIVE_ARCHITECTURE §2 wall 4 — never configurable.
     const confidence = Math.min(
-      toMatcherConfidence(decision.confidence),
+      // The match-assist schema pins confidence to 0-1, so 1 means 100%.
+      toMatcherConfidence(decision.confidence, { scaleHint: "unit" }),
       LLM_SUGGESTION_MAX_CONFIDENCE,
     );
 

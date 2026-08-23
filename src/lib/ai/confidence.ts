@@ -17,9 +17,27 @@
  * Models return either 0–1 or 0–100 regardless of prompt instructions;
  * anything > 1 is treated as a percentage. Non-numeric input becomes 0.
  */
-export function normalizeConfidence(raw: unknown): number {
+export interface NormalizeConfidenceOptions {
+  /**
+   * "unit": the caller's prompt/schema pins the scale to 0-1, so a bare 1
+   * unambiguously means full confidence. Only pass this where that contract
+   * actually exists — the default treats 1 as ambiguous.
+   */
+  scaleHint?: "unit" | "unknown";
+}
+
+export function normalizeConfidence(
+  raw: unknown,
+  options: NormalizeConfidenceOptions = {},
+): number {
   const n = typeof raw === "number" ? raw : Number(raw);
   if (!Number.isFinite(n) || n <= 0) return 0;
+  // A bare 1 is genuinely ambiguous at an unpinned boundary: it reads as
+  // 100% on the 0-1 scale and as 1% on the 0-100 scale. It used to resolve
+  // to 100% — the WORST reading, since a 1%-confident percentage answer
+  // sailed over every auto-apply threshold. Ambiguity now resolves LOW
+  // (audit PR-19) unless the caller's schema pins the unit scale.
+  if (n === 1 && options.scaleHint !== "unit") return 0.01;
   const scaled = n > 1 ? n / 100 : n;
   return Math.min(scaled, 1);
 }
@@ -30,6 +48,6 @@ export function normalizeConfidence(raw: unknown): number {
  * persistence choke point (see AI_NATIVE_ARCHITECTURE.md §2 wall 4), not here —
  * this is a pure scale conversion.
  */
-export function toMatcherConfidence(c01: number): number {
-  return Math.round(normalizeConfidence(c01) * 100);
+export function toMatcherConfidence(c01: number, options: NormalizeConfidenceOptions = {}): number {
+  return Math.round(normalizeConfidence(c01, options) * 100);
 }
