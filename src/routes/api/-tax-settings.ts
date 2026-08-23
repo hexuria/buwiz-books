@@ -6,6 +6,8 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { orgTaxBranches, orgTaxProfiles } from "../../db/schema/tax-reference";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { filingDeadlineOverrides, orgTaxYearElections } from "../../db/schema/tax-stage-remainder";
 
 export const getTaxSettings = createServerFn({ method: "GET" }).handler(async () => {
@@ -87,6 +89,7 @@ export const upsertTaxSettings = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:settings", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = settingsSchema.parse(rawData);
         await db
           .insert(orgTaxProfiles)
@@ -137,6 +140,7 @@ export const upsertTaxBranch = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:branch", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = branchSchema.parse(rawData);
         const [row] = await db
           .insert(orgTaxBranches)
@@ -179,6 +183,7 @@ export const upsertTaxYearElection = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:year-election", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = electionSchema.parse(rawData);
         if (input.regime === "eight_percent" && input.taxpayerKind === "corporation") {
           throw new Error(

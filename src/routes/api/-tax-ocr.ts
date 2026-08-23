@@ -4,6 +4,8 @@ import { z } from "zod";
 import { aiComplete } from "../../lib/ai/facade";
 import { GeminiRateLimitError } from "../../lib/gemini-client";
 import { withMutationPermissionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { assertRolePermission } from "../../lib/auth-middleware";
 import type { Form2307OcrOutput } from "../../lib/ai/schemas/form-2307-ocr";
 
@@ -18,7 +20,8 @@ export const parseReceived2307Document = createServerFn({ method: "POST" }).hand
       "aiTask",
       "run",
       { routeKey: "tax:2307-ocr", limit: 10, windowMs: 300_000 },
-      async ({ orgId, role }) => {
+      async ({ orgId, role, db }) => {
+        await assertPhTaxWritable(db, orgId);
         assertRolePermission(role, "document", "view");
         const input = ocrSchema.parse(rawData);
         try {

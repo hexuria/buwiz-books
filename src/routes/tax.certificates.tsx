@@ -1,5 +1,6 @@
 /** Received 2307 capture, SAWT, CWT posting, and review-only OCR. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -12,7 +13,7 @@ import { parseReceived2307Document } from "./api/-tax-ocr";
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/tax/certificates")({
-  component: TaxCertificatesPage,
+  component: TaxCertificatesPageGated,
 });
 
 type SawtResult = {
@@ -31,6 +32,16 @@ type SawtResult = {
     certificateCount: number;
   }>;
 };
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxCertificatesPageGated() {
+  return (
+    <PhTaxGate>
+      <TaxCertificatesPage />
+    </PhTaxGate>
+  );
+}
 
 function TaxCertificatesPage() {
   const queryClient = useQueryClient();

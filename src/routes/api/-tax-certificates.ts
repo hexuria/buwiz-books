@@ -4,6 +4,8 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { taxCertificates } from "../../db/schema/tax-certificates";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import {
   buildSawt,
   certificatesInSawtPeriod,
@@ -58,6 +60,7 @@ export const captureReceived2307 = createServerFn({ method: "POST" }).handler(
       "create",
       { routeKey: "tax:2307-capture", limit: 30, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = captureSchema.parse(rawData);
         const { normalized, warnings } = validateReceived2307(input);
         const [row] = await db
@@ -152,6 +155,7 @@ export const postReceived2307Cwt = createServerFn({ method: "POST" }).handler(
       "create",
       { routeKey: "tax:2307-cwt", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = postCwtSchema.parse(rawData);
         return db.transaction((tx) =>
           postCwtReceivable(tx, {

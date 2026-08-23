@@ -36,6 +36,11 @@ export const organizationAccountingSettings = pgTable(
       .primaryKey()
       .references(() => organization.id, { onDelete: "cascade" }),
     baseCurrency: varchar("base_currency", { length: 3 }).default("USD").notNull(),
+    // ISO 3166-1 alpha-2. Nullable on purpose: null = "not set", and only an
+    // explicit "PH" activates the Philippine tax/payroll module (D6 gate).
+    // Switching away NEVER deletes PH records — the module derives
+    // active/archived/off from this value plus record existence.
+    country: varchar("country", { length: 2 }),
     timezone: varchar("timezone", { length: 64 }).default("UTC").notNull(),
     inboundEmailAddress: varchar("inbound_email_address", { length: 320 }),
     reviewPolicy: varchar("review_policy", { length: 32 }).default("always_review").notNull(),

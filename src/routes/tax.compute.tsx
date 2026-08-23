@@ -1,5 +1,6 @@
 /** Reachable calculators for Stages 3b, 6 and 7. Working returns can be saved; nothing posts. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { savePercentageTaxReturn, saveSlspReturn, saveVatReturn } from "./api/-tax-returns";
@@ -9,8 +10,18 @@ import { buildVatReturn, extractVat } from "../lib/tax/vat";
 import { assessRegime, computeEightPercent, monitorThreshold } from "../lib/tax/percentage-tax";
 
 export const Route = createFileRoute("/tax/compute")({
-  component: TaxComputePage,
+  component: TaxComputePageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxComputePageGated() {
+  return (
+    <PhTaxGate>
+      <TaxComputePage />
+    </PhTaxGate>
+  );
+}
 
 function TaxComputePage() {
   const [gross, setGross] = useState("112000");

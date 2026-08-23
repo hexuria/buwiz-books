@@ -1,5 +1,6 @@
 /** Payee tax profiles and dated org registrations. */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -11,8 +12,18 @@ import {
 import { keys } from "../lib/query-keys";
 
 export const Route = createFileRoute("/tax/parties")({
-  component: TaxPartiesPage,
+  component: TaxPartiesPageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function TaxPartiesPageGated() {
+  return (
+    <PhTaxGate>
+      <TaxPartiesPage />
+    </PhTaxGate>
+  );
+}
 
 function TaxPartiesPage() {
   const queryClient = useQueryClient();

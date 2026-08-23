@@ -20,6 +20,7 @@
  * meets the same wall.
  */
 import { createFileRoute } from "@tanstack/react-router";
+import { PhTaxGate } from "../components/PhTaxGate";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -42,8 +43,18 @@ import { VarianceVerifier } from "../components/payroll/VarianceVerifier";
 import { FilingChecklist } from "../components/tax/FilingChecklist";
 
 export const Route = createFileRoute("/payroll_/$runId")({
-  component: PayrollFilingPage,
+  component: PayrollFilingPageGated,
 });
+
+// D6 country gate: page body renders only per the PH module state
+// (off → enable prompt, archived → read-only banner, active → as-is).
+function PayrollFilingPageGated() {
+  return (
+    <PhTaxGate>
+      <PayrollFilingPage />
+    </PhTaxGate>
+  );
+}
 
 function PayrollFilingPage() {
   const { runId } = Route.useParams();

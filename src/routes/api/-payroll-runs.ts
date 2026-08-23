@@ -18,6 +18,8 @@ import { orgTaxProfiles } from "../../db/schema/tax-reference";
 import { DATASET_V1 } from "../../lib/tax/reference-catalog";
 import { isAnnualizationPeriod, periodIndexFromDates } from "../../lib/tax/payroll-period";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import {
   assemblePayrollFilingWorkspace,
   assertWorkspaceAllowsPost,
@@ -48,6 +50,7 @@ export const importPayrollRegister = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "payroll:import", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const parsed = importSchema.parse(rawData);
         const [headers, ...rows] = parsed.table;
         const result = await persistImportedRegister(db, {
@@ -83,6 +86,7 @@ export const computePayrollFilingRun = createServerFn({ method: "POST" }).handle
       "update",
       { routeKey: "payroll:compute", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId } = periodSchema.parse(rawData);
         const [run] = await db
           .select()
@@ -115,6 +119,7 @@ export const postPayrollFilingRun = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "payroll:post", limit: 10, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId } = periodSchema.parse(rawData);
         const [run] = await db
           .select()
@@ -147,6 +152,7 @@ export const postAnnualizationTrueUp = createServerFn({ method: "POST" }).handle
       "post",
       { routeKey: "payroll:post-annualization", limit: 10, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId } = z.object({ runId: z.string().uuid() }).parse(rawData);
         return db.transaction(async (tx) => {
           const [run] = await tx
@@ -206,6 +212,7 @@ export const createPayrollRun = createServerFn({ method: "POST" }).handler(
       "create",
       { routeKey: "payroll:create", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = createRunSchema.parse(rawData);
         if (input.periodEnd < input.periodStart) {
           throw new Error("periodEnd must be on or after periodStart");
@@ -248,6 +255,7 @@ export const upsertEmployeeTaxProfile = createServerFn({ method: "POST" }).handl
       "update",
       { routeKey: "payroll:profile", limit: 30, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = profileSchema.parse(rawData);
         if (isPlaceholderTin(input.tin)) {
           throw new Error("That employee TIN is a placeholder; dummy TINs are banned.");
@@ -321,6 +329,7 @@ export const capturePreviousEmployer2316 = createServerFn({ method: "POST" }).ha
       "update",
       { routeKey: "payroll:prev-2316", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = previousSchema.parse(rawData);
         if (isPlaceholderTin(input.employeeTin) || isPlaceholderTin(input.previousEmployerTin)) {
           throw new Error("A placeholder TIN cannot be stored on a previous-employer 2316.");
@@ -409,6 +418,7 @@ export const upsertOrgTaxProfile = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "payroll:org-profile", limit: 20, windowMs: 60_000 },
       async ({ orgId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = orgProfileSchema.parse(rawData);
         await db
           .insert(orgTaxProfiles)
@@ -461,6 +471,7 @@ export const issuePayroll1601C = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "payroll:1601c", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const { runId } = periodSchema.parse(rawData);
         return issueForm1601C(db, orgId, runId, userId);
       },

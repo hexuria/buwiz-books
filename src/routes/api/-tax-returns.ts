@@ -4,6 +4,8 @@ import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { taxComputedReturns } from "../../db/schema/tax-stage-remainder";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
+// D6 country gate: every PH tax/payroll WRITE refuses unless the module is active.
+import { assertPhTaxWritable } from "../../lib/tax/module-state";
 import { isPlaceholderTin } from "../../lib/tax/alphalist-preflight";
 import { asJsonPayload } from "../../lib/tax/json-payload";
 import { buildPercentageTaxReturn } from "../../lib/tax/percentage-tax";
@@ -42,6 +44,7 @@ export const saveVatReturn = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:save-2550q", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = vatSchema.parse(rawData);
         const ret = buildVatReturn(input);
         const payload = asJsonPayload(ret);
@@ -91,6 +94,7 @@ export const savePercentageTaxReturn = createServerFn({ method: "POST" }).handle
       "update",
       { routeKey: "tax:save-2551q", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = pctSchema.parse(rawData);
         const ret = buildPercentageTaxReturn(input);
         const [row] = await db
@@ -148,6 +152,7 @@ export const saveSlspReturn = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "tax:save-slsp", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
+        await assertPhTaxWritable(db, orgId);
         const input = slspSchema.parse(rawData);
         for (const entry of input.entries) {
           if (isPlaceholderTin(entry.tin)) {
