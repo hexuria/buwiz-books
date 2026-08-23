@@ -26,6 +26,7 @@ import { learnAliasFromMatch } from "@/lib/match-assist/learn";
 import { persistReconciliationAnomalies } from "@/lib/reconciliation-anomaly-flags";
 import { isDateInLockedPeriod } from "../../../lib/period-close";
 import {
+  balanceString,
   computeFinalizeBalances,
   RECONCILIATION_BALANCE_TOLERANCE,
 } from "../../../lib/reconciliation-finalize";
@@ -492,8 +493,8 @@ export const finalizeReconciliation = createServerFn({ method: "POST" })
           ledgerAccountId: bankAcct.ledgerAccountId,
           periodStart: recon.periodStart,
           periodEnd: recon.periodEnd,
-          statementBeginningBalance: Number.parseFloat(recon.statementBeginningBalance ?? "0"),
-          statementEndingBalance: Number.parseFloat(recon.statementEndingBalance ?? "0"),
+          statementBeginningBalance: recon.statementBeginningBalance ?? "0",
+          statementEndingBalance: recon.statementEndingBalance ?? "0",
         });
 
         if (balances.unmatchedStatementLines > 0) {
@@ -523,9 +524,9 @@ export const finalizeReconciliation = createServerFn({ method: "POST" })
             finalizedAt: new Date(),
             finalizedById: userId,
             updatedAt: new Date(),
-            ledgerBalance: balances.ledgerBalance.toFixed(2),
-            clearedBalance: balances.clearedBalance.toFixed(2),
-            unclearedTotal: balances.unclearedTotal.toFixed(2),
+            ledgerBalance: balanceString(balances.ledgerBalance),
+            clearedBalance: balanceString(balances.clearedBalance),
+            unclearedTotal: balanceString(balances.unclearedTotal),
           })
           .where(eq(reconciliations.id, parsed.id))
           .returning();
@@ -540,10 +541,10 @@ export const finalizeReconciliation = createServerFn({ method: "POST" })
             actorId: userId,
             changes: {
               description: "Reconciliation finalized",
-              clearedBalance: balances.clearedBalance.toFixed(2),
-              unclearedTotal: balances.unclearedTotal.toFixed(2),
-              ledgerBalance: balances.ledgerBalance.toFixed(2),
-              clearedDifference: balances.clearedDifference.toFixed(2),
+              clearedBalance: balanceString(balances.clearedBalance),
+              unclearedTotal: balanceString(balances.unclearedTotal),
+              ledgerBalance: balanceString(balances.ledgerBalance),
+              clearedDifference: balanceString(balances.clearedDifference),
               anomalyFlags: anomalyCount,
             },
           },

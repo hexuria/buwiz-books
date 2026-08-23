@@ -6,6 +6,7 @@ import { activityLogs } from "@/db/schema/activity-logs";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { and, asc, eq, ilike } from "drizzle-orm";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
+import { centsToMoney, moneyToCents } from "@/lib/money";
 import { currentOrgDate } from "./org-calendar";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { resolveFunctionalCurrency } from "@/lib/functional-currency";
@@ -66,6 +67,9 @@ export async function createPaymentJournalEntry(
   const txnNumber = await generateTxnNumber(orgId, db);
   const functionalCurrency = await resolveFunctionalCurrency(db, orgId);
   const transactionDate = effectiveDate ?? (await currentOrgDate(db, orgId));
+  // One exact 2dp string for every use — validates the amount and replaces
+  // the float round-trip that used to format each occurrence separately.
+  const paymentMoney = centsToMoney(moneyToCents(paymentAmount, "paymentAmount"));
 
   // The accrual path guarded the period lock; this one did not, so a payment
   // could land in a closed month even though issuing the invoice could not.
@@ -87,7 +91,7 @@ export async function createPaymentJournalEntry(
       functionalCurrency,
       memo: `Payment Received: ${invoice.invoiceNumber}`,
       partyId: invoice.customerId,
-      totalAmount: paymentAmount.toFixed(2),
+      totalAmount: paymentMoney,
       status: "posted",
       sourceDocumentId: invoice.id,
       sourceDocumentType: "invoice",
@@ -100,7 +104,7 @@ export async function createPaymentJournalEntry(
     {
       journalHeaderId: header.id,
       accountId: bankAccountId,
-      debit: paymentAmount.toFixed(2),
+      debit: paymentMoney,
       credit: null,
       lineDescription: `Payment for invoice ${invoice.invoiceNumber}`,
       partyId: invoice.customerId,
@@ -112,7 +116,7 @@ export async function createPaymentJournalEntry(
       journalHeaderId: header.id,
       accountId: arAccountId,
       debit: null,
-      credit: paymentAmount.toFixed(2),
+      credit: paymentMoney,
       lineDescription: `A/R reduction for invoice ${invoice.invoiceNumber}`,
       partyId: invoice.customerId,
       departmentId: null,
@@ -130,7 +134,7 @@ export async function createPaymentJournalEntry(
       source: "invoice_payment",
       invoiceId: invoice.id,
       invoiceNumber: invoice.invoiceNumber,
-      paymentAmount: paymentAmount.toFixed(2),
+      paymentAmount: paymentMoney,
       bankAccountId,
       transactionNumber: txnNumber,
     },
@@ -211,9 +215,11 @@ export async function createArJournalEntry(
   }
 
   const arAccountId = await resolveArAccount(db, orgId);
-  const totalAmount = Number.parseFloat(invoice.total);
-  const discountAmount = Number.parseFloat(invoice.discountAmount ?? "0");
-  const taxAmount = Number.parseFloat(invoice.taxAmount ?? "0");
+  // Integer cents from the invoice's decimal strings (audit PR-15) — the
+  // journal amounts below are exact 2dp strings, not float round-trips.
+  const totalCents = moneyToCents(invoice.total, "total");
+  const discountCents = moneyToCents(invoice.discountAmount ?? "0", "discountAmount");
+  const taxCents = moneyToCents(invoice.taxAmount ?? "0", "taxAmount");
 
   // Fetch line items with their revenue accounts
   const lineItems = await db
@@ -255,7 +261,7 @@ export async function createArJournalEntry(
   // DR Accounts Receivable (net total the customer owes)
   lineInputs.push({
     accountId: arAccountId,
-    debit: totalAmount.toFixed(2),
+    debit: centsToMoney(totalCents),
     lineDescription: `A/R for invoice ${invoice.invoiceNumber}`,
     partyId: invoice.customerId,
   });
@@ -271,22 +277,22 @@ export async function createArJournalEntry(
   }
 
   // DR Sales Discount (contra-revenue) — offsets the gross revenue credit
-  if (discountAmount > 0) {
+  if (discountCents > 0) {
     const discountAccountId = await resolveDiscountAccount(db, orgId);
     lineInputs.push({
       accountId: discountAccountId,
-      debit: discountAmount.toFixed(2),
+      debit: centsToMoney(discountCents),
       lineDescription: `Discount on invoice ${invoice.invoiceNumber}`,
       partyId: invoice.customerId,
     });
   }
 
   // CR Sales Tax Payable (liability) — tax collected on behalf of the authority
-  if (taxAmount > 0) {
+  if (taxCents > 0) {
     const taxAccountId = await resolveTaxPayableAccount(db, orgId);
     lineInputs.push({
       accountId: taxAccountId,
-      credit: taxAmount.toFixed(2),
+      credit: centsToMoney(taxCents),
       lineDescription: `Sales tax on invoice ${invoice.invoiceNumber}`,
       partyId: invoice.customerId,
     });
@@ -297,7 +303,7 @@ export async function createArJournalEntry(
   if (!balance.valid) {
     throw new Error(
       `Invoice ${invoice.invoiceNumber} journal does not balance ` +
-        `(debits ${balance.totalDebits.toFixed(2)} != credits ${balance.totalCredits.toFixed(2)}). ` +
+        `(debits ${centsToMoney(moneyToCents(balance.totalDebits, "debits"))} != credits ${centsToMoney(moneyToCents(balance.totalCredits, "credits"))}). ` +
         `Check that total = subtotal - discount + tax. Refusing to post.`,
     );
   }

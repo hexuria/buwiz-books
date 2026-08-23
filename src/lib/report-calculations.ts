@@ -1,4 +1,5 @@
 import { normalizeBalance } from "./report-utils";
+import { moneyToCents } from "@/lib/money";
 
 export interface ReportRow {
   accountId: string;
@@ -94,8 +95,15 @@ export const FINANCING_SUBTYPES = new Set([
   "uncategorized_equity",
 ]);
 
-export function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+/**
+ * Exact net (debit − credit) of a report row in INTEGER CENTS (audit PR-15).
+ * Every builder below accumulates cents and divides by 100 only on the
+ * emitted objects, so section totals are sums of integers — parseFloat plus
+ * round2-per-step let representation error accumulate across large charts.
+ * normalizeBalance is a pure sign flip, so it works on cents unchanged.
+ */
+function rowNetCents(row: { totalDebit: string; totalCredit: string }): number {
+  return moneyToCents(row.totalDebit, "totalDebit") - moneyToCents(row.totalCredit, "totalCredit");
 }
 
 function buildBalanceSheetSections(rows: ReportRow[]) {
@@ -105,44 +113,47 @@ function buildBalanceSheetSections(rows: ReportRow[]) {
     equity: { label: "Equity", accounts: [], total: 0 },
   };
 
-  let netIncome = 0;
+  let netIncomeCents = 0;
+  const totalsCents: Record<string, number> = { asset: 0, liability: 0, equity: 0 };
 
   for (const row of rows) {
     const section = sections[row.accountType];
-    const rawBalance = Number.parseFloat(row.totalDebit) - Number.parseFloat(row.totalCredit);
+    const rawCents = rowNetCents(row);
 
     if (!section) {
-      const normalized = normalizeBalance(rawBalance, row.accountType);
+      const normalizedCents = normalizeBalance(rawCents, row.accountType);
       if (REVENUE_TYPES.has(row.accountType)) {
-        netIncome += normalized;
+        netIncomeCents += normalizedCents;
       } else if (EXPENSE_TYPES.has(row.accountType)) {
-        netIncome -= normalized;
+        netIncomeCents -= normalizedCents;
       }
       continue;
     }
 
-    const balance = normalizeBalance(rawBalance, row.accountType);
+    const balanceCents = normalizeBalance(rawCents, row.accountType);
     section.accounts.push({
       id: row.accountId,
       name: row.accountName,
       accountNumber: row.accountNumber,
       subtype: row.subtype,
-      balance,
+      balance: balanceCents / 100,
     });
-    section.total = round2(section.total + balance);
+    totalsCents[row.accountType] += balanceCents;
   }
 
-  netIncome = round2(netIncome);
-
-  if (netIncome !== 0) {
+  if (netIncomeCents !== 0) {
     sections.equity.accounts.push({
       id: "net-income",
       name: "Net Income",
       accountNumber: null,
       subtype: null,
-      balance: netIncome,
+      balance: netIncomeCents / 100,
     });
-    sections.equity.total = round2(sections.equity.total + netIncome);
+    totalsCents.equity += netIncomeCents;
+  }
+
+  for (const key of Object.keys(sections)) {
+    sections[key].total = totalsCents[key] / 100;
   }
 
   return sections;
@@ -163,7 +174,8 @@ export function buildBalanceSheet(
     totalAssets: sections.asset.total,
     totalLiabilities: sections.liability.total,
     totalEquity: sections.equity.total,
-    totalLiabilitiesAndEquity: round2(sections.liability.total + sections.equity.total),
+    totalLiabilitiesAndEquity:
+      (Math.round(sections.liability.total * 100) + Math.round(sections.equity.total * 100)) / 100,
   };
 }
 
@@ -174,26 +186,31 @@ export function buildProfitLoss(
   compare: string = "none",
   priorRows: ReportRow[] = [],
 ) {
-  const priorByAccount = new Map<string, number>();
+  // Prior balances in integer cents, keyed by account.
+  const priorCentsByAccount = new Map<string, number>();
   for (const row of priorRows) {
-    const rawBalance = Number.parseFloat(row.totalDebit) - Number.parseFloat(row.totalCredit);
-    priorByAccount.set(row.accountId, normalizeBalance(rawBalance, row.accountType));
+    priorCentsByAccount.set(row.accountId, normalizeBalance(rowNetCents(row), row.accountType));
   }
 
   const buildSection = (label: string, types: string[]): ProfitLossSection => {
     const sectionAccounts: ProfitLossSection["accounts"] = [];
-    let total = 0;
-    let priorTotal = 0;
+    let totalCents = 0;
+    let priorTotalCents = 0;
     const emitted = new Set<string>();
 
     for (const row of rows) {
       if (!types.includes(row.accountType)) continue;
-      const rawBalance = Number.parseFloat(row.totalDebit) - Number.parseFloat(row.totalCredit);
-      const current = normalizeBalance(rawBalance, row.accountType);
-      const prior = priorByAccount.get(row.accountId) ?? null;
-      const changeAmount = prior !== null ? current - prior : null;
+      const currentCents = normalizeBalance(rowNetCents(row), row.accountType);
+      const current = currentCents / 100;
+      const priorCents = priorCentsByAccount.has(row.accountId)
+        ? priorCentsByAccount.get(row.accountId)!
+        : null;
+      const prior = priorCents !== null ? priorCents / 100 : null;
+      const changeAmount = priorCents !== null ? (currentCents - priorCents) / 100 : null;
       const changePct =
-        prior !== null && prior !== 0 ? ((current - prior) / Math.abs(prior)) * 100 : null;
+        priorCents !== null && priorCents !== 0
+          ? ((currentCents - priorCents) / Math.abs(priorCents)) * 100
+          : null;
 
       sectionAccounts.push({
         id: row.accountId,
@@ -206,8 +223,8 @@ export function buildProfitLoss(
         changePct,
       });
       emitted.add(row.accountId);
-      total += current;
-      if (prior !== null) priorTotal += prior;
+      totalCents += currentCents;
+      if (priorCents !== null) priorTotalCents += priorCents;
     }
 
     // Prior-only accounts: had activity in the prior period but none this period. Without
@@ -217,28 +234,28 @@ export function buildProfitLoss(
       for (const prow of priorRows) {
         if (!types.includes(prow.accountType)) continue;
         if (emitted.has(prow.accountId)) continue;
-        const prior = priorByAccount.get(prow.accountId) ?? 0;
-        if (prior === 0) continue;
+        const priorCents = priorCentsByAccount.get(prow.accountId) ?? 0;
+        if (priorCents === 0) continue;
         sectionAccounts.push({
           id: prow.accountId,
           name: prow.accountName,
           accountNumber: prow.accountNumber,
           subtype: prow.subtype,
           current: 0,
-          prior,
-          changeAmount: -prior,
+          prior: priorCents / 100,
+          changeAmount: -priorCents / 100,
           changePct: null,
         });
         emitted.add(prow.accountId);
-        priorTotal += prior;
+        priorTotalCents += priorCents;
       }
     }
 
     return {
       label,
       accounts: sectionAccounts,
-      total: round2(total),
-      priorTotal: compare !== "none" ? round2(priorTotal) : null,
+      total: totalCents / 100,
+      priorTotal: compare !== "none" ? priorTotalCents / 100 : null,
     };
   };
 
@@ -248,22 +265,31 @@ export function buildProfitLoss(
   const otherIncome = buildSection("Other Income", ["other_income"]);
   const otherExpenses = buildSection("Other Expenses", ["other_expense"]);
 
-  const grossProfit = round2(revenue.total - costOfRevenue.total);
-  const operatingIncome = round2(grossProfit - expenses.total);
-  const netIncome = round2(operatingIncome + otherIncome.total - otherExpenses.total);
-  const priorGrossProfit =
+  // Section totals are exact multiples of 0.01; derive the roll-ups in cents.
+  const cents = (value: number) => Math.round(value * 100);
+  const grossProfitCents = cents(revenue.total) - cents(costOfRevenue.total);
+  const grossProfit = grossProfitCents / 100;
+  const operatingIncomeCents = grossProfitCents - cents(expenses.total);
+  const operatingIncome = operatingIncomeCents / 100;
+  const netIncome =
+    (operatingIncomeCents + cents(otherIncome.total) - cents(otherExpenses.total)) / 100;
+  const priorGrossProfitCents =
     revenue.priorTotal !== null && costOfRevenue.priorTotal !== null
-      ? round2(revenue.priorTotal - costOfRevenue.priorTotal)
+      ? cents(revenue.priorTotal) - cents(costOfRevenue.priorTotal)
+      : null;
+  const priorGrossProfit = priorGrossProfitCents !== null ? priorGrossProfitCents / 100 : null;
+  const priorOperatingIncomeCents =
+    priorGrossProfitCents !== null && expenses.priorTotal !== null
+      ? priorGrossProfitCents - cents(expenses.priorTotal)
       : null;
   const priorOperatingIncome =
-    priorGrossProfit !== null && expenses.priorTotal !== null
-      ? round2(priorGrossProfit - expenses.priorTotal)
-      : null;
+    priorOperatingIncomeCents !== null ? priorOperatingIncomeCents / 100 : null;
   const priorNetIncome =
-    priorOperatingIncome !== null
-      ? round2(
-          priorOperatingIncome + (otherIncome.priorTotal ?? 0) - (otherExpenses.priorTotal ?? 0),
-        )
+    priorOperatingIncomeCents !== null
+      ? (priorOperatingIncomeCents +
+          cents(otherIncome.priorTotal ?? 0) -
+          cents(otherExpenses.priorTotal ?? 0)) /
+        100
       : null;
 
   return {
@@ -295,58 +321,58 @@ export function buildCashFlow(rows: ReportRow[], dateFrom: string, dateTo: strin
   const financing: typeof operating = [];
   /** Balance-sheet accounts no section claims — shown as a reconciling line. */
   const unclassified: typeof operating = [];
-  let netOperating = 0;
-  let netInvesting = 0;
-  let netFinancing = 0;
-  let netUnclassified = 0;
+  let netOperatingCents = 0;
+  let netInvestingCents = 0;
+  let netFinancingCents = 0;
+  let netUnclassifiedCents = 0;
 
   for (const row of rows) {
-    const rawBalance = Number.parseFloat(row.totalDebit) - Number.parseFloat(row.totalCredit);
+    const rawCents = rowNetCents(row);
 
     if (REVENUE_TYPES.has(row.accountType) || EXPENSE_TYPES.has(row.accountType)) {
-      const amount = normalizeBalance(rawBalance, row.accountType);
-      const cashImpact = REVENUE_TYPES.has(row.accountType) ? amount : -amount;
+      const amountCents = normalizeBalance(rawCents, row.accountType);
+      const cashImpactCents = REVENUE_TYPES.has(row.accountType) ? amountCents : -amountCents;
       operating.push({
         name: row.accountName,
-        amount: cashImpact,
+        amount: cashImpactCents / 100,
         accountNumber: row.accountNumber,
         accountType: row.accountType,
         subtype: row.subtype,
       });
-      netOperating += cashImpact;
+      netOperatingCents += cashImpactCents;
       continue;
     }
 
     const subtype = row.subtype ?? "";
-    const amount = rawBalance;
+    const amountCents = rawCents;
 
     if (OPERATING_SUBTYPES.has(subtype)) {
       operating.push({
         name: row.accountName,
-        amount: -amount,
+        amount: -amountCents / 100,
         accountNumber: row.accountNumber,
         accountType: row.accountType,
         subtype: row.subtype,
       });
-      netOperating -= amount;
+      netOperatingCents -= amountCents;
     } else if (INVESTING_SUBTYPES.has(subtype)) {
       investing.push({
         name: row.accountName,
-        amount: -amount,
+        amount: -amountCents / 100,
         accountNumber: row.accountNumber,
         accountType: row.accountType,
         subtype: row.subtype,
       });
-      netInvesting -= amount;
+      netInvestingCents -= amountCents;
     } else if (FINANCING_SUBTYPES.has(subtype)) {
       financing.push({
         name: row.accountName,
-        amount: -amount,
+        amount: -amountCents / 100,
         accountNumber: row.accountNumber,
         accountType: row.accountType,
         subtype: row.subtype,
       });
-      netFinancing -= amount;
+      netFinancingCents -= amountCents;
     } else if (subtype !== "bank_accounts") {
       // Anything not claimed by a section used to fall off the statement
       // entirely, so the cash-flow statement silently stopped tying. Surface it
@@ -355,35 +381,36 @@ export function buildCashFlow(rows: ReportRow[], dateFrom: string, dateTo: strin
       // deliberate exception — it IS the cash whose net change we compute.
       unclassified.push({
         name: row.accountName,
-        amount: -amount,
+        amount: -amountCents / 100,
         accountNumber: row.accountNumber,
         accountType: row.accountType,
         subtype: row.subtype,
       });
-      netUnclassified -= amount;
+      netUnclassifiedCents -= amountCents;
     }
   }
 
   return {
     dateFrom,
     dateTo,
-    operating: { items: operating, total: round2(netOperating) },
-    investing: { items: investing, total: round2(netInvesting) },
-    financing: { items: financing, total: round2(netFinancing) },
-    unclassified: { items: unclassified, total: round2(netUnclassified) },
-    netChange: round2(netOperating + netInvesting + netFinancing + netUnclassified),
+    operating: { items: operating, total: netOperatingCents / 100 },
+    investing: { items: investing, total: netInvestingCents / 100 },
+    financing: { items: financing, total: netFinancingCents / 100 },
+    unclassified: { items: unclassified, total: netUnclassifiedCents / 100 },
+    netChange:
+      (netOperatingCents + netInvestingCents + netFinancingCents + netUnclassifiedCents) / 100,
   };
 }
 
 export function buildTrialBalance(rows: ReportRow[], dateTo: string) {
-  let totalDebit = 0;
-  let totalCredit = 0;
+  let totalDebitCents = 0;
+  let totalCreditCents = 0;
 
   const accounts = rows.map((row) => {
-    const debit = Number.parseFloat(row.totalDebit);
-    const credit = Number.parseFloat(row.totalCredit);
-    totalDebit += debit;
-    totalCredit += credit;
+    const debitCents = moneyToCents(row.totalDebit, "totalDebit");
+    const creditCents = moneyToCents(row.totalCredit, "totalCredit");
+    totalDebitCents += debitCents;
+    totalCreditCents += creditCents;
 
     return {
       id: row.accountId,
@@ -391,17 +418,18 @@ export function buildTrialBalance(rows: ReportRow[], dateTo: string) {
       accountNumber: row.accountNumber,
       accountType: row.accountType,
       subtype: row.subtype,
-      debit,
-      credit,
+      debit: debitCents / 100,
+      credit: creditCents / 100,
     };
   });
 
   return {
     dateTo,
     accounts,
-    totalDebit: round2(totalDebit),
-    totalCredit: round2(totalCredit),
-    isBalanced: Math.abs(totalDebit - totalCredit) < 0.01,
-    difference: round2(totalDebit - totalCredit),
+    totalDebit: totalDebitCents / 100,
+    totalCredit: totalCreditCents / 100,
+    // Exact: balanced means the CENTS agree, not "within a float epsilon".
+    isBalanced: totalDebitCents === totalCreditCents,
+    difference: (totalDebitCents - totalCreditCents) / 100,
   };
 }

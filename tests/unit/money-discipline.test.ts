@@ -23,13 +23,26 @@ import { resolve } from "node:path";
  * with toFixed at the wrong scale.
  */
 const CLEAN_MONEY_FILES = [
+  "src/lib/bill-mutation-guards.ts",
   "src/lib/coa/resolve-mapped-account.ts",
   "src/lib/inbox/service.ts",
+  "src/lib/invoice-journal.ts",
   "src/lib/journal-amendment.ts",
   "src/lib/manual-bill-payment.ts",
+  "src/lib/manual-invoice-payment.ts",
+  "src/lib/reconciliation-finalize.ts",
+  "src/lib/report-calculations.ts",
   "src/lib/tax/bill-payment-ewt.ts",
   "src/lib/tax/engine.ts",
   "src/lib/tax/payroll-journal.ts",
+  "src/routes/api/-invoices.ts",
+  "src/routes/api/-reports.ts",
+  "src/routes/api/-transactions-import.ts",
+  "src/routes/api/reconciliations/-_agent.ts",
+  "src/routes/api/reconciliations/-_list-detail.ts",
+  "src/routes/api/reconciliations/-_matching.ts",
+  "src/routes/api/reconciliations/-_mutations.ts",
+  "src/routes/api/reconciliations/-_suggestions.ts",
 ];
 
 const BANNED = [

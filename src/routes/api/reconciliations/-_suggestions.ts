@@ -2,6 +2,7 @@
  * Reconciliation API — Suggestion Management
  */
 import { createServerFn } from "@tanstack/react-start";
+import { centsToMoney, moneyToCents } from "@/lib/money";
 import { z } from "zod";
 import {
   statementLines,
@@ -296,7 +297,7 @@ export const applySuggestion = createServerFn({ method: "POST" })
             );
             if (totalCents !== Math.round(Number(line.amount) * 100)) {
               throw new Error(
-                `Split allocations total ${(totalCents / 100).toFixed(2)} but the statement line is ${Number(line.amount).toFixed(2)}.`,
+                `Split allocations total ${centsToMoney(totalCents)} but the statement line is ${centsToMoney(moneyToCents(line.amount, "amount"))}.`,
               );
             }
 
