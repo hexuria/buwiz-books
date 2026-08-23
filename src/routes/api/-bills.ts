@@ -33,6 +33,7 @@ import {
   completeAccountingOperation,
 } from "../../lib/operational-idempotency";
 import { assertRolePermission } from "../../lib/auth-middleware";
+import { journalsClearedByFinalizedReconciliation } from "../../lib/reconciliation-claimed-lines";
 import { recordManualBillPayment } from "../../lib/manual-bill-payment";
 import {
   withMutationPermissionOrgContext,
@@ -86,8 +87,10 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   in_review: ["pending_approval", "awaiting_payment", "paid", "partial", "voided"],
   pending_approval: ["awaiting_payment", "in_review", "voided"],
   approved: ["awaiting_payment", "in_review"], // legacy — treat as alias for awaiting_payment
-  awaiting_payment: ["scheduled", "paid", "partial"],
-  scheduled: ["paid", "partial"],
+  // voided is reachable from the accrued-but-unpaid states: a mistaken bill
+  // most often sits exactly here, and the old table made it unvoidable.
+  awaiting_payment: ["scheduled", "paid", "partial", "voided"],
+  scheduled: ["paid", "partial", "voided"],
   partial: ["paid", "partial", "voided"], // additional partial payments
   paid: ["voided"], // allow voiding paid bills for corrections
   voided: [],
@@ -856,10 +859,26 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
             );
           }
 
+          // Same rule as invoice void, batch delete and transaction void: a
+          // journal cleared by a FINALIZED reconciliation cannot be voided out
+          // from under it — the reconciliation's snapshot would no longer
+          // reproduce, with nothing recording why.
+          if (
+            await journalsClearedByFinalizedReconciliation(
+              db,
+              orgId,
+              linkedJournals.map((journal) => journal.id),
+            )
+          ) {
+            throw new Error(
+              "Cannot void bill: a linked journal is locked by a finalized reconciliation.",
+            );
+          }
+
           for (const journal of linkedJournals) {
             await db
               .update(journalHeaders)
-              .set({ status: "voided", updatedAt: new Date() })
+              .set({ status: "voided", voidedAt: new Date(), updatedAt: new Date() })
               .where(eq(journalHeaders.id, journal.id));
 
             await db.insert(activityLogs).values({
@@ -1003,7 +1022,7 @@ export const deleteBill = createServerFn({ method: "POST" }).handler(
         for (const journal of linkedJournals) {
           await db
             .update(journalHeaders)
-            .set({ status: "voided", updatedAt: new Date() })
+            .set({ status: "voided", voidedAt: new Date(), updatedAt: new Date() })
             .where(eq(journalHeaders.id, journal.id));
 
           await db.insert(activityLogs).values({

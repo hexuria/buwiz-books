@@ -15,6 +15,7 @@ import {
   statementLineMatches,
   statementLines,
 } from "../db/schema/reconciliations";
+import { journalLines } from "../db/schema/journals";
 
 /** Journal line IDs already claimed within a reconciliation. */
 export async function getClaimedJournalLineIds(
@@ -158,4 +159,51 @@ export function claimConflictMessage(claim: JournalLineClaim): string {
   return claim.via === "direct"
     ? "This ledger transaction is already matched to another statement line. Unmatch it first before re-assigning."
     : "This ledger transaction is already cleared by a split match. Remove that split before re-assigning.";
+}
+
+/**
+ * Whether any of these journal headers has a line cleared by a FINALIZED
+ * reconciliation — via either representation.
+ *
+ * Shared by the bill and invoice void paths: voiding a journal out from
+ * under a finalized reconciliation makes its snapshot unreproducible, and the
+ * invoice path's original inline check read only the 1:1 column.
+ */
+export async function journalsClearedByFinalizedReconciliation(
+  db: DbExecutor,
+  orgId: string,
+  journalHeaderIds: string[],
+): Promise<boolean> {
+  if (journalHeaderIds.length === 0) return false;
+
+  const [direct] = await db
+    .select({ id: statementLines.id })
+    .from(statementLines)
+    .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
+    .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
+    .where(
+      and(
+        eq(reconciliations.organizationId, orgId),
+        eq(reconciliations.status, "finalized"),
+        inArray(journalLines.journalHeaderId, journalHeaderIds),
+      ),
+    )
+    .limit(1);
+  if (direct) return true;
+
+  const [split] = await db
+    .select({ id: statementLineMatches.id })
+    .from(statementLineMatches)
+    .innerJoin(journalLines, eq(statementLineMatches.journalLineId, journalLines.id))
+    .innerJoin(statementLines, eq(statementLineMatches.statementLineId, statementLines.id))
+    .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
+    .where(
+      and(
+        eq(statementLineMatches.organizationId, orgId),
+        eq(reconciliations.status, "finalized"),
+        inArray(journalLines.journalHeaderId, journalHeaderIds),
+      ),
+    )
+    .limit(1);
+  return Boolean(split);
 }

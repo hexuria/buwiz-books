@@ -21,6 +21,7 @@ import {
   transactionCandidates,
 } from "@/db/schema/inbox";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
+import { bills } from "@/db/schema/bills";
 import { parties } from "@/db/schema/parties";
 import { resolveDuplicateCase } from "@/lib/inbox/duplicate-service";
 import { runDuplicateMatchingForSource } from "@/lib/inbox/duplicate-engine";
@@ -2227,5 +2228,150 @@ describe("Inbox-first transaction workflow", () => {
     // rejection. ~1s in isolation, but it exceeds the default 5s timeout
     // under full-suite database load, and a red pre-push hook trains people
     // to bypass it.
+  }, 30000);
+});
+
+describe("inbox approval source-document stamping", () => {
+  // The bill/invoice void paths and the AP/AR aging reports find journals
+  // EXCLUSIVELY through (source_document_type, source_document_id). Before
+  // the stamp, a bill approved through the Inbox produced a journal those
+  // queries could never see: the bill flipped to voided while its journal
+  // stayed posted forever, and the bill never appeared in AP aging at all.
+  it("stamps a bill candidate's journal with the bill source pair", async () => {
+    const fixture = await setupApprovalTestOrganization("stamp-bill");
+    const { orgId, userId } = fixture;
+
+    const [bill] = await db
+      .insert(bills)
+      .values({
+        organizationId: orgId,
+        vendorId: fixture.vendor.id,
+        billNumber: `BILL-${randomUUID().slice(0, 8)}`,
+        billDate: "2026-07-20",
+        dueDate: "2026-08-20",
+        amount: "84.25",
+        balanceDue: "84.25",
+        status: "in_review",
+      })
+      .returning();
+
+    const receipt = await createWorkflowDocument(orgId, "stamp-bill", "receipt");
+    const submitted = await withOrgContext(orgId, userId, "owner", (tx) =>
+      createTransactionCandidate(
+        { db: tx, orgId, userId, role: "owner" },
+        {
+          candidateType: "bill",
+          transactionDate: "2026-07-24",
+          transactionType: "pay_out",
+          memo: "Bill accrual via inbox",
+          referenceNumber: "STAMP-1",
+          partyId: fixture.vendor.id,
+          originalCurrency: "USD",
+          sourceChannel: "upload",
+          sourceProvider: "internal",
+          externalId: bill.id,
+          documentIds: [receipt.id],
+          lines: [
+            {
+              accountId: fixture.expense.id,
+              debit: "84.25",
+              departmentId: fixture.department.id,
+              locationId: fixture.location.id,
+            },
+            {
+              accountId: fixture.bank.id,
+              credit: "84.25",
+              departmentId: fixture.department.id,
+              locationId: fixture.location.id,
+            },
+          ],
+        },
+      ),
+    );
+
+    await withOrgContext(orgId, userId, "owner", (tx) =>
+      approveInboxItem(
+        { db: tx, orgId, userId, role: "owner" },
+        {
+          inboxItemId: submitted.inboxItem.id,
+          expectedRevision: submitted.inboxItem.candidateRevision,
+          expectedLockVersion: submitted.inboxItem.lockVersion,
+        },
+      ),
+    );
+
+    const [header] = await db
+      .select({
+        id: journalHeaders.id,
+        sourceDocumentId: journalHeaders.sourceDocumentId,
+        sourceDocumentType: journalHeaders.sourceDocumentType,
+      })
+      .from(journalHeaders)
+      .where(eq(journalHeaders.organizationId, orgId));
+    expect(header.sourceDocumentType).toBe("bill");
+    expect(header.sourceDocumentId).toBe(bill.id);
+
+    // The link the void path walks in the OTHER direction must agree.
+    const [linked] = await db
+      .select({ journalHeaderId: bills.journalHeaderId, status: bills.status })
+      .from(bills)
+      .where(eq(bills.id, bill.id));
+    expect(linked.journalHeaderId).toBe(header.id);
+    expect(linked.status).toBe("awaiting_payment");
+  }, 30000);
+
+  it("leaves plain transaction candidates unstamped", async () => {
+    const fixture = await setupApprovalTestOrganization("stamp-plain");
+    const { orgId, userId } = fixture;
+
+    const receipt = await createWorkflowDocument(orgId, "stamp-plain", "receipt");
+    const submitted = await withOrgContext(orgId, userId, "owner", (tx) =>
+      createTransactionCandidate(
+        { db: tx, orgId, userId, role: "owner" },
+        {
+          transactionDate: "2026-07-24",
+          transactionType: "pay_out",
+          memo: "Ordinary spend",
+          referenceNumber: "STAMP-2",
+          partyId: fixture.vendor.id,
+          originalCurrency: "USD",
+          sourceChannel: "upload",
+          sourceProvider: "internal",
+          externalId: `upload:${randomUUID()}`,
+          documentIds: [receipt.id],
+          lines: [
+            {
+              accountId: fixture.expense.id,
+              debit: "10.00",
+              departmentId: fixture.department.id,
+              locationId: fixture.location.id,
+            },
+            {
+              accountId: fixture.bank.id,
+              credit: "10.00",
+              departmentId: fixture.department.id,
+              locationId: fixture.location.id,
+            },
+          ],
+        },
+      ),
+    );
+
+    await withOrgContext(orgId, userId, "owner", (tx) =>
+      approveInboxItem(
+        { db: tx, orgId, userId, role: "owner" },
+        {
+          inboxItemId: submitted.inboxItem.id,
+          expectedRevision: submitted.inboxItem.candidateRevision,
+          expectedLockVersion: submitted.inboxItem.lockVersion,
+        },
+      ),
+    );
+
+    const [header] = await db
+      .select({ sourceDocumentId: journalHeaders.sourceDocumentId })
+      .from(journalHeaders)
+      .where(eq(journalHeaders.organizationId, orgId));
+    expect(header.sourceDocumentId).toBeNull();
   }, 30000);
 });
