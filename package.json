@@ -38,6 +38,7 @@
     "db:seed:coa": "bun run scripts/seed-coa.ts",
     "db:seed:review-rules": "bun run scripts/seed-review-rules.ts",
     "db:review-rules:status": "bun run scripts/seed-review-rules.ts --status",
+    "db:audit:diagnostics": "bun run scripts/audit-diagnostics.ts",
     "db:seed:invoices": "bun run scripts/seed-invoices.ts",
     "db:seed:transactions": "bun run tests/e2e/seed-snapshot.ts",
     "dedup:preflight": "bun run scripts/dedup-preflight.ts",
