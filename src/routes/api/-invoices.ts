@@ -16,6 +16,7 @@ import { eq, desc, asc, and, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { allocateInvoiceNumber } from "../../lib/sequence";
 import { getClosedThrough, isDateLocked } from "../../lib/period-close";
+import { journalsClearedByFinalizedReconciliation } from "../../lib/reconciliation-claimed-lines";
 import { resolveFunctionalCurrency } from "../../lib/functional-currency";
 import { sendInvoiceEmail as sendEmail } from "../../services/email";
 import { organization, member, user } from "../../db/schema/auth";
@@ -486,6 +487,10 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
   viewed: ["overdue", "paid", "partial", "voided"],
   overdue: ["paid", "partial", "voided"],
   partial: ["paid", "partial", "voided"],
+  // A paid invoice posted in error previously had NO correction path: this
+  // table had no "paid" key, so paid→voided threw, and deleteInvoice refuses
+  // non-draft rows. Bills already allow exactly this for corrections.
+  paid: ["voided"],
 };
 
 const transitionSchema = z.object({
@@ -608,6 +613,12 @@ export const transitionInvoiceStatus = createServerFn({
         status: newStatus,
         updatedAt: new Date(),
       };
+      if (newStatus === "voided") {
+        // A voided invoice is owed nothing. Leaving balanceDue standing made
+        // the public pay link keep asking the customer for money the ledger no
+        // longer claims (the capture itself was already refused downstream).
+        updateFields.balanceDue = "0.00";
+      }
       let operationJournalHeaderId: string | null = null;
 
       // ═══════════════════════════════════════════════════════════════
@@ -671,28 +682,18 @@ export const transitionInvoiceStatus = createServerFn({
           );
         }
 
-        if (linkedHeaders.length > 0) {
-          const [finalizedMatch] = await db
-            .select({ id: statementLines.id })
-            .from(statementLines)
-            .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
-            .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
-            .where(
-              and(
-                eq(reconciliations.organizationId, orgId),
-                eq(reconciliations.status, "finalized"),
-                inArray(
-                  journalLines.journalHeaderId,
-                  linkedHeaders.map((header) => header.id),
-                ),
-              ),
-            )
-            .limit(1);
-          if (finalizedMatch) {
-            throw new Error(
-              "Cannot void invoice: a linked journal is locked by a finalized reconciliation.",
-            );
-          }
+        // Shared with bill void; unlike the old inline check this also sees
+        // journals cleared by SPLIT matches, not only the 1:1 column.
+        if (
+          await journalsClearedByFinalizedReconciliation(
+            db,
+            orgId,
+            linkedHeaders.map((header) => header.id),
+          )
+        ) {
+          throw new Error(
+            "Cannot void invoice: a linked journal is locked by a finalized reconciliation.",
+          );
         }
 
         // Void the A/R journal and every payment journal linked to this invoice.

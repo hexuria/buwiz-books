@@ -194,6 +194,13 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
 
 ## PH tax (not covered by PRs 5–9)
 
+- **C1 rescoped (2026-08-23):** `tax_certificates` has NO invoice reference (only
+  `payorPartyId`), so the planned "stamp the CWT journal with the invoice pair" fix is
+  impossible as designed — the CWT credit is an on-account customer credit, not an invoice
+  settlement. Correct fix is an "unapplied credits" tie-line on AR aging (per party, from
+  posted non-invoice journals crediting the AR family), which belongs with the report
+  correctness work (PR-16). Genuine per-invoice application needs a certificate→invoice
+  application feature — separate product work.
 - M `src/lib/tax/payroll-run-service.ts:150-160` — `loadBrackets` ignores `datasetVersion`
   (`pickInForce` in `as-of.ts:96` exists for exactly this); a corrective v2 seed makes bracket
   selection arbitrary. → PR-7 same-file candidate.

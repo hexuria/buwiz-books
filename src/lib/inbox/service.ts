@@ -76,6 +76,23 @@ async function recordExactReplaySuppressed(
     .onConflictDoNothing();
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The journal's source-document pair, when the candidate is a linked bill/invoice. */
+function sourceDocumentStampFor(
+  candidateType: string,
+  externalId: string | null,
+): { sourceDocumentId: string | null; sourceDocumentType: string | null } {
+  if (
+    (candidateType === "bill" || candidateType === "invoice") &&
+    externalId &&
+    UUID_SHAPE.test(externalId)
+  ) {
+    return { sourceDocumentId: externalId, sourceDocumentType: candidateType };
+  }
+  return { sourceDocumentId: null, sourceDocumentType: null };
+}
+
 function sourceProvider(input: CreateCandidateInput): string {
   return input.sourceProvider?.trim().toLowerCase() || "internal";
 }
@@ -937,6 +954,7 @@ export async function approveInboxItem(
     .from(reviewFindings)
     .where(
       and(
+        eq(reviewFindings.organizationId, orgId),
         eq(reviewFindings.inboxItemId, row.item.id),
         eq(reviewFindings.state, "open"),
         eq(reviewFindings.impact, "blocking"),
@@ -1077,6 +1095,14 @@ export async function approveInboxItem(
       exchangeRateId: row.candidate.exchangeRateId,
       status: "posted",
       postedAt: new Date(),
+      // The bill/invoice void paths and the AP/AR aging reports find journals
+      // EXCLUSIVELY through this pair. Without it, a bill approved here
+      // flipped to voided while its journal stayed posted forever, and never
+      // appeared in aging at all. Stamped only when the external id is
+      // uuid-shaped: source_document_id is a uuid column, and for bill
+      // candidates the id-as-externalId convention is already load-bearing at
+      // the bills.journalHeaderId update below.
+      ...sourceDocumentStampFor(row.candidate.candidateType, row.sourceRecordExternalId),
       createdBy: userId,
     })
     .returning();
