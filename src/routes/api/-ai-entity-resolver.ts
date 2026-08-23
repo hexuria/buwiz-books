@@ -16,6 +16,7 @@ import { parties } from "../../db/schema/parties";
 import { financialAccounts } from "../../db/schema/financial-accounts";
 import { and, eq, ilike } from "drizzle-orm";
 import { createLogger } from "../../lib/logger";
+import { assertRolePermission } from "../../lib/auth-middleware";
 import { withMutationPermissionOrgContext } from "../../lib/server-context";
 import { escapeLikePattern } from "../../lib/sql-escape";
 import { bankAccountLabel, type ExtractedEntityInput } from "../../lib/entity-creation";
@@ -100,7 +101,12 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
       "aiTask",
       "run",
       { routeKey: "ai:entity-resolve", limit: 30, windowMs: 300_000 },
-      async ({ orgId, userId, db }) => {
+      async ({ orgId, userId, role, db }) => {
+        // Two-key: aiTask:run got the caller in the door, but this handler
+        // manufactures create_party proposal cards — the caller must also
+        // hold the underlying permission the applier will demand, or they
+        // could stack proposals they can never legally apply.
+        assertRolePermission(role, "party", "create");
         const input = resolveExtractedEntitiesSchema.parse(rawData);
 
         const result: EntityResolutionResult = {

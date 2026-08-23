@@ -147,7 +147,7 @@ export async function runTxnPrefill(
           transaction: parsed as unknown as Record<string, unknown>,
         },
         invocationId: response.invocationId,
-        confidence: normalizeConfidence(parsed.confidence),
+        confidence: normalizeConfidence(parsed.confidence, { scaleHint: "unit" }),
         sourceRef: { entityType: "statement_line", entityId: line.id },
         createdBy: input.userId,
       });

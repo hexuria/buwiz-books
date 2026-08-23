@@ -88,7 +88,7 @@ export async function runIngestTriage(input: RunIngestTriageInput): Promise<void
       return;
     }
 
-    const confidence01 = normalizeConfidence(result.data.confidence);
+    const confidence01 = normalizeConfidence(result.data.confidence, { scaleHint: "unit" });
 
     await withOrgContext(input.orgId, "system", "admin", async (tx) => {
       const [doc] = await tx

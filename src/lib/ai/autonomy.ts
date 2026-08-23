@@ -32,6 +32,15 @@ export const STRUCTURAL_MANUAL_KINDS: ReadonlySet<AiProposalKind> = new Set<AiPr
   "match",
   "split",
   "coa_accounts",
+  // Audit PR-19 — added while autonomy has NO production callers, which is
+  // exactly when widening the wall is free:
+  // `create_party` mints counterparties (the identity ledger rows hang off);
+  // `date_fix` moves a transaction across period and aging boundaries;
+  // `categorize` re-points P&L lines. All three stay human-applied at any
+  // accuracy; the two-key appliers still gate WHO may apply them.
+  "create_party",
+  "date_fix",
+  "categorize",
 ]);
 
 /** Graduation criteria — deliberately strict; this widens write authority. */
