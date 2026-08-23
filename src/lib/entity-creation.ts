@@ -11,7 +11,7 @@
 // (or two proposals naming the same entity) converges instead of duplicating.
 // ============================================================================
 
-import { and, asc, eq, ilike, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, sql, ne } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { DbExecutor } from "../db";
 import { parties } from "../db/schema/parties";
@@ -152,19 +152,45 @@ export async function ensureBankInfrastructure(
   const lastFour = entity.identifier?.replace(/[^0-9]/g, "").slice(-4) || undefined;
   const accountLabel = bankAccountLabel(entity);
 
-  const [existingFA] = await db
-    .select({
-      id: financialAccounts.id,
-      ledgerAccountId: financialAccounts.ledgerAccountId,
-    })
-    .from(financialAccounts)
-    .where(
-      and(
-        ilike(financialAccounts.accountName, escapeLikePattern(accountLabel)),
-        eq(financialAccounts.organizationId, orgId),
-      ),
-    )
-    .limit(1);
+  // Reuse detection, strongest identity first (audit P6): the exact-label
+  // match alone re-created the same real account whenever one mention
+  // carried the last-4 and another didn't. When we know the last four
+  // digits, they + the credit/deposit class identify the account regardless
+  // of how the label was phrased; the label match remains the fallback.
+  let existingFA: { id: string; ledgerAccountId: string | null } | undefined;
+  if (lastFour) {
+    [existingFA] = await db
+      .select({
+        id: financialAccounts.id,
+        ledgerAccountId: financialAccounts.ledgerAccountId,
+      })
+      .from(financialAccounts)
+      .where(
+        and(
+          eq(financialAccounts.organizationId, orgId),
+          eq(financialAccounts.lastFour, lastFour),
+          isCredit
+            ? eq(financialAccounts.accountType, "credit_card")
+            : ne(financialAccounts.accountType, "credit_card"),
+        ),
+      )
+      .limit(1);
+  }
+  if (!existingFA) {
+    [existingFA] = await db
+      .select({
+        id: financialAccounts.id,
+        ledgerAccountId: financialAccounts.ledgerAccountId,
+      })
+      .from(financialAccounts)
+      .where(
+        and(
+          ilike(financialAccounts.accountName, escapeLikePattern(accountLabel)),
+          eq(financialAccounts.organizationId, orgId),
+        ),
+      )
+      .limit(1);
+  }
 
   if (existingFA) {
     return {

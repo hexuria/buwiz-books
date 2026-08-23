@@ -21,6 +21,7 @@ import {
   computeFinalizeBalances,
   RECONCILIATION_BALANCE_TOLERANCE,
 } from "../../../lib/reconciliation-finalize";
+import { persistReconciliationAnomalies } from "@/lib/reconciliation-anomaly-flags";
 
 // ============================================================================
 // AI Agent — autonomous reconciliation orchestrator
@@ -382,13 +383,25 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
               }
               // finalizedById is a uuid column — writing the literal "ai-agent" was
               // rejected by Postgres and silently swallowed, so auto-finalize never
-              // actually worked. Attribute finalization to the user who ran the agent.
+              // actually worked. Attribute finalization to the user who ran the agent;
+              // aiAutoFinalized is what marks the finalize as machine-made (P6 —
+              // it was left false, so AI finalizations were indistinguishable
+              // from human ones and reopen semantics could not tell them apart).
+              // The advisory anomaly pass runs here exactly like the human
+              // path — an AI-finalized reconciliation must carry the same
+              // audit annotations.
+              await persistReconciliationAnomalies(db, {
+                orgId,
+                reconciliationId: step.targetId,
+                bankAccountId: recon.bankAccountId,
+              });
               await db
                 .update(reconciliations)
                 .set({
                   status: "finalized",
                   finalizedAt: new Date(),
                   finalizedById: userId,
+                  aiAutoFinalized: true,
                   updatedAt: new Date(),
                   // Persist the cleared/uncleared snapshot, same as the human finalize
                   // path — otherwise an AI-finalized reconciliation reaches the same

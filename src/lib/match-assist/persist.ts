@@ -192,6 +192,27 @@ export async function persistLlmMatchSuggestions(
       });
       continue;
     }
+    // The same ledger line twice used to sail through here and die later as
+    // an opaque unique-constraint error; opposite-sign parts are offsetting
+    // entries, not components of one statement charge (audit P6).
+    if (new Set(allocations.map((a) => a.journalLineId)).size !== allocations.length) {
+      rejected.push({
+        statementLineId: decision.statementLineId,
+        reason: "split allocation lists the same ledger line more than once",
+      });
+      continue;
+    }
+    {
+      const lineAmountForSign = typeof line.amount === "string" ? Number(line.amount) : line.amount;
+      const targetSign = Math.sign(lineAmountForSign);
+      if (allocations.some((a) => a.amount !== 0 && Math.sign(a.amount) !== targetSign)) {
+        rejected.push({
+          statementLineId: decision.statementLineId,
+          reason: "split allocation mixes signs against the statement line",
+        });
+        continue;
+      }
+    }
     // Money math recomputed in TypeScript — the model's arithmetic is never trusted.
     const allocationTotal = allocations.reduce((sum, a) => sum + a.amount, 0);
     const lineAmount = typeof line.amount === "string" ? Number(line.amount) : line.amount;

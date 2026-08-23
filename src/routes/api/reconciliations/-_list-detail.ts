@@ -7,6 +7,7 @@ import {
   reconciliations,
   statementLines,
   reconciliationFlags,
+  statementLineMatches,
 } from "../../../db/schema/reconciliations";
 import { financialAccounts } from "../../../db/schema/financial-accounts";
 import {
@@ -347,10 +348,19 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
           .orderBy(asc(journalHeaders.transactionDate));
       }
 
-      // Build matched set for quick lookup
-      const matchedJournalLineIds = new Set(
-        lines.filter((l) => l.matchedJournalLineId).map((l) => l.matchedJournalLineId),
-      );
+      // Build matched set for quick lookup — BOTH clearing representations.
+      // The 1:1 column alone left split-cleared ledger lines rendering as
+      // unmatched, inviting a second match the 0048 triggers then refuse
+      // with a constraint error instead of the UI just showing the truth.
+      const splitMatches = await db
+        .select({ journalLineId: statementLineMatches.journalLineId })
+        .from(statementLineMatches)
+        .innerJoin(statementLines, eq(statementLineMatches.statementLineId, statementLines.id))
+        .where(eq(statementLines.reconciliationId, parsed.id));
+      const matchedJournalLineIds = new Set([
+        ...lines.filter((l) => l.matchedJournalLineId).map((l) => l.matchedJournalLineId),
+        ...splitMatches.map((m: { journalLineId: string }) => m.journalLineId),
+      ]);
 
       // Supplementary query: fetch matched journal lines NOT already in ledgerTxns.
       // Statement lines may be matched to counterpart journal lines (expense/revenue side)

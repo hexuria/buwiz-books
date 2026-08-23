@@ -1,4 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
+import type { DbExecutor } from "../../db";
+import { reconciliations } from "../../db/schema/reconciliations";
 import { financialAccounts } from "../../db/schema/financial-accounts";
 import { financialAccountSecrets } from "../../db/schema/financial-account-secrets";
 import { accounts } from "../../db/schema/accounts";
@@ -196,6 +198,36 @@ const createFinancialAccountSchema = z.object({
   isOwned: z.boolean().optional().default(false),
 });
 
+/**
+ * The ledger link must be an org-owned, active, bank-subtype asset account
+ * (audit P6 — any UUID was accepted, including another org's account), and
+ * once finalized reconciliations hang off a financial account, repointing
+ * its ledger link would orphan their cleared history.
+ */
+async function assertLedgerAccountAssignable(
+  db: DbExecutor,
+  orgId: string,
+  ledgerAccountId: string,
+): Promise<void> {
+  const [account] = await db
+    .select({
+      accountType: accounts.accountType,
+      subtype: accounts.subtype,
+      isActive: accounts.isActive,
+    })
+    .from(accounts)
+    .where(and(eq(accounts.id, ledgerAccountId), eq(accounts.organizationId, orgId)))
+    .limit(1);
+  if (!account || !account.isActive) {
+    throw new Error("Ledger account is unavailable for this organization");
+  }
+  if (account.accountType !== "asset" || account.subtype !== "bank_accounts") {
+    throw new Error(
+      "A bank's ledger link must be an active asset account with the bank_accounts subtype",
+    );
+  }
+}
+
 export const createFinancialAccount = createServerFn({ method: "POST" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
     return withMutationPermissionOrgContext(
@@ -204,6 +236,9 @@ export const createFinancialAccount = createServerFn({ method: "POST" }).handler
       { routeKey: "financial-account:create", limit: 30, windowMs: 60_000 },
       async ({ orgId, db }) => {
         const parsed = createFinancialAccountSchema.parse(rawData);
+        if (parsed.ledgerAccountId) {
+          await assertLedgerAccountAssignable(db, orgId, parsed.ledgerAccountId);
+        }
 
         const [account] = await db
           .insert(financialAccounts)
@@ -261,6 +296,40 @@ export const updateFinancialAccount = createServerFn({ method: "POST" }).handler
       async ({ orgId, db }) => {
         const parsed = updateFinancialAccountSchema.parse(rawData);
         const { id, ...updates } = parsed;
+
+        if (updates.ledgerAccountId !== undefined && updates.ledgerAccountId !== null) {
+          await assertLedgerAccountAssignable(db, orgId, updates.ledgerAccountId);
+        }
+        if (updates.ledgerAccountId !== undefined) {
+          // Repointing (or clearing) the ledger link is refused while any
+          // FINALIZED reconciliation references this financial account — the
+          // finalize math ran against the old ledger account, and the
+          // cleared history would silently detach from it.
+          const [current] = await db
+            .select({ ledgerAccountId: financialAccounts.ledgerAccountId })
+            .from(financialAccounts)
+            .where(and(eq(financialAccounts.id, id), eq(financialAccounts.organizationId, orgId)))
+            .limit(1);
+          if (!current) throw new Error("Financial account not found");
+          if (current.ledgerAccountId !== updates.ledgerAccountId) {
+            const [finalized] = await db
+              .select({ id: reconciliations.id })
+              .from(reconciliations)
+              .where(
+                and(
+                  eq(reconciliations.organizationId, orgId),
+                  eq(reconciliations.bankAccountId, id),
+                  eq(reconciliations.status, "finalized"),
+                ),
+              )
+              .limit(1);
+            if (finalized) {
+              throw new Error(
+                "This bank has finalized reconciliations tied to its current ledger account. Reopen or keep the link — repointing would orphan their cleared history.",
+              );
+            }
+          }
+        }
 
         const updateFields: Record<string, unknown> = { updatedAt: new Date() };
         for (const [key, value] of Object.entries(updates)) {

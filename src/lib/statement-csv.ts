@@ -20,6 +20,8 @@ export interface CsvStatementLine {
 
 export interface CsvStatementParseResult {
   ok: boolean;
+  /** Data rows that failed to parse and were skipped (audit P6). */
+  droppedRows: number;
   issues: string[];
   transactions: CsvStatementLine[];
   /** Which columns were detected — recorded on the run for auditability. */
@@ -171,7 +173,13 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
   const issues: string[] = [];
   const rows = tokenizeCsv(csvText);
   if (rows.length === 0) {
-    return { ok: false, issues: ["CSV file is empty"], transactions: [], detected: {} };
+    return {
+      ok: false,
+      droppedRows: 0,
+      issues: ["CSV file is empty"],
+      transactions: [],
+      detected: {},
+    };
   }
 
   // Find the header row: first row (within the scan window) that has a date
@@ -207,6 +215,7 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
   if (headerIdx === -1) {
     return {
       ok: false,
+      droppedRows: 0,
       issues: [
         "Could not detect statement columns — expected a header row with a date column and an amount (or debit/credit) column",
       ],
@@ -227,6 +236,7 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
   };
 
   const transactions: CsvStatementLine[] = [];
+  let droppedRows = 0;
   for (let i = headerIdx + 1; i < rows.length; i++) {
     const row = rows[i];
     if (row.every((cell) => cell.trim() === "")) continue;
@@ -235,6 +245,7 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
     const date = parseCsvDate(row[dateCol] ?? "");
     if (!date) {
       issues.push(`Row ${rowNum}: unparseable date "${row[dateCol] ?? ""}"`);
+      droppedRows++;
       continue;
     }
 
@@ -252,6 +263,7 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
     }
     if (amount === null) {
       issues.push(`Row ${rowNum}: unparseable amount`);
+      droppedRows++;
       continue;
     }
 
@@ -271,5 +283,19 @@ export function parseStatementCsv(csvText: string): CsvStatementParseResult {
     issues.push("No parseable transaction rows found");
   }
 
-  return { ok: transactions.length > 0, issues, transactions, detected };
+  // A parse that DROPPED a meaningful share of its data rows is a failed
+  // parse, not a successful import with footnotes: 40 of 60 rows dropped
+  // used to report ok:true, and the reconciliation started from a statement
+  // missing two thirds of its activity (audit P6, extending checkpoint C3).
+  const totalDataRows = transactions.length + droppedRows;
+  const dropRatio = totalDataRows > 0 ? droppedRows / totalDataRows : 0;
+  if (droppedRows > 0 && dropRatio > 0.2) {
+    issues.push(
+      `Parsed ${transactions.length} of ${totalDataRows} data rows — ${droppedRows} dropped. ` +
+        `Fix the file (or its column mapping) and re-upload; importing a fifth-missing statement silently breaks the reconciliation.`,
+    );
+    return { ok: false, droppedRows, issues, transactions, detected };
+  }
+
+  return { ok: transactions.length > 0, droppedRows, issues, transactions, detected };
 }
