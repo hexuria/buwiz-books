@@ -422,13 +422,25 @@ async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promis
     );
   }
 
+  // The AI was only shown expense-type categories (the filter above), but
+  // its suggestion used to be resolved against the FULL chart — a suggested
+  // number like "1200" could land a bill line on Accounts Receivable. Match
+  // only within what the model was offered.
+  const expenseAccounts = accounts.filter(
+    (a: any) =>
+      a.accountType === "expense" ||
+      a.accountType === "cost_of_revenue" ||
+      a.accountType === "other_expense",
+  );
   const lineItems = aiResult.lineItems.map((item) => {
     let accountId = defaultAccountId;
     if (item.suggestedCategoryNumber) {
-      const match = accounts.find((a: any) => a.accountNumber === item.suggestedCategoryNumber);
+      const match = expenseAccounts.find(
+        (a: any) => a.accountNumber === item.suggestedCategoryNumber,
+      );
       if (match) accountId = match.id;
     } else if (item.suggestedCategoryName) {
-      const match = accounts.find(
+      const match = expenseAccounts.find(
         (a: any) => a.name.toLowerCase() === item.suggestedCategoryName?.toLowerCase(),
       );
       if (match) accountId = match.id;

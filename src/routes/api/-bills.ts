@@ -29,6 +29,11 @@ import {
 } from "../../lib/idempotency";
 import { centsToMoney, moneyToCents } from "../../lib/money";
 import {
+  assertBillReferences,
+  assertBillFinanciallyEditable,
+  deriveBillBalanceDue,
+} from "../../lib/bill-mutation-guards";
+import {
   beginAccountingOperation,
   completeAccountingOperation,
 } from "../../lib/operational-idempotency";
@@ -393,6 +398,10 @@ export const createBill = createServerFn({ method: "POST" }).handler(
       { routeKey: "bill:create", limit: 30, windowMs: 60_000 },
       async ({ orgId, userId, role, db }) => {
         const parsed = createBillSchema.parse(rawData);
+        // Org-ownership and account-type checks BEFORE anything persists —
+        // the invoice path has had this since assertInvoiceReferences; bills
+        // accepted any UUID.
+        await assertBillReferences(db, orgId, parsed.vendorId, parsed.lineItems);
 
         // Exact summation. Float `reduce` + `.toFixed(2)` drifted from the
         // raw line amounts, so a bill whose lines carry more than two decimals
@@ -599,10 +608,12 @@ export const updateBill = createServerFn({ method: "POST" }).handler(
         if (updates.dueDate !== undefined) updateFields.dueDate = updates.dueDate;
         if (updates.memo !== undefined) updateFields.memo = updates.memo;
         if (updates.amount !== undefined) {
+          // Amount edits are only legal pre-posting/pre-payment (the
+          // partial-payment-then-raise-amount exploit); balanceDue is derived
+          // in integer cents and floored at zero, never float math.
+          assertBillFinanciallyEditable(existing);
           updateFields.amount = updates.amount;
-          updateFields.balanceDue = (
-            Number.parseFloat(updates.amount) - Number.parseFloat(existing.amountPaid ?? "0")
-          ).toFixed(2);
+          updateFields.balanceDue = deriveBillBalanceDue(updates.amount, existing.amountPaid);
         }
         if (updates.approverId !== undefined) updateFields.approverId = updates.approverId;
 
@@ -1521,29 +1532,54 @@ export const saveBillLineItems = createServerFn({ method: "POST" }).handler(
         const parsed = saveBillLineItemsSchema.parse(rawData);
 
         const [bill] = await db
-          .select({ id: bills.id })
+          .select({
+            id: bills.id,
+            status: bills.status,
+            journalHeaderId: bills.journalHeaderId,
+            amountPaid: bills.amountPaid,
+          })
           .from(bills)
           .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)))
           .limit(1);
 
         if (!bill) throw new Error("Bill not found");
+        // Replacing lines rewrites what the accrual would post — refuse once
+        // the journal exists or money moved, and org-check every accountId
+        // (this path previously accepted any UUID).
+        assertBillFinanciallyEditable(bill);
+        await assertBillReferences(db, orgId, undefined, parsed.lineItems);
 
-        await db.delete(billLineItems).where(eq(billLineItems.billId, parsed.billId));
+        // The bill's amount and balanceDue are DERIVED from its lines — the
+        // old handler replaced the lines and left the stored totals stale.
+        const totalAmount = sumMoney(parsed.lineItems.map((line) => line.amount));
 
-        const newItems = await db
-          .insert(billLineItems)
-          .values(
-            parsed.lineItems.map((line, i) => ({
-              billId: parsed.billId,
-              description: line.description,
-              amount: line.amount,
-              accountId: line.accountId,
-              sortOrder: line.sortOrder ?? i,
-            })),
-          )
-          .returning();
+        return db.transaction(async (tx) => {
+          await tx.delete(billLineItems).where(eq(billLineItems.billId, parsed.billId));
 
-        return { success: true, lineItems: newItems };
+          const newItems = await tx
+            .insert(billLineItems)
+            .values(
+              parsed.lineItems.map((line, i) => ({
+                billId: parsed.billId,
+                description: line.description,
+                amount: line.amount,
+                accountId: line.accountId,
+                sortOrder: line.sortOrder ?? i,
+              })),
+            )
+            .returning();
+
+          await tx
+            .update(bills)
+            .set({
+              amount: totalAmount,
+              balanceDue: deriveBillBalanceDue(totalAmount, bill.amountPaid),
+              updatedAt: new Date(),
+            })
+            .where(and(eq(bills.id, parsed.billId), eq(bills.organizationId, orgId)));
+
+          return { success: true, lineItems: newItems };
+        });
       },
     );
   },
