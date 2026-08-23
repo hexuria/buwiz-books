@@ -112,3 +112,40 @@ describe("export/import fold-ins", () => {
     expect(block).toContain("withSessionOrgContext(");
   });
 });
+
+describe("export/import fidelity wiring (P4)", () => {
+  const source = readFileSync(
+    join(__dirname, "../..", "src/routes/api/-export-import.ts"),
+    "utf-8",
+  );
+
+  it("executeImport enforces the row schemas — validation is no longer advisory", () => {
+    const block = source.slice(source.indexOf("export const executeImport"));
+    expect(block).toContain("const rowSchema = getRowSchema(entityType)");
+    expect(block).toContain("rowSchema.safeParse(raw)");
+    expect(block).toMatch(/Row \$\{index \+ 1\}/);
+  });
+
+  it("banks round-trip the ledger link as a resolvable pair, never a raw uuid", () => {
+    const exportBlock = source.slice(
+      source.indexOf('case "banks"'),
+      source.indexOf('case "vendors"'),
+    );
+    expect(exportBlock).toContain("ledgerAccountNumber: accounts.accountNumber");
+    expect(exportBlock).not.toContain("ledgerAccountId: financialAccounts.ledgerAccountId");
+    const importBlock = source.slice(source.indexOf("export const executeImport"));
+    expect(importBlock).toContain("ledgerAccountId: await resolveAccountRef(");
+    expect(importBlock).toContain("defaultAccountId: await resolveAccountRef(");
+  });
+
+  it("party and bank exports carry the fields the importers accept", () => {
+    for (const field of [
+      "swiftCode: financialAccounts.swiftCode",
+      "iban: financialAccounts.iban",
+      "defaultAccountNumber: accounts.accountNumber",
+      "creditLimit: parties.creditLimit",
+    ]) {
+      expect(source).toContain(field);
+    }
+  });
+});
