@@ -12,13 +12,7 @@
 // ============================================================================
 
 import { and, eq, gte, inArray, lte } from "drizzle-orm";
-// The bare `db` import is the DOCUMENTED exception in this directory: it is
-// passed only into the match-assist facade (runMatchAssist / runTxnPrefill),
-// whose internals interleave short queries with model calls and manually
-// filter every query by orgId. Converting the facade to own its org context
-// the way runStep does is tracked in docs/audit-backlog.md - do not add new
-// bare-db uses here.
-import { db, withOrgContext, type DbExecutor } from "@/db";
+import { withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { reconciliations, statementLines } from "@/db/schema/reconciliations";
 import { effectiveJournalPredicate, journalHeaders, journalLines } from "@/db/schema/journals";
@@ -203,7 +197,7 @@ export async function processMatchAssistJob(
     // its reads/writes and lets the façade call happen between them.
     let suggested = 0;
     await runStep(run, "arbitrate", async () => {
-      const result = await runMatchAssist(db, {
+      const result = await runMatchAssist({
         orgId,
         reconciliationId,
         statementLines: context.unmatched,
@@ -244,7 +238,7 @@ export async function processMatchAssistJob(
             ),
         );
 
-        const result = await runTxnPrefill(db, {
+        const result = await runTxnPrefill({
           orgId,
           reconciliationId,
           lines: stillUnmatched.map((l) => ({

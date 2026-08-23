@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { and, eq, gte, sql } from "drizzle-orm";
-import { db } from "../../db";
+import type { DbExecutor } from "../../db";
 import { aiInvocations } from "../../db/schema/ai";
 import { createLogger } from "../logger";
 
@@ -40,7 +40,7 @@ export function invalidateSpendCache(orgId: string): void {
 }
 
 /** Month-to-date spend in USD (0 when nothing is priced yet). */
-export async function monthToDateSpendUsd(orgId: string): Promise<number> {
+export async function monthToDateSpendUsd(executor: DbExecutor, orgId: string): Promise<number> {
   const cached = cache.get(orgId);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.spent;
 
@@ -49,7 +49,7 @@ export async function monthToDateSpendUsd(orgId: string): Promise<number> {
     monthStart.setUTCDate(1);
     monthStart.setUTCHours(0, 0, 0, 0);
 
-    const [row] = await db
+    const [row] = await executor
       .select({ total: sql<string>`coalesce(sum(${aiInvocations.costUsd}), 0)` })
       .from(aiInvocations)
       .where(
@@ -71,8 +71,12 @@ export async function monthToDateSpendUsd(orgId: string): Promise<number> {
 }
 
 /** Throw when the org is over its monthly cap. No cap ⇒ no check. */
-export async function assertWithinSpendCap(orgId: string, capUsd: number | null): Promise<void> {
+export async function assertWithinSpendCap(
+  executor: DbExecutor,
+  orgId: string,
+  capUsd: number | null,
+): Promise<void> {
   if (capUsd == null || capUsd <= 0) return;
-  const spent = await monthToDateSpendUsd(orgId);
+  const spent = await monthToDateSpendUsd(executor, orgId);
   if (spent >= capUsd) throw new AiSpendCapError(spent, capUsd);
 }

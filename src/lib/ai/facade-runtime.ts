@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db, withOrgContext } from "../../db";
+import { withOrgContext, type DbExecutor } from "../../db";
 import { organization } from "../../db/schema/auth";
 import { generateStructuredAnthropic } from "./adapters/anthropic";
 import { generateStructured } from "./adapters/gemini";
@@ -13,9 +13,9 @@ import { resolveChain } from "./router";
 import { getOrgAiSettings, isTaskAllowed } from "./settings";
 import { assertWithinSpendCap } from "./spend";
 
-async function loadOrgMetadata(orgId: string): Promise<string | null> {
+async function loadOrgMetadata(executor: DbExecutor, orgId: string): Promise<string | null> {
   try {
-    const [row] = await db
+    const [row] = await executor
       .select({ metadata: organization.metadata })
       .from(organization)
       .where(eq(organization.id, orgId))
@@ -50,7 +50,9 @@ async function invokeHop<TOut>(
     }
   }
 
-  const credentials = await getOrgCredentials(ctx.orgId, hop.provider);
+  const credentials = await withOrgContext(ctx.orgId, "system", "admin", (tx) =>
+    getOrgCredentials(tx, ctx.orgId, hop.provider),
+  );
   if (credentials.length === 0) {
     throw new AiProviderError({
       class: "invalid_key",
@@ -140,16 +142,21 @@ async function invokeHop<TOut>(
 
 export const productionAiCompletionRuntime: AiCompletionRuntime = {
   async prepare({ task, orgId, modelOverride }) {
-    // The runtime interface only carries orgId; open a short org-context
-    // transaction for the settings read instead of the module connection.
-    const settings = await withOrgContext(orgId, "system", "admin", (tx) =>
-      getOrgAiSettings(tx, orgId),
-    );
+    // The runtime interface only carries orgId; ONE short org-context
+    // transaction covers the three prepare reads (settings, spend, metadata)
+    // instead of the module connection (P9, completing P12's conversion).
+    const { settings, orgMetadata } = await withOrgContext(orgId, "system", "admin", async (tx) => {
+      const loadedSettings = await getOrgAiSettings(tx, orgId);
+      if (!loadedSettings.killSwitch && isTaskAllowed(loadedSettings, task)) {
+        await assertWithinSpendCap(tx, orgId, loadedSettings.monthlySpendCapUsd);
+      }
+      return {
+        settings: loadedSettings,
+        orgMetadata: await loadOrgMetadata(tx, orgId),
+      };
+    });
     if (settings.killSwitch) return { kind: "disabled" };
     if (!isTaskAllowed(settings, task)) return { kind: "task_not_allowed" };
-
-    await assertWithinSpendCap(orgId, settings.monthlySpendCapUsd);
-    const orgMetadata = await loadOrgMetadata(orgId);
     const { hops, filtered } = await resolveChain({
       task,
       orgId,

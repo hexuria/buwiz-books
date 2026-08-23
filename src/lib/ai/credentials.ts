@@ -12,7 +12,7 @@
 // ============================================================================
 
 import { and, eq, isNull } from "drizzle-orm";
-import { db } from "../../db";
+import { type DbExecutor } from "../../db";
 import { organizationAiCredentials } from "../../db/schema/ai";
 import { getOrganizationSecrets } from "../org-secrets";
 import { decryptSecret } from "../crypto";
@@ -36,10 +36,11 @@ export interface ResolvedCredential {
  * Returns an empty array when the org has none configured.
  */
 export async function getOrgCredentials(
+  executor: DbExecutor,
   orgId: string,
   provider: AiProvider,
 ): Promise<ResolvedCredential[]> {
-  const rows = await db
+  const rows = await executor
     .select()
     .from(organizationAiCredentials)
     .where(
@@ -78,7 +79,7 @@ export async function getOrgCredentials(
   if (provider !== "gemini") return [];
 
   try {
-    const secrets = await getOrganizationSecrets(db, orgId);
+    const secrets = await getOrganizationSecrets(executor, orgId);
     return secrets.geminiApiKeys
       .map((key) => key.trim())
       .filter(Boolean)
@@ -93,7 +94,11 @@ export async function getOrgCredentials(
 }
 
 /** True when the org can actually use this provider (has ≥1 credential). */
-export async function hasCredentialsFor(orgId: string, provider: AiProvider): Promise<boolean> {
-  const credentials = await getOrgCredentials(orgId, provider);
+export async function hasCredentialsFor(
+  executor: DbExecutor,
+  orgId: string,
+  provider: AiProvider,
+): Promise<boolean> {
+  const credentials = await getOrgCredentials(executor, orgId, provider);
   return credentials.length > 0;
 }

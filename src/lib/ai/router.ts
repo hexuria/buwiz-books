@@ -15,6 +15,7 @@
 // ============================================================================
 
 import type { AiTaskName } from "./types";
+import { withOrgContext } from "../../db";
 import { hasCredentialsFor } from "./credentials";
 import type { OrgAiSettings } from "./settings-policy";
 import { resolveChainPolicy, type ResolvedChain } from "./router-policy";
@@ -35,6 +36,9 @@ export interface ResolveChainInput {
 export function resolveChain(input: ResolveChainInput): Promise<ResolvedChain> {
   return resolveChainPolicy({
     ...input,
-    hasCredentialsFor: (provider) => hasCredentialsFor(input.orgId, provider),
+    hasCredentialsFor: (provider) =>
+      withOrgContext(input.orgId, "system", "admin", (tx) =>
+        hasCredentialsFor(tx, input.orgId, provider),
+      ),
   });
 }
