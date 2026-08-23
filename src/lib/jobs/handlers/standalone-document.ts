@@ -7,9 +7,9 @@
  * (`status = 'running' AND locked_by = workerId`).
  */
 import { and, eq } from "drizzle-orm";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { withOrgContext, type DbExecutor } from "@/db";
 import { documents } from "@/db/schema/documents";
-import { processingJobs } from "@/db/schema/inbox";
 import { downloadFromR2, isR2Configured } from "@/lib/storage";
 import { ensureDocumentMatchingExtraction } from "@/lib/inbox/email-attachment-extraction";
 import { intakeStandaloneDocument } from "@/lib/inbox/document-intake";
@@ -70,43 +70,39 @@ export async function processStandaloneDocumentJob(
       fallbackCurrency: payload.fallbackCurrency,
     }),
   );
-  const intake = await orgTx((tx) =>
-    intakeStandaloneDocument(
-      {
-        db: tx,
-        orgId: job.organizationId,
-        userId: payload.userId ?? "system",
-      },
-      {
-        documentId: document.id,
-        filename: payload.filename!,
-        contentType: payload.contentType!,
-        documentType: payload.documentType!,
-        fallbackDate: payload.fallbackDate ?? undefined,
-      },
-    ),
-  );
-  const [completedJob] = await orgTx((tx) =>
-    tx
-      .update(processingJobs)
-      .set({
-        status: "completed",
-        lockedBy: null,
-        lockedUntil: null,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(processingJobs.id, job.id),
-          eq(processingJobs.status, "running"),
-          eq(processingJobs.lockedBy, workerId),
-        ),
-      )
-      .returning({ id: processingJobs.id }),
-  );
-  if (!completedJob) {
-    return { processed: false, reason: "lease_lost", jobId: job.id };
+  // Intake and completion commit ATOMICALLY: completing in a separate
+  // transaction left a window where intake had committed but the job stayed
+  // "running" — a crash there re-ran intake on retry. If the lease is lost,
+  // the sentinel rollback discards the intake too, and the successor owns
+  // the one delivery.
+  class LeaseLostError extends Error {}
+  let intake: Awaited<ReturnType<typeof intakeStandaloneDocument>>;
+  try {
+    intake = await orgTx(async (tx) => {
+      const result = await intakeStandaloneDocument(
+        {
+          db: tx,
+          orgId: job.organizationId,
+          userId: payload.userId ?? "system",
+        },
+        {
+          documentId: document.id,
+          filename: payload.filename!,
+          contentType: payload.contentType!,
+          documentType: payload.documentType!,
+          fallbackDate: payload.fallbackDate ?? undefined,
+        },
+      );
+      if (!(await completeProcessingJob(tx, job.id, workerId))) {
+        throw new LeaseLostError();
+      }
+      return result;
+    });
+  } catch (err) {
+    if (err instanceof LeaseLostError) {
+      return { processed: false, reason: "lease_lost", jobId: job.id };
+    }
+    throw err;
   }
   return {
     processed: true,

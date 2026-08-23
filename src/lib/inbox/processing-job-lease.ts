@@ -148,6 +148,44 @@ export async function claimNextProcessingJob(
 }
 
 /**
+ * Mark a job completed, fenced by worker id: only the current lease owner
+ * may terminalize (`status = 'running' AND locked_by = workerId`), so a
+ * slow, expired worker cannot overwrite its successor. Returns false when
+ * the lease was lost — the caller must NOT treat the work as delivered.
+ *
+ * The registry contract says handlers own completion, and the audit found
+ * three handlers (coa-scaffold, match-assist, reflection) that never wrote
+ * it: their jobs stayed "running" until the lease expired, were retried
+ * although the work had succeeded, and eventually terminalized as FAILED.
+ * Every handler now funnels through this one fenced UPDATE.
+ */
+export async function completeProcessingJob(
+  tx: DbExecutor,
+  jobId: string,
+  workerId: string,
+  now: Date = new Date(),
+): Promise<boolean> {
+  const [completed] = await tx
+    .update(processingJobs)
+    .set({
+      status: "completed",
+      lockedBy: null,
+      lockedUntil: null,
+      completedAt: now,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(processingJobs.id, jobId),
+        eq(processingJobs.status, "running"),
+        eq(processingJobs.lockedBy, workerId),
+      ),
+    )
+    .returning({ id: processingJobs.id });
+  return Boolean(completed);
+}
+
+/**
  * Extend a held lease mid-job (long multi-stage handlers extend between
  * stages so a slow stage doesn't look abandoned). Fenced by worker ID:
  * only the current lease owner can extend.

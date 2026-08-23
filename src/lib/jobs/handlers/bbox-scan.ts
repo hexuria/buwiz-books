@@ -20,7 +20,7 @@ import { withOrgContext } from "@/db";
 import { documents } from "@/db/schema/documents";
 import { processingJobs } from "@/db/schema/inbox";
 import { aiComplete } from "@/lib/ai/facade";
-import { extendProcessingJobLease } from "@/lib/inbox/processing-job-lease";
+import { completeProcessingJob, extendProcessingJobLease } from "@/lib/inbox/processing-job-lease";
 import { createLogger } from "@/lib/logger";
 import { renderAndStorePdfPreviews } from "@/lib/pdf-preview";
 import { downloadFromR2, isR2Configured } from "@/lib/storage";
@@ -192,24 +192,8 @@ export async function processBboxScanJob(
     });
   }
 
-  const [completed] = await withOrgContext(orgId, "system", "admin", (tx) =>
-    tx
-      .update(processingJobs)
-      .set({
-        status: "completed",
-        lockedBy: null,
-        lockedUntil: null,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(processingJobs.id, job.id),
-          eq(processingJobs.status, "running"),
-          eq(processingJobs.lockedBy, workerId),
-        ),
-      )
-      .returning({ id: processingJobs.id }),
+  const completed = await withOrgContext(orgId, "system", "admin", (tx) =>
+    completeProcessingJob(tx, job.id, workerId),
   );
   if (!completed) return { processed: false, reason: "lease_lost", jobId: job.id };
 
