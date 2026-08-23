@@ -6,6 +6,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { accounts } from "../../db/schema/accounts";
+import { importedAccountActivity, inferImportSubtype } from "../../lib/coa/import-normalization";
 import { eq, and } from "drizzle-orm";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
 
@@ -230,16 +231,23 @@ export const importCategories = createServerFn({ method: "POST" })
               continue;
             }
 
-            // Create new category
+            // Create new category. Subtype is inferred (Bank/Credit Card
+            // name theirs; everything else gets the type's canonical bucket)
+            // so imported balance-sheet accounts stop vanishing from the
+            // cash-flow statement, and isActive is derived from status —
+            // "Inactive" used to import as status=inactive, isActive=TRUE.
+            const accountType = mapCsvTypeToEnum(row.type);
+            const status = mapCsvStatusToEnum(row.status);
             const [created] = await db
               .insert(accounts)
               .values({
                 organizationId: orgId,
                 name: row.categoryName,
                 accountNumber: row.categoryNumber || undefined,
-                accountType: mapCsvTypeToEnum(row.type),
-                status: mapCsvStatusToEnum(row.status),
-                isActive: row.status !== "Deactivated" && row.status !== "Archived",
+                accountType,
+                subtype: inferImportSubtype(row.type, accountType),
+                status,
+                isActive: importedAccountActivity(status),
                 description: row.description || undefined,
               })
               .returning({ id: accounts.id });
@@ -269,17 +277,27 @@ export const importCategories = createServerFn({ method: "POST" })
             .where(and(eq(accounts.name, row.parentName), eq(accounts.organizationId, orgId)))
             .limit(10);
 
+          // A parent must share the child's root type — nesting an expense
+          // under an asset breaks every type rollup — so filter before
+          // choosing, and keep the update org-scoped like every other write.
+          const childType = mapCsvTypeToEnum(row.type);
+          const typedParents = parents.filter(
+            (p) => p.accountType === childType && p.id !== categoryId,
+          );
           let parentId: string | undefined;
-          if (parents.length === 1) {
-            parentId = parents[0].id;
-          } else if (parents.length > 1 && row.parentCategoryNumber) {
+          if (typedParents.length === 1) {
+            parentId = typedParents[0].id;
+          } else if (typedParents.length > 1 && row.parentCategoryNumber) {
             // Disambiguate by number
-            const match = parents.find((p) => p.accountNumber === row.parentCategoryNumber);
+            const match = typedParents.find((p) => p.accountNumber === row.parentCategoryNumber);
             parentId = match?.id;
           }
 
           if (parentId) {
-            await db.update(accounts).set({ parentId }).where(eq(accounts.id, categoryId));
+            await db
+              .update(accounts)
+              .set({ parentId })
+              .where(and(eq(accounts.id, categoryId), eq(accounts.organizationId, orgId)));
           }
         }
 

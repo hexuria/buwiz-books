@@ -5,6 +5,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { categoryMappings } from "../../db/schema/category-mappings";
+import { assertMappingTargetAssignable } from "../../lib/coa/account-guards";
 import { eq, and } from "drizzle-orm";
 import { z } from "zod";
 import { withMutationPermissionOrgContext, withSessionOrgContext } from "../../lib/server-context";
@@ -91,6 +92,11 @@ export const upsertCategoryMapping = createServerFn({ method: "POST" }).handler(
       { routeKey: "category-mapping:upsert", limit: 60, windowMs: 60_000 },
       async ({ orgId, db }) => {
         const { mappingType, sourceKey, targetCategoryId } = upsertSchema.parse(rawData);
+
+        // The upsert used to accept free-form strings and any UUID: a typo'd
+        // sourceKey created an orphan row, and a wrong target silently
+        // rerouted the posting path the day the mapping was read.
+        await assertMappingTargetAssignable(db, orgId, mappingType, sourceKey, targetCategoryId);
 
         const [row] = await db
           .insert(categoryMappings)

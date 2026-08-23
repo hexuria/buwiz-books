@@ -5,6 +5,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import type { DbExecutor } from "../../db";
 import { accounts } from "../../db/schema/accounts";
+import { assertNotMappingTarget, assertValidParentAssignment } from "../../lib/coa/account-guards";
 import { financialAccounts } from "../../db/schema/financial-accounts";
 import { effectiveJournalPredicate, journalLines, journalHeaders } from "../../db/schema/journals";
 import { parties } from "../../db/schema/parties";
@@ -409,27 +410,17 @@ export const updateAccount = createServerFn({ method: "POST" })
           throw new Error("Cannot deactivate system account");
         }
 
-        // Cycle detection: prevent setting parent to self or any descendant
-        if (updates.parentId !== undefined && updates.parentId !== null) {
-          if (updates.parentId === id) {
-            throw new Error("Account cannot be its own parent");
-          }
-          let currentParentId: string | null = updates.parentId;
-          while (currentParentId) {
-            const [parent] = await db
-              .select({ parentId: accounts.parentId })
-              .from(accounts)
-              .where(and(eq(accounts.id, currentParentId), eq(accounts.organizationId, orgId)))
-              .limit(1);
+        // Checkpoint C7: a live mapping target cannot be deactivated — the
+        // mapping would dangle and the posting path that reads it would fail
+        // (or mis-post) on the next approval.
+        if (updates.isActive === false) {
+          await assertNotMappingTarget(db, orgId, id, "deactivate");
+        }
 
-            if (!parent) break;
-            if (parent.parentId === id) {
-              throw new Error(
-                "Cannot move account under its own descendant (would create a cycle)",
-              );
-            }
-            currentParentId = parent.parentId;
-          }
+        // Parent reassignment: org-owned, same root type, acyclic (the old
+        // walk silently broke out on a foreign id and then WROTE it).
+        if (updates.parentId !== undefined && updates.parentId !== null) {
+          await assertValidParentAssignment(db, orgId, id, updates.parentId, existing.accountType);
         }
 
         // If accountNumber is being explicitly cleared, auto-generate one
@@ -513,6 +504,10 @@ export const deleteAccount = createServerFn({ method: "POST" })
             "Cannot delete account with active children. Delete or deactivate children first.",
           );
         }
+
+        // Checkpoint C7: deletion is deactivation here, and a live mapping
+        // target must be repointed first for the same reason.
+        await assertNotMappingTarget(db, orgId, parsed.id, "delete");
 
         const [deleted] = await db
           .update(accounts)
