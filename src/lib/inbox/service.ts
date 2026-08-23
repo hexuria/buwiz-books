@@ -41,7 +41,13 @@ import {
 import { loadDuplicateEngineConfig, runDuplicateMatchingForSource } from "./duplicate-engine";
 import { preserveAuthoritativeEconomicEvent } from "./economic-event";
 import { evaluateBookRules, type BookRuleAccount } from "./rules";
-import { compareMoney, formatMoney, multiplyMoney, normalizeCurrency, sumMoney } from "./money";
+import {
+  compareMoney,
+  convertBalancedLines,
+  formatMoney,
+  normalizeCurrency,
+  sumMoney,
+} from "./money";
 import type { CreateCandidateInput, InboxServiceContext } from "./types";
 import { resolveFxRate } from "./fx";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
@@ -418,20 +424,25 @@ export async function createTransactionCandidate(
   });
   const exchangeRate = resolvedFx.rate;
 
-  const normalizedLines = input.lines.map((line, index) => {
+  const originalSides = input.lines.map((line, index) => {
     const originalDebit = line.originalDebit ?? line.debit ?? null;
     const originalCredit = line.originalCredit ?? line.credit ?? null;
     if (originalDebit && originalCredit) {
       throw new Error(`Line ${index + 1} cannot contain both a debit and a credit.`);
     }
-    return {
-      ...line,
-      originalDebit,
-      originalCredit,
-      functionalDebit: originalDebit ? multiplyMoney(originalDebit, exchangeRate) : null,
-      functionalCredit: originalCredit ? multiplyMoney(originalCredit, exchangeRate) : null,
-    };
+    return { originalDebit, originalCredit };
   });
+  // Convert with residual allocation: per-line rounding used to let the two
+  // functional sides drift by a few 1e-8 units on a balanced FX entry, which
+  // the balance check below then rejected on input the user could not fix.
+  const functionalSides = convertBalancedLines(originalSides, exchangeRate);
+  const normalizedLines = input.lines.map((line, index) => ({
+    ...line,
+    originalDebit: originalSides[index].originalDebit,
+    originalCredit: originalSides[index].originalCredit,
+    functionalDebit: functionalSides[index].functionalDebit,
+    functionalCredit: functionalSides[index].functionalCredit,
+  }));
   const originalDebits = sumMoney(normalizedLines.map((line) => line.originalDebit));
   const originalCredits = sumMoney(normalizedLines.map((line) => line.originalCredit));
   const functionalDebits = sumMoney(normalizedLines.map((line) => line.functionalDebit));

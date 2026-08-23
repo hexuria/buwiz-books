@@ -27,16 +27,35 @@ export type JournalStatus = (typeof JOURNAL_STATUSES)[number];
 /**
  * Journal line input (for create/update forms)
  */
-export const journalLineInputSchema = z.object({
-  accountId: z.string().uuid(),
-  debit: z.string().optional(),
-  credit: z.string().optional(),
-  lineDescription: z.string().optional(),
-  partyId: z.string().uuid().optional().nullable(),
-  departmentId: z.string().uuid().optional(),
-  locationId: z.string().uuid().optional(),
-  sortOrder: z.number().int().optional(),
-});
+const nonNegativeMoney = z
+  .string()
+  .regex(/^\d+(?:\.\d+)?$/, "Amount must be a non-negative number");
+
+export const journalLineInputSchema = z
+  .object({
+    accountId: z.string().uuid(),
+    debit: nonNegativeMoney.optional(),
+    credit: nonNegativeMoney.optional(),
+    lineDescription: z.string().optional(),
+    partyId: z.string().uuid().optional().nullable(),
+    departmentId: z.string().uuid().optional(),
+    locationId: z.string().uuid().optional(),
+    sortOrder: z.number().int().optional(),
+  })
+  // A line is one side of an entry. Negative amounts and debit-AND-credit on
+  // one line let offsetting garbage slip past the sum-only balance check and
+  // understate trial-balance columns (audit, ledger core).
+  .superRefine((line, ctx) => {
+    const hasDebit = line.debit != null && line.debit !== "" && Number(line.debit) !== 0;
+    const hasCredit = line.credit != null && line.credit !== "" && Number(line.credit) !== 0;
+    if (hasDebit && hasCredit) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "A journal line carries a debit OR a credit, never both",
+        path: ["credit"],
+      });
+    }
+  });
 
 export type JournalLineInput = z.infer<typeof journalLineInputSchema>;
 

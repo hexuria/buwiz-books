@@ -146,7 +146,12 @@ const createBillSchema = z.object({
     .array(
       z.object({
         description: z.string().optional(),
-        amount: z.string(), // stored as decimal string
+        // Stored as a decimal string; must be a positive number — a negative
+        // bill line strands the bill as unpayable (audit, AR/AP).
+        amount: z
+          .string()
+          .regex(/^\d+(?:\.\d+)?$/, "Line amount must be a non-negative number")
+          .refine((v) => Number(v) > 0, "Line amount must be greater than zero"),
         accountId: z.string().uuid(),
         departmentId: z.string().uuid().optional(),
         locationId: z.string().uuid().optional(),
@@ -1507,7 +1512,10 @@ const saveBillLineItemsSchema = z.object({
     .array(
       z.object({
         description: z.string().optional(),
-        amount: z.string(),
+        amount: z
+          .string()
+          .regex(/^\d+(?:\.\d+)?$/, "Line amount must be a non-negative number")
+          .refine((v) => Number(v) > 0, "Line amount must be greater than zero"),
         accountId: z.string().uuid(),
         sortOrder: z.number().optional(),
       }),

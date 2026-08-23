@@ -10,7 +10,7 @@ import { statementLines, reconciliations } from "../../../db/schema/reconciliati
 import { accounts } from "../../../db/schema/accounts";
 import { parties } from "../../../db/schema/parties";
 import { dimensions } from "../../../db/schema/dimensions";
-import { eq, desc, asc, and, inArray, or } from "drizzle-orm";
+import { eq, desc, asc, and, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { getClosedThrough, isDateLocked } from "../../../lib/period-close";
@@ -70,9 +70,13 @@ export const updateTransactionsBatch = createServerFn({ method: "POST" })
         // different GL account after the fact — the ledger silently disagrees
         // with anything already filed off it, and only an activity-log row
         // records that it happened. Dimension re-tagging (department/location)
-        // moves no money and stays allowed. Trigger 0039 enforces this
+        // moves no money and stays allowed. Trigger 0042 enforces this
         // underneath; this is the message that names the batch.
-        if (updates.accountId !== undefined) {
+        // Truthiness, not !== undefined: the write below is gated on
+        // `if (updates.accountId)`, so an explicit null (meaning "no
+        // category change") was rejected here for a write that would never
+        // have happened.
+        if (updates.accountId) {
           const posted = lockRows.filter((h) => h.status === "posted");
           if (posted.length > 0) {
             throw new Error(
@@ -255,7 +259,31 @@ export const updateTransactionsBatch = createServerFn({ method: "POST" })
           if (!targetAccount) throw new Error("Account is unavailable for this organization");
 
           if (lineAccountId) {
-            // Target the specific journal line whose current accountId matches lineAccountId
+            // Target the specific journal line whose current accountId
+            // matches lineAccountId. REFUSE any header where more than one
+            // line matches: a split journal posting twice to the same
+            // account would have BOTH lines repointed — double the intended
+            // amount moved (audit, ledger core).
+            const ambiguous = await db
+              .select({
+                journalHeaderId: journalLines.journalHeaderId,
+                matches: sql<number>`count(*)::int`,
+              })
+              .from(journalLines)
+              .where(
+                and(
+                  inArray(journalLines.journalHeaderId, validIds),
+                  eq(journalLines.accountId, lineAccountId),
+                ),
+              )
+              .groupBy(journalLines.journalHeaderId)
+              .having(sql`count(*) > 1`);
+            if (ambiguous.length > 0) {
+              throw new Error(
+                `${ambiguous.length} transaction(s) post to that account on more than one line — ` +
+                  `recategorizing would move both. Edit those transactions individually.`,
+              );
+            }
             await db
               .update(journalLines)
               .set({ accountId: updates.accountId })
