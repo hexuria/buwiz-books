@@ -17,6 +17,7 @@ import { claimNextProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { terminalizeProcessingJobFailure } from "@/lib/inbox/terminal-processing-failure";
 import { createLogger } from "@/lib/logger";
 import { processBboxScanJob } from "./handlers/bbox-scan";
+import { processTaxReferenceStalenessJob } from "./handlers/tax-reference-staleness";
 import { processCoaScaffoldJob } from "./handlers/coa-scaffold";
 import { processMatchAssistJob } from "./handlers/match-assist";
 import { processReflectionJob } from "./handlers/reflection";
@@ -56,6 +57,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   process_standalone_document: processStandaloneDocumentJob,
   statement_ocr: processStatementOcrJob,
   bbox_scan: processBboxScanJob,
+  tax_reference_staleness: processTaxReferenceStalenessJob,
   match_assist: processMatchAssistJob,
   ai_reflection: processReflectionJob,
   coa_scaffold: processCoaScaffoldJob,

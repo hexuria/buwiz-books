@@ -1,5 +1,7 @@
 /** Org-level tax identity beyond the employer TIN captured on /payroll. */
 import { createServerFn } from "@tanstack/react-start";
+import { taxReferenceDatasets } from "../../db/schema/tax-reference";
+import { buildStalenessReport } from "../../lib/tax/reference-data-staleness";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { orgTaxBranches, orgTaxProfiles } from "../../db/schema/tax-reference";
@@ -240,5 +242,24 @@ export const listDeadlineOverrides = createServerFn({ method: "GET" }).handler(a
         citation: filingDeadlineOverrides.citation,
       })
       .from(filingDeadlineOverrides);
+  });
+});
+
+/**
+ * Read-only staleness report over the global tax reference datasets, for the
+ * /tax/settings surface. The sweep job logs the same assessment on a
+ * schedule; this makes it visible to the person about to file.
+ */
+export const getTaxReferenceStaleness = createServerFn({ method: "GET" }).handler(async () => {
+  return withSessionOrgContext(async ({ db }) => {
+    const datasets = await db.select().from(taxReferenceDatasets);
+    return buildStalenessReport(
+      datasets.map((dataset) => ({
+        datasetKey: dataset.version,
+        lastVerifiedAt: dataset.lastVerifiedAt ? dataset.lastVerifiedAt.toISOString() : null,
+        ownerName: null,
+        asOf: new Date().toISOString(),
+      })),
+    );
   });
 });

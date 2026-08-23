@@ -592,3 +592,32 @@ describe("tax reference catalog wiring", () => {
     });
   });
 });
+
+describe("previously unreachable PH features are wired", () => {
+  // Both existed fully built with zero callers (audit): the 25-January
+  // refund obligation could never reach the ledger, and reference data could
+  // go stale with nothing anywhere raising it.
+  it("postAnnualization has a route caller", () => {
+    const route = readFileSync(resolve(REPO_ROOT, "src/routes/api/-payroll-runs.ts"), "utf8");
+    expect(route).toContain("postAnnualizationTrueUp");
+    expect(route).toContain("postAnnualization(");
+  });
+
+  it("the staleness sweep is a registered, schedulable job", () => {
+    const registry = readFileSync(resolve(REPO_ROOT, "src/lib/jobs/registry.ts"), "utf8");
+    expect(registry).toContain("tax_reference_staleness: processTaxReferenceStalenessJob");
+    const handler = readFileSync(
+      resolve(REPO_ROOT, "src/lib/jobs/handlers/tax-reference-staleness.ts"),
+      "utf8",
+    );
+    // The handler owns its completion (registry contract) — the audit found
+    // three handlers that never completed and re-ran on lease expiry.
+    expect(handler).toContain('status: "completed"');
+  });
+
+  it("staleness is visible where filings are prepared", () => {
+    const settings = readFileSync(resolve(REPO_ROOT, "src/routes/api/-tax-settings.ts"), "utf8");
+    expect(settings).toContain("getTaxReferenceStaleness");
+    expect(settings).toContain("buildStalenessReport");
+  });
+});

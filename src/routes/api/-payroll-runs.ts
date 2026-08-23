@@ -24,6 +24,7 @@ import {
 } from "../../lib/tax/assemble-payroll-filing-workspace";
 import { persistImportedRegister } from "../../lib/tax/persist-register-import";
 import { issuePayrollArtifacts } from "../../lib/tax/issue-payroll-artifacts";
+import { postAnnualization } from "../../lib/tax/annualization-posting";
 
 import { issueForm1601C } from "../../lib/tax/issue-1601c";
 import { computePayrollRun } from "../../lib/tax/payroll-run-service";
@@ -125,6 +126,47 @@ export const postPayrollFilingRun = createServerFn({ method: "POST" }).handler(
         const assembled = await assemblePayrollFilingWorkspace(db, orgId, run);
         assertWorkspaceAllowsPost(assembled.workspace);
         return db.transaction((tx) => postPayrollRun(tx, { organizationId: orgId, userId, runId }));
+      },
+    );
+  },
+);
+
+/**
+ * Post the year-end annualization true-up: refunds to over-withheld
+ * employees, collectible deficiencies, and the employer-absorbed shortfall.
+ *
+ * postAnnualization existed fully built and tested with NO caller — the
+ * 25-January refund obligation could never reach the ledger. The run is
+ * recomputed inside the same transaction (compute is idempotent by replay),
+ * so the entries posted are exactly the figures of the run as it stands.
+ */
+export const postAnnualizationTrueUp = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "journal",
+      "post",
+      { routeKey: "payroll:post-annualization", limit: 10, windowMs: 60_000 },
+      async ({ orgId, userId, db }) => {
+        const { runId } = z.object({ runId: z.string().uuid() }).parse(rawData);
+        return db.transaction(async (tx) => {
+          const [run] = await tx
+            .select()
+            .from(payrollRuns)
+            .where(and(eq(payrollRuns.id, runId), eq(payrollRuns.organizationId, orgId)));
+          if (!run) throw new Error("Payroll run not found");
+          if (!run.isAnnualizationRun) {
+            throw new Error("Only an annualization run posts the year-end true-up.");
+          }
+          const computed = await computePayrollRun(tx as never, orgId, runId);
+          const entries = computed.annualizationEntries ?? [];
+          const posted = await postAnnualization(tx, {
+            organizationId: orgId,
+            userId,
+            taxableYear: run.taxableYear,
+            entries,
+          });
+          return { runId, ...posted };
+        });
       },
     );
   },
