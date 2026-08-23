@@ -6,6 +6,7 @@ import { activityLogs } from "@/db/schema/activity-logs";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { and, asc, eq, ilike } from "drizzle-orm";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
+import { currentOrgDate } from "./org-calendar";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { resolveFunctionalCurrency } from "@/lib/functional-currency";
 import {
@@ -64,7 +65,7 @@ export async function createPaymentJournalEntry(
   const arAccountId = await resolveArAccount(db, orgId);
   const txnNumber = await generateTxnNumber(orgId, db);
   const functionalCurrency = await resolveFunctionalCurrency(db, orgId);
-  const transactionDate = effectiveDate ?? new Date().toISOString().split("T")[0];
+  const transactionDate = effectiveDate ?? (await currentOrgDate(db, orgId));
 
   // The accrual path guarded the period lock; this one did not, so a payment
   // could land in a closed month even though issuing the invoice could not.

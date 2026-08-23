@@ -3,6 +3,7 @@ import type { DbExecutor } from "@/db";
 import { activityLogs } from "@/db/schema/activity-logs";
 import { invoices } from "@/db/schema/invoices";
 import { createPaymentJournalEntry } from "@/lib/invoice-journal";
+import { currentOrgDate } from "./org-calendar";
 import { centsToMoney, moneyToCents } from "@/lib/money";
 import {
   beginAccountingOperation,
@@ -96,7 +97,7 @@ export async function recordManualInvoicePayment(db: DbExecutor, input: ManualIn
   // computed separately — the journal stamped its own new Date() internally
   // while the lineage row stamped another below — so a payment recorded across
   // midnight could carry two different dates for the same event.
-  const effectiveDate = input.paymentDate ?? new Date().toISOString().slice(0, 10);
+  const effectiveDate = input.paymentDate ?? (await currentOrgDate(db, input.organizationId));
   const journalHeaderId = await createPaymentJournalEntry(
     db,
     input.organizationId,

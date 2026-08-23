@@ -499,6 +499,11 @@ const transitionSchema = z.object({
   idempotencyKey: z.string().uuid().optional(),
   bankAccountId: z.string().uuid().optional(),
   paymentAmount: z.string().or(z.number()).optional(),
+  // See the bill twin: without this, payments are dated by entry day.
+  paymentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "paymentDate must be YYYY-MM-DD")
+    .optional(),
 });
 
 const JOURNAL_PRODUCING_INVOICE_STATUSES = new Set(["sent"]);
@@ -519,7 +524,7 @@ export const transitionInvoiceStatus = createServerFn({
     "update",
     { routeKey: "invoice:transition", limit: 30, windowMs: 60_000 },
     async ({ orgId, userId, db }) => {
-      const { invoiceId, newStatus, idempotencyKey, bankAccountId, paymentAmount } =
+      const { invoiceId, newStatus, idempotencyKey, bankAccountId, paymentAmount, paymentDate } =
         transitionSchema.parse(rawData);
 
       // Require bankAccountId when marking as paid or partial
@@ -544,6 +549,7 @@ export const transitionInvoiceStatus = createServerFn({
           requestedStatus: newStatus,
           bankAccountId: bankAccountId!,
           paymentAmount,
+          paymentDate,
           idempotencyKey: idempotencyKey!,
         });
       }

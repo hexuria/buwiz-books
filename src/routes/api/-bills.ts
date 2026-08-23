@@ -168,6 +168,14 @@ const transitionStatusSchema = z.object({
   paymentReference: z.string().optional(),
   bankAccountId: z.string().uuid().optional(), // Required when newStatus === 'paid' or 'partial'
   paymentAmount: z.string().or(z.number()).optional(), // For partial payments — omit for full balance
+  // The day the payment actually happened. Without it every manual payment
+  // was journaled on the day it was KEYED IN — a cheque cleared 28 July and
+  // entered 3 August posted into August, and the period-lock guard never
+  // fired because the date was always today.
+  paymentDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "paymentDate must be YYYY-MM-DD")
+    .optional(),
   ewtWithheld: z.string().optional(),
 });
 
@@ -699,6 +707,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           paymentReference,
           bankAccountId,
           paymentAmount,
+          paymentDate,
           ewtWithheld,
         } = parsed;
 
@@ -727,6 +736,7 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
             paymentAmount,
             paymentMethod,
             paymentReference,
+            paymentDate,
             idempotencyKey: idempotencyKey!,
             ewtWithheld,
           });

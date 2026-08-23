@@ -11,6 +11,8 @@
  * exists so the unauthenticated Nitro payment routes can post it too without duplicating logic.
  */
 import { and, eq, sql } from "drizzle-orm";
+import { firstOpenDateAfter, orgDateOf, resolveOrgTimezone } from "./org-calendar";
+import { isDateInLockedPeriod } from "./period-close";
 import { dbAdmin, type DbExecutor } from "@/db";
 import { invoices } from "@/db/schema/invoices";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
@@ -290,7 +292,23 @@ export async function recordCardInvoicePayment(
     }
     const occurredAt = input.occurredAt ?? new Date();
     if (Number.isNaN(occurredAt.getTime())) throw new Error("Payment date is invalid.");
-    const effectiveDate = occurredAt.toISOString().slice(0, 10);
+    // The capture day on the ORG's calendar, not UTC's — a 07:00 Manila
+    // capture on 1 September is 31 August in UTC, the prior period.
+    const effectiveDate = orgDateOf(occurredAt, await resolveOrgTimezone(tx, orgId));
+
+    // This was the only posting path with no period-close check. A captured
+    // payment is a fact — money moved — so a locked period never REJECTS it:
+    // the journal posts on the first open day instead, and the memo says so.
+    // The lineage below keeps the true capture date.
+    let postingDate = effectiveDate;
+    let lockNote = "";
+    {
+      const { locked, closedThrough } = await isDateInLockedPeriod(orgId, effectiveDate, tx);
+      if (locked && closedThrough) {
+        postingDate = firstOpenDateAfter(closedThrough);
+        lockNote = ` (captured ${effectiveDate}; posted ${postingDate} — period locked through ${closedThrough})`;
+      }
+    }
 
     // Idempotency: if a payment journal for this capture ref already exists, do nothing.
     const [existing] = await tx
@@ -358,10 +376,10 @@ export async function recordCardInvoicePayment(
       .values({
         organizationId: orgId,
         transactionNumber: txnNumber,
-        transactionDate: effectiveDate,
+        transactionDate: postingDate,
         transactionType: "pay_in",
         source: "payment",
-        memo: `Payment (${input.paidVia}): ${invoice.invoiceNumber}`,
+        memo: `Payment (${input.paidVia}): ${invoice.invoiceNumber}${lockNote}`,
         partyId: invoice.customerId,
         totalAmount: amount,
         functionalCurrency: baseCurrency,

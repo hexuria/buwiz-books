@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { currentOrgDate } from "./org-calendar";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { activityLogs } from "@/db/schema/activity-logs";
@@ -78,7 +79,7 @@ async function createBillPaymentJournal(
   const apAccountId = await resolveApAccount(db, input.organizationId);
   const transactionNumber = await allocateJournalTransactionNumber(input.organizationId, db);
   const functionalCurrency = await resolveFunctionalCurrency(db, input.organizationId);
-  const transactionDate = input.effectiveDate ?? new Date().toISOString().slice(0, 10);
+  const transactionDate = input.effectiveDate ?? (await currentOrgDate(db, input.organizationId));
 
   // A payment dated into a closed period is the same violation as a bill dated
   // into one; the accrual path above already guards it, this one did not.
@@ -260,7 +261,10 @@ export async function recordManualBillPayment(db: DbExecutor, input: ManualBillP
     idempotencyKey: input.idempotencyKey,
     requestPayloadHash: operation.payloadHash,
     amount: paymentAmount,
-    effectiveDate: new Date().toISOString().slice(0, 10),
+    // The journal and its lineage record must agree on WHEN the payment
+    // happened — the invoice path fixed exactly this and documented why; the
+    // bill copy kept stamping entry day.
+    effectiveDate: input.paymentDate ?? (await currentOrgDate(db, input.organizationId)),
     journalHeaderId: paymentJournalHeaderId,
   });
 
