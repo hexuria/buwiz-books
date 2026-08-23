@@ -132,6 +132,27 @@ transfer, bill, and invoice identities remain protected from silent rewriting.
 Rejecting a reviewable failure retires its unposted candidate and unshared
 origin evidence so it cannot reopen duplicate cases later.
 
+### Multi-recipient delivery and sender authentication
+
+An email addressed to the inbound addresses of **several organizations** is
+delivered to every matched organization (audit checkpoint C9) — each gets its
+own ingestion event, source record, Inbox item, and processing job, and the
+webhook response lists every delivery. Before this, only one arbitrary match
+received the document.
+
+Attachment downloads are bounded: the worker refuses attachments over 20 MB
+(the same ceiling as interactive uploads) and abandons downloads after 60
+seconds, recording the attachment as failed instead of pinning the worker.
+
+**Sender authentication (recorded decision):** authenticity of the webhook is
+established by the Resend/Svix signature; SPF/DKIM/DMARC evaluation of the
+original sender happens at Resend before the event ever reaches us. The app
+does NOT additionally verify the `from` address against a per-organization
+sender allowlist — every accepted email lands as an unposted candidate that a
+human must review, so a spoofed sender can at worst add review noise, never
+post to the ledger. Per-org sender allowlists are tracked in
+[docs/audit-backlog.md](audit-backlog.md), not implemented here.
+
 ## Current integration boundary
 
 This release includes the normalized source, connection, ingestion, evidence,
