@@ -58,7 +58,12 @@ export const loadMoreSchema = z.object({
 export const accountBalancesSchema = z.object({
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
-  statuses: z.array(z.enum(JOURNAL_STATUSES)).optional().default([]),
+  // Account BALANCES default to posted-only (audit D8): the old default of
+  // [] applied NO filter, so drafts and voided journals silently summed
+  // into every account balance unless the caller remembered to filter.
+  // The list endpoints keep [] — there, empty is the user's "all statuses"
+  // filter and rows carry status badges; a BALANCE has no badge.
+  statuses: z.array(z.enum(JOURNAL_STATUSES)).optional().default(["posted"]),
 });
 
 export const getTransactionSchema = z.object({
