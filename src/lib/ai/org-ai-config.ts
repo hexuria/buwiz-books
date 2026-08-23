@@ -19,7 +19,12 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import type { DbExecutor } from "../../db";
-import { organizationAiCredentials, organizationAiSettings } from "../../db/schema/ai";
+import {
+  organizationAiCredentials,
+  organizationAiSettings,
+  type AiAutonomyLevel,
+  type AiProposalKind,
+} from "../../db/schema/ai";
 import { decryptSecret, encryptSecret } from "../crypto";
 import { maskGeminiKeys, maskSecret } from "../mask-secret";
 import { getOrganizationSecrets } from "../org-secrets";
@@ -27,6 +32,13 @@ import { insertActivityLog } from "../insert-activity-log";
 import { createLogger } from "../logger";
 import { DEFAULT_CHAINS, DOCUMENT_TASKS, enforceOcrPolicy, type ChainEntry } from "./chains";
 import { invalidateOrgAiSettings, isProviderAllowed, type OrgAiSettings } from "./settings";
+import {
+  AUTONOMY_ALLOWED_KINDS,
+  STRUCTURAL_MANUAL_KINDS,
+  computeAutonomyEligibility,
+  shouldDemote,
+  type AutonomyEligibility,
+} from "./autonomy";
 import type { AiProvider } from "./errors";
 import { AI_TASK_CATEGORY, type AiTaskName } from "./types";
 import type { AITaskCategory } from "../ai-models";
@@ -305,6 +317,13 @@ export interface EffectiveChainView {
   hops: EffectiveChainHop[];
 }
 
+export interface AutonomyKindView {
+  kind: AiProposalKind;
+  /** Whether the org currently has auto-apply flipped on for this kind. */
+  enabled: boolean;
+  eligibility: AutonomyEligibility;
+}
+
 export interface OrgAiConfigView {
   providerAllowlist: AiProvider[] | null;
   taskChains: Record<string, ChainEntry[]> | null;
@@ -315,6 +334,11 @@ export interface OrgAiConfigView {
   updatedAt: Date | null;
   /** What will actually run per task, derived from DEFAULT_CHAINS + overrides. */
   effectiveChains: EffectiveChainView[];
+  /** Per-kind auto-apply state (allowlisted kinds only). */
+  autonomy: Record<string, string>;
+  autonomyKinds: AutonomyKindView[];
+  /** Kinds a human must always apply — shown disabled in the UI, with the reason. */
+  walledKinds: AiProposalKind[];
 }
 
 function parseChain(value: unknown): ChainEntry[] | null {
@@ -363,6 +387,15 @@ export async function getOrgAiConfig(db: DbExecutor, orgId: string): Promise<Org
   const row = await readSettingsRow(db, orgId);
   const settings = toOrgAiSettings(row);
 
+  const autonomyKinds: AutonomyKindView[] = [];
+  for (const kind of AUTONOMY_ALLOWED_KINDS) {
+    autonomyKinds.push({
+      kind,
+      enabled: settings.autonomy[kind] === AUTONOMY_MODE,
+      eligibility: await computeAutonomyEligibility(db, orgId, kind),
+    });
+  }
+
   const effectiveChains: EffectiveChainView[] = AI_TASK_NAMES.map((task) => {
     const override = parseChain(settings.taskChains?.[task]);
     const chain = enforceOcrPolicy(task, override ?? DEFAULT_CHAINS[task]);
@@ -393,6 +426,9 @@ export async function getOrgAiConfig(db: DbExecutor, orgId: string): Promise<Org
     killSwitch: settings.killSwitch,
     updatedAt: row?.updatedAt ?? null,
     effectiveChains,
+    autonomy: settings.autonomy,
+    autonomyKinds,
+    walledKinds: [...STRUCTURAL_MANUAL_KINDS],
   };
 }
 
@@ -405,6 +441,7 @@ export interface UpdateOrgAiConfigInput {
   monthlySpendCapUsd?: unknown;
   killSwitch?: unknown;
   taskAllowlist?: unknown;
+  autonomy?: unknown;
 }
 
 function sanitizeProviderAllowlist(value: unknown): AiProvider[] | null {
@@ -464,6 +501,34 @@ function sanitizeTaskAllowlist(value: unknown): string[] | null {
   if (!Array.isArray(value)) throw new Error("taskAllowlist must be an array");
   const list = [...new Set(value.filter(isAiTaskName))];
   return list.length > 0 ? list : null;
+}
+
+/** The only autonomy mode that exists. */
+export const AUTONOMY_MODE = "auto_apply_high_confidence";
+
+function sanitizeAutonomy(value: unknown): Record<string, string> {
+  if (value == null) return {};
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("autonomy must be an object keyed by proposal kind");
+  }
+  const out: Record<string, string> = {};
+  for (const [kind, mode] of Object.entries(value as Record<string, unknown>)) {
+    // Falsy mode = "off" for that kind — expressed by omission at rest.
+    if (mode == null || mode === false || mode === "") continue;
+    if (mode !== AUTONOMY_MODE) {
+      throw new Error(`Unsupported autonomy mode for "${kind}" — only "${AUTONOMY_MODE}" exists`);
+    }
+    if (STRUCTURAL_MANUAL_KINDS.has(kind as AiProposalKind)) {
+      throw new Error(`"${kind}" is always applied by a human and can never be automated`);
+    }
+    if (!AUTONOMY_ALLOWED_KINDS.has(kind as AiProposalKind)) {
+      throw new Error(
+        `"${kind}" cannot be auto-applied — approving it is the human feedback signal`,
+      );
+    }
+    out[kind] = AUTONOMY_MODE;
+  }
+  return out;
 }
 
 function sanitizeSpendCap(value: unknown): number | null {
@@ -535,6 +600,26 @@ export async function updateOrgAiConfig(
     patch.killSwitch = next;
     diffField(changes, "killSwitch", current.killSwitch, next);
   }
+  if (input.autonomy !== undefined) {
+    const next = sanitizeAutonomy(input.autonomy);
+    // Promotion is earned AND human-initiated: every kind being turned ON is
+    // re-verified against eligibility at the moment of the flip. Kinds
+    // already on stay on — narrowing belongs to the demotion loop.
+    for (const kind of Object.keys(next)) {
+      if (current.autonomy[kind] === AUTONOMY_MODE) continue;
+      const eligibility = await computeAutonomyEligibility(db, orgId, kind as AiProposalKind);
+      if (!eligibility.eligible) {
+        throw new Error(`Auto-apply for "${kind}" is not earned yet. ${eligibility.reason}`);
+      }
+    }
+    patch.autonomy = next;
+    diffField(
+      changes,
+      "autonomy",
+      Object.keys(current.autonomy).length > 0 ? current.autonomy : null,
+      Object.keys(next).length > 0 ? next : null,
+    );
+  }
 
   if (Object.keys(patch).length === 0) {
     throw new Error("No AI settings fields supplied");
@@ -565,4 +650,43 @@ export async function updateOrgAiConfig(
   );
 
   return { success: true, changes };
+}
+
+/**
+ * Auto-demotion: evaluated on every negative feedback row (reject/correct).
+ * Narrows authority only — flips a kind's auto-apply OFF when the trailing
+ * window's acceptance slips below the demotion floor, with an activity-log
+ * row attributing the flip to the user whose feedback tripped it. Promotion
+ * is never automatic.
+ */
+export async function demoteAutonomyIfSlipped(
+  db: DbExecutor,
+  orgId: string,
+  kind: AiProposalKind,
+  actorId: string,
+): Promise<boolean> {
+  const row = await readSettingsRow(db, orgId);
+  const autonomy: Record<string, AiAutonomyLevel> = { ...(row?.autonomy ?? {}) };
+  if (autonomy[kind] !== AUTONOMY_MODE) return false;
+  if (!(await shouldDemote(db, orgId, kind))) return false;
+
+  const before = { ...autonomy };
+  delete autonomy[kind];
+  await db
+    .update(organizationAiSettings)
+    .set({ autonomy, updatedAt: new Date() })
+    .where(eq(organizationAiSettings.organizationId, orgId));
+  invalidateOrgAiSettings(orgId);
+  await insertActivityLog(
+    {
+      orgId,
+      entityType: "ai_settings",
+      entityId: aiConfigEntityId(orgId),
+      action: "ai_autonomy_demoted",
+      actorId,
+      changes: { autonomy: { old: before, new: autonomy } },
+    },
+    db,
+  );
+  return true;
 }

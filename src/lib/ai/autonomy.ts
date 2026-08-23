@@ -44,6 +44,20 @@ export const STRUCTURAL_MANUAL_KINDS: ReadonlySet<AiProposalKind> = new Set<AiPr
 ]);
 
 /** Graduation criteria — deliberately strict; this widens write authority. */
+/**
+ * The only kinds an org can ever flip to auto-apply. A positive allowlist on
+ * purpose: "not structurally manual" is NOT sufficient. `prefill` and
+ * `create_txn` have acknowledge-only appliers — approving them writes nothing,
+ * the approval itself IS the human feedback label — so auto-applying them
+ * would produce no work while silently deleting the flywheel's training
+ * signal. A kind joins this set only when its applier performs a real,
+ * reversible write.
+ */
+export const AUTONOMY_ALLOWED_KINDS: ReadonlySet<AiProposalKind> = new Set<AiProposalKind>([
+  "document_type",
+  "category_mapping",
+]);
+
 export const AUTONOMY_CRITERIA = {
   minProposals: 200,
   minAcceptanceRate: 0.98,
@@ -81,6 +95,17 @@ export async function computeAutonomyEligibility(
       acceptanceRate: 0,
       remaining: 0,
       reason: `"${kind}" is always applied by a human — it can never be automated.`,
+    };
+  }
+
+  if (!AUTONOMY_ALLOWED_KINDS.has(kind)) {
+    return {
+      eligible: false,
+      total: 0,
+      accepted: 0,
+      acceptanceRate: 0,
+      remaining: 0,
+      reason: `Approving "${kind}" is itself the human feedback signal — auto-apply is not available for it.`,
     };
   }
 
@@ -164,6 +189,7 @@ export function canAutoApply(input: {
   threshold: number | null;
 }): boolean {
   if (STRUCTURAL_MANUAL_KINDS.has(input.kind)) return false;
+  if (!AUTONOMY_ALLOWED_KINDS.has(input.kind)) return false;
   if (input.autonomy[input.kind] !== "auto_apply_high_confidence") return false;
   if (input.confidence == null) return false;
   const threshold = input.threshold ?? 0.9;

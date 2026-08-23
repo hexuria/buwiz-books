@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { aiComplete } from "../../lib/ai/facade";
 import { classifyDocumentOutputSchema } from "../../lib/ai/schemas/classify-document";
 import { normalizeConfidence } from "../../lib/ai/confidence";
-import { createProposal } from "../../lib/ai/proposals";
+import { createProposalWithAutonomy } from "../../lib/ai/proposals";
 import { documents } from "../../db/schema/documents";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -83,21 +83,29 @@ export const classifyDocument = createServerFn({ method: "POST" })
             result.documentType !== "other" && confidence01 >= CONFIDENCE_THRESHOLD;
 
           let proposalId: string | undefined;
+          let autoApplied = false;
           if (proposable) {
-            const proposal = await createProposal(db, {
-              orgId,
-              kind: "document_type",
-              payload: {
-                documentId: doc.id,
-                documentType: result.documentType as ClassifiedDocumentType & string,
+            // Autonomy-aware: if the org has EARNED auto-apply for
+            // document_type (see src/lib/ai/autonomy.ts), a proposal above
+            // the org threshold applies itself under the acting user's own
+            // permissions; otherwise it waits for human approval as before.
+            const created = await createProposalWithAutonomy(
+              { orgId, userId, role, db },
+              {
+                kind: "document_type",
+                payload: {
+                  documentId: doc.id,
+                  documentType: result.documentType as ClassifiedDocumentType & string,
+                  confidence: confidence01,
+                  reasoning: result.reasoning,
+                },
                 confidence: confidence01,
-                reasoning: result.reasoning,
+                sourceRef: { entityType: "document", entityId: doc.id },
+                createdBy: userId,
               },
-              confidence: confidence01,
-              sourceRef: { entityType: "document", entityId: doc.id },
-              createdBy: userId,
-            });
-            proposalId = proposal.id;
+            );
+            proposalId = created.proposal.id;
+            autoApplied = created.autoApplied;
           }
 
           logger.info("Classified document", {
@@ -108,7 +116,7 @@ export const classifyDocument = createServerFn({ method: "POST" })
             proposalId,
           });
 
-          return { ...result, applied: false, proposalId };
+          return { ...result, applied: autoApplied, proposalId };
         } catch (error) {
           logger.error("Document classification failed", {
             error,

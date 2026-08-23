@@ -313,7 +313,7 @@ export const uploadDocument = createServerFn({ method: "POST" })
       "document",
       "upload",
       { routeKey: "document:upload", limit: 20, windowMs: 300_000 },
-      async ({ userId, orgId, db }) => {
+      async ({ userId, orgId, db, role }) => {
         const data = uploadDocumentSchema.parse(rawData);
 
         const fileBuffer = Buffer.from(data.fileBase64, "base64");
@@ -356,6 +356,7 @@ export const uploadDocument = createServerFn({ method: "POST" })
           runIngestTriage({
             orgId,
             userId,
+            role,
             documentId: result.document.id,
             filename: data.filename,
             mimeType: data.contentType,
