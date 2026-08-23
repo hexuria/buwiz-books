@@ -25,7 +25,14 @@ import {
 import { EXPORT_VERSION } from "../../lib/export-versions";
 import type { ExportMeta, VersionedExportFile } from "../../lib/export-versions";
 // Migration engine — used by import flow to handle legacy v1 files
-// import { migrateToLatest } from "../../lib/export-migrations";
+import { migrateToLatest } from "../../lib/export-migrations";
+import {
+  exportPhEntity,
+  importPhEntity,
+  phRowSchema,
+  phSpecFor,
+  PH_ENTITY_KEYS,
+} from "../../lib/export-ph";
 
 // ============================================================================
 // Types
@@ -97,7 +104,24 @@ const ENTITY_ENUM = [
   "invoices",
   "numberSequences",
   "orgSettings",
+  // v3: Philippine tax tables — registry-driven via export-ph.ts.
+  "phOrgTaxProfile",
+  "phOrgTaxBranches",
+  "phTaxYearElections",
+  "phTaxRegistrations",
+  "phPartyTaxProfiles",
+  "phPreviousEmployer2316",
+  "phWithholdingPayments",
+  "phTaxCertificates",
+  "phPayrollRuns",
+  "phPayrollLines",
+  "phPayrollYearState",
+  "phComputedReturns",
 ] as const;
+
+// Every registry key must be present in ENTITY_ENUM (wiring-tested).
+const _PH_KEYS_IN_ENUM: readonly string[] = PH_ENTITY_KEYS;
+void _PH_KEYS_IN_ENUM;
 
 const exportDataSchema = z.object({
   entities: z.array(z.enum(ENTITY_ENUM)),
@@ -116,6 +140,13 @@ export const exportData = createServerFn({ method: "POST" }).handler(
       const result: Record<string, any> = {};
 
       for (const entity of entities) {
+        // Philippine tax tables are schema-driven (export-ph.ts) — one
+        // registry entry covers projection, validation and import.
+        const phSpec = phSpecFor(entity);
+        if (phSpec) {
+          result[entity] = await exportPhEntity(db, orgId, phSpec);
+          continue;
+        }
         switch (entity) {
           case "banks": {
             const conditions = [eq(financialAccounts.organizationId, orgId)];
@@ -815,6 +846,8 @@ const productRowSchema = z.object({
 });
 
 function getRowSchema(entityType: string) {
+  const phSpec = phSpecFor(entityType);
+  if (phSpec) return phRowSchema(phSpec);
   switch (entityType) {
     case "banks":
       return bankRowSchema;
@@ -898,15 +931,18 @@ export const validateImport = createServerFn({ method: "POST" }).handler(
         rows = parseCsvContent(content);
       } else {
         const parsed = JSON.parse(content);
-        // Support v2 format { meta, data: { type: [...] } }, v1 format { entities: { type: [...] } }, or flat array
         if (Array.isArray(parsed)) {
           rows = parsed;
-        } else if (parsed?.data?.[entityType]) {
-          rows = Array.isArray(parsed.data[entityType]) ? parsed.data[entityType] : [];
-        } else if (parsed?.entities?.[entityType]) {
-          rows = parsed.entities[entityType];
         } else {
-          rows = [];
+          // Full export files go through the migration engine: legacy v1 and
+          // every older versioned format are lifted to the current version,
+          // and a NEWER file refuses loudly instead of half-importing (the
+          // engine used to be imported only in a comment — dead code).
+          const migrated = migrateToLatest(parsed);
+          const data = migrated.data as Record<string, unknown>;
+          rows = Array.isArray(data?.[entityType])
+            ? (data[entityType] as Record<string, any>[])
+            : [];
         }
       }
 
@@ -1011,6 +1047,17 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
           }
           return null;
         };
+
+        const phSpec = phSpecFor(entityType);
+        if (phSpec) {
+          results.push(...(await importPhEntity(db, orgId, phSpec, rows)));
+          return {
+            imported: results.filter((r) => r.success && !r.error).length,
+            skipped: results.filter((r) => r.success && r.error).length,
+            failed: results.filter((r) => !r.success).length,
+            results,
+          };
+        }
 
         switch (entityType) {
           case "banks": {
@@ -1363,6 +1410,17 @@ export const listExportableRecords = createServerFn({ method: "GET" }).handler(
     // which is the one thing that grant exists to prevent.
     return withPermissionOrgContext("report", "export", async ({ orgId, db }) => {
       const { entityType, includeInactive } = listExportableSchema.parse(rawData);
+
+      const phSpec = phSpecFor(entityType);
+      if (phSpec) {
+        const rows = await exportPhEntity(db, orgId, phSpec);
+        return rows.map((row, index) => ({
+          id: String(index),
+          name: String(row[phSpec.display] ?? phSpec.label),
+          subtitle: null as string | null,
+          extra: null as string | null,
+        }));
+      }
 
       switch (entityType) {
         case "banks": {

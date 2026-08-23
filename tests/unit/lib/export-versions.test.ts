@@ -98,8 +98,9 @@ describe("export-versions", () => {
       expect(EXPORT_VERSION).toBeGreaterThan(0);
     });
 
-    it("is currently 2", () => {
-      expect(EXPORT_VERSION).toBe(2);
+    // P5: v3 adds the PH tax entities to the registry.
+    it("is currently 3", () => {
+      expect(EXPORT_VERSION).toBe(3);
     });
   });
 });
