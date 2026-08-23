@@ -62,7 +62,15 @@ export type PayrollRunStatus = "draft" | "imported" | "computed" | "acknowledged
  * conventions. Comparing per-period would manufacture variances that are not
  * errors.
  */
-export type ContributionCheckStatus = "checked" | "skipped_non_monthly" | "skipped_not_reported";
+export type ContributionCheckStatus =
+  | "checked"
+  | "skipped_non_monthly"
+  | "skipped_not_reported"
+  // Semi-monthly first half: SSS/PhilHealth/Pag-IBIG are MONTHLY obligations,
+  // so the expected figures are computed and recognized on the run that
+  // completes the month; the opening half records that the check is pending
+  // rather than silently skipped.
+  | "deferred_month_end";
 
 /**
  * A previous employer's year-to-date figures, from the employee's BIR 2316.
@@ -176,6 +184,19 @@ export const payrollEmployeeYearState = pgTable(
 
     /** Payroll periods paid at THIS employer this year — the divisor's other half. */
     periodsElapsed: integer("periods_elapsed").default(0).notNull(),
+    /**
+     * Immutable opening balance for organizations migrating mid-year: history
+     * that exists in no payroll_lines row. The replay-based compute uses these
+     * as its base and NEVER writes them; the plain ytd/periods columns above
+     * are derived output, rewritten on every compute.
+     */
+    openingPeriodsElapsed: integer("opening_periods_elapsed"),
+    openingYtdTaxableRegular: numeric("opening_ytd_taxable_regular", { precision: 20, scale: 8 }),
+    openingYtdTaxableSupplementary: numeric("opening_ytd_taxable_supplementary", {
+      precision: 20,
+      scale: 8,
+    }),
+    openingYtdTaxWithheld: numeric("opening_ytd_tax_withheld", { precision: 20, scale: 8 }),
 
     /**
      * Opening-balance intake marker. Rows carried in from a prior system are

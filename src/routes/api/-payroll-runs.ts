@@ -98,7 +98,10 @@ export const computePayrollFilingRun = createServerFn({ method: "POST" }).handle
         if (run.filingReference || run.status === "locked") {
           throw new Error("A filed run is not recomputed. Amend it.");
         }
-        return computePayrollRun(db as never, orgId, runId);
+        // One transaction for the whole compute: MissingPreviousEmployerError
+        // must leave nothing behind, and the per-line updates plus the
+        // year-state upserts are one logical write.
+        return db.transaction((tx) => computePayrollRun(tx as never, orgId, runId));
       },
     );
   },

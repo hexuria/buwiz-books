@@ -21,7 +21,7 @@
  * before February produces a different — wrong — answer. This function
  * therefore computes ONE run and requires that earlier runs already have.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { asOf } from "./as-of";
 import { computeStatutoryContributions } from "./contributions";
@@ -88,39 +88,110 @@ export interface ComputePayrollRunResult {
 }
 
 /**
- * Check the register's statutory contributions against the schedule.
+ * Statutory-contribution check.
  *
- * Runs only on MONTHLY periods. SSS, PhilHealth and Pag-IBIG are monthly
- * obligations, so a semi-monthly or weekly period carries a fraction of the
- * monthly amount and employers split it by differing conventions — comparing
- * per-period would manufacture variances that are not errors. Skipping is
- * recorded rather than silent, so an unchecked line never reads as a clean one.
+ * SSS, PhilHealth and Pag-IBIG are MONTHLY obligations. For a monthly run the
+ * check runs directly. For semi-monthly, the expected figures are computed on
+ * the MONTH's combined lines and recognized on the run that completes the
+ * month (checkpoint C4) — the opening half records "deferred_month_end"
+ * rather than silently skipping, which previously wrote NULL employer shares
+ * and posted zero employer contribution expense for the most common PH
+ * cadence. Other cadences remain recorded skips.
+ *
+ * The MSC base EXCLUDES 13th month pay, de minimis and retirement/separation
+ * pay: bracketing December's 13th month into the salary credit overstated
+ * both shares. PhilHealth's base is basic salary — including the MWE basic
+ * wage, which the old `line.basicSalary` read missed entirely for
+ * minimum-wage earners.
  */
+type ContributionLineSlice = Pick<
+  typeof payrollLines.$inferSelect,
+  | "basicSalary"
+  | "basicSalaryMwe"
+  | "holidayPayMwe"
+  | "overtimePayMwe"
+  | "nightShiftDifferentialMwe"
+  | "hazardPayMwe"
+  | "representationAllowance"
+  | "transportationAllowance"
+  | "costOfLivingAllowance"
+  | "fixedHousingAllowance"
+  | "otherTaxableRegular"
+  | "commission"
+  | "profitSharing"
+  | "directorsFees"
+  | "overtimePay"
+  | "hazardPay"
+  | "otherTaxableSupplementary"
+  | "sssEmployeeShare"
+  | "philHealthEmployeeShare"
+  | "pagIbigEmployeeShare"
+>;
+
+function contributionBase(lines: ContributionLineSlice[]): {
+  msc: ScaledMoney;
+  basic: ScaledMoney;
+} {
+  let msc = toScaled("0");
+  let basic = toScaled("0");
+  const compColumns: Array<keyof ContributionLineSlice> = [
+    "basicSalary",
+    "basicSalaryMwe",
+    "holidayPayMwe",
+    "overtimePayMwe",
+    "nightShiftDifferentialMwe",
+    "hazardPayMwe",
+    "representationAllowance",
+    "transportationAllowance",
+    "costOfLivingAllowance",
+    "fixedHousingAllowance",
+    "otherTaxableRegular",
+    "commission",
+    "profitSharing",
+    "directorsFees",
+    "overtimePay",
+    "hazardPay",
+    "otherTaxableSupplementary",
+  ];
+  for (const line of lines) {
+    for (const column of compColumns) {
+      msc = (msc + toScaled((line[column] as string | null) ?? "0")) as ScaledMoney;
+    }
+    basic = (basic +
+      toScaled(line.basicSalary ?? "0") +
+      toScaled(line.basicSalaryMwe ?? "0")) as ScaledMoney;
+  }
+  return { msc, basic };
+}
+
 function checkContributions(
   line: typeof payrollLines.$inferSelect,
   period: PayrollPeriod,
-  grossCompensation: ScaledMoney,
+  monthSibling: typeof payrollLines.$inferSelect | null,
 ): {
   status: ContributionCheckStatus;
   expected?: ReturnType<typeof computeStatutoryContributions>;
   variance?: ScaledMoney;
   philHealthBase?: string;
 } {
-  if (period !== "monthly") return { status: "skipped_non_monthly" };
+  const isSemiMonthly = period === "semi_monthly";
+  if (period !== "monthly" && !isSemiMonthly) return { status: "skipped_non_monthly" };
+  if (isSemiMonthly && monthSibling === undefined) return { status: "skipped_non_monthly" };
+  if (isSemiMonthly && monthSibling === null) return { status: "deferred_month_end" };
 
-  const reportedParts = [
-    line.sssEmployeeShare,
-    line.philHealthEmployeeShare,
-    line.pagIbigEmployeeShare,
-  ];
+  const monthLines = isSemiMonthly ? [monthSibling!, line] : [line];
+  const reportedParts = monthLines.flatMap((l) => [
+    l.sssEmployeeShare,
+    l.philHealthEmployeeShare,
+    l.pagIbigEmployeeShare,
+  ]);
   // Nothing reported is not agreement — there is simply nothing to compare.
   if (reportedParts.every((p) => p == null)) return { status: "skipped_not_reported" };
 
-  // PhilHealth's base is the fixed basic rate, NOT gross compensation: it
-  // excludes commission, overtime, allowances, 13th month and bonuses.
-  const philHealthBase = line.basicSalary;
+  const base = contributionBase(monthLines);
+  const philHealthBase = toPesoString(base.basic);
   const expected = computeStatutoryContributions({
-    monthlyCompensation: toPesoString(grossCompensation),
+    monthlyCompensation: toPesoString(base.msc),
     monthlyBasicSalary: philHealthBase,
   });
 
@@ -201,11 +272,21 @@ function toCompensationInput(line: typeof payrollLines.$inferSelect) {
 }
 
 /**
- * Compute one payroll run: engine figures, variances, and the advanced state.
+ * Compute one payroll run: engine figures, variances, and the year state.
  *
- * Idempotent. Recomputing a run rewrites its computed figures and rebuilds the
- * year-state from the prior period's, so a corrected import can simply be
- * recomputed rather than unwound.
+ * IDEMPOTENT BY REPLAY. The starting state for every employee is rebuilt by
+ * folding the engine over the year's computed runs with a LOWER period index
+ * — never read from the persisted row, which already contains this run's own
+ * contribution after a first compute. The old advance-what-is-persisted
+ * design double-counted on every recompute: periodsElapsed grew, YTD doubled,
+ * and the cumulative-average divisor drifted for the rest of the year.
+ * Replay is O(periods²) in the worst case — at most 24 periods, immaterial —
+ * and makes recomputing ANY period safe in any order.
+ *
+ * After computing, the persisted year-state row is rebuilt THROUGH EVERY
+ * computed period of the year (including this one), so readers like the
+ * filing workspace always see "YTD through the latest computed period", even
+ * after a mid-year recompute.
  */
 export async function computePayrollRun(
   db: Db,
@@ -235,6 +316,142 @@ export async function computePayrollRun(
     )
     .orderBy(asc(payrollLines.employeePartyId));
 
+  // Every computed run of the year EXCEPT this one, with its lines, ordered
+  // by period index — the replay source.
+  const priorRuns = await db
+    .select()
+    .from(payrollRuns)
+    .where(
+      and(
+        eq(payrollRuns.organizationId, organizationId),
+        eq(payrollRuns.taxableYear, run.taxableYear),
+        isNotNull(payrollRuns.computedAt),
+        ne(payrollRuns.id, run.id),
+      ),
+    )
+    .orderBy(asc(payrollRuns.periodIndex));
+  const priorLinesByRun = new Map<string, Array<typeof payrollLines.$inferSelect>>();
+  if (priorRuns.length > 0) {
+    const priorLines = await db
+      .select()
+      .from(payrollLines)
+      .where(
+        and(
+          eq(payrollLines.organizationId, organizationId),
+          inArray(
+            payrollLines.payrollRunId,
+            priorRuns.map((r) => r.id),
+          ),
+        ),
+      );
+    for (const line of priorLines) {
+      const bucket = priorLinesByRun.get(line.payrollRunId) ?? [];
+      bucket.push(line);
+      priorLinesByRun.set(line.payrollRunId, bucket);
+    }
+  }
+  const bracketCache = new Map<string, Bracket[]>();
+  const bracketsFor = async (period: PayrollPeriod, periodEnd: string): Promise<Bracket[]> => {
+    const key = `${period}|${periodEnd}`;
+    let cached = bracketCache.get(key);
+    if (!cached) {
+      cached = await loadBrackets(db, period, periodEnd);
+      bracketCache.set(key, cached);
+    }
+    return cached;
+  };
+
+  /** Fold the engine over the employee's lines in runs with periodIndex below the bound. */
+  // Opening balances: an org migrating mid-year has history that exists in
+  // no payroll_lines row. The opening_* columns are immutable inputs written
+  // by the import path; the replay starts from them, and the engine's own
+  // persistence never touches them.
+  const openingRows = await db
+    .select()
+    .from(payrollEmployeeYearState)
+    .where(
+      and(
+        eq(payrollEmployeeYearState.organizationId, organizationId),
+        eq(payrollEmployeeYearState.taxableYear, run.taxableYear),
+        isNotNull(payrollEmployeeYearState.openingPeriodsElapsed),
+      ),
+    );
+  const openingByEmployee = new Map(openingRows.map((row) => [row.employeePartyId, row]));
+
+  const replayState = async (
+    employeePartyId: string,
+    previousEmployer: EmployeeYearState["previousEmployer"],
+    beforePeriodIndex: number,
+  ): Promise<EmployeeYearState> => {
+    const opening = openingByEmployee.get(employeePartyId);
+    let state: EmployeeYearState = {
+      taxableYear: run.taxableYear,
+      method: opening?.withholdingMethod ?? "regular",
+      latchedReason: (opening?.latchedReason as TriggerReason | null) ?? null,
+      latchedAtPeriodEnd: opening?.latchedAtPeriodEnd ?? null,
+      ytdTaxableRegular: opening?.openingYtdTaxableRegular ?? "0",
+      ytdTaxableSupplementary: opening?.openingYtdTaxableSupplementary ?? "0",
+      ytdTaxWithheld: opening?.openingYtdTaxWithheld ?? "0",
+      periodsElapsed: opening?.openingPeriodsElapsed ?? 0,
+      previousEmployer,
+    };
+    for (const prior of priorRuns) {
+      if (prior.periodIndex >= beforePeriodIndex) continue;
+      const priorLine = (priorLinesByRun.get(prior.id) ?? []).find(
+        (l) => l.employeePartyId === employeePartyId,
+      );
+      if (!priorLine) continue;
+      const priorResult = runWithholding({
+        compensation: toCompensationInput(priorLine),
+        period: prior.payrollPeriod,
+        periodEnd: prior.periodEnd,
+        brackets: await bracketsFor(prior.payrollPeriod, prior.periodEnd),
+        state,
+        annualize: prior.isAnnualizationRun
+          ? { trigger: "year_end", annualBrackets: await bracketsFor("annual", prior.periodEnd) }
+          : undefined,
+      });
+      state = priorResult.nextState;
+    }
+    return state;
+  };
+
+  // Month-completing pairing for semi-monthly contribution checks: the
+  // sibling is the immediately preceding period index. `undefined` marks a
+  // first half (defer); a Map entry marks a completing half.
+  const isMonthCompleting = run.payrollPeriod === "semi_monthly" && run.periodIndex % 2 === 0;
+  const siblingLines = new Map<string, typeof payrollLines.$inferSelect>();
+  if (isMonthCompleting) {
+    const sibling = priorRuns.find((r) => r.periodIndex === run.periodIndex - 1);
+    for (const line of sibling ? (priorLinesByRun.get(sibling.id) ?? []) : []) {
+      siblingLines.set(line.employeePartyId, line);
+    }
+  }
+
+  // ── Pass 1: rebuild every starting state; collect gaps BEFORE any write. ──
+  const startingStates = new Map<string, EmployeeYearState>();
+  const missingPrevious: string[] = [];
+  for (const line of lines) {
+    const previousEmployer = await loadPreviousEmployer(
+      db,
+      organizationId,
+      line.employeePartyId,
+      run.taxableYear,
+    );
+    const state = await replayState(line.employeePartyId, previousEmployer, run.periodIndex);
+    // A mid-year first appearance with no prior employer on file cannot be
+    // computed correctly: the cumulative method's numerator and divisor are
+    // both short. The old check required a persisted year-state row and so
+    // could NEVER fire for a first-time employee — the one case it existed
+    // for (DECISIONS D7).
+    if (run.periodIndex > 1 && state.periodsElapsed === 0 && previousEmployer === null) {
+      missingPrevious.push(line.employeePartyId);
+      continue;
+    }
+    startingStates.set(line.employeePartyId, state);
+  }
+  if (missingPrevious.length > 0) throw new MissingPreviousEmployerError(missingPrevious.length);
+
   let variances = 0;
   let totalVariance = toScaled("0");
   let totalComputed = toScaled("0");
@@ -242,28 +459,10 @@ export async function computePayrollRun(
   let anyReported = false;
   let contributionVariances = 0;
   let contributionChecksSkipped = 0;
-  const missingPrevious: string[] = [];
 
+  // ── Pass 2: compute and persist the lines. ──
   for (const line of lines) {
-    const state = await loadOrCreateYearState(
-      db,
-      organizationId,
-      line.employeePartyId,
-      run.taxableYear,
-    );
-
-    // A mid-year hire whose prior 2316 is missing cannot be computed correctly:
-    // the cumulative method's numerator and divisor are both short. Collect
-    // them all rather than failing on the first, so one pass tells the
-    // bookkeeper every employee to chase.
-    if (
-      state.previousEmployer === null &&
-      (await hasPriorEmployerGap(db, organizationId, line, run))
-    ) {
-      missingPrevious.push(line.employeePartyId);
-      continue;
-    }
-
+    const state = startingStates.get(line.employeePartyId)!;
     const result = runWithholding({
       compensation: toCompensationInput(line),
       period: run.payrollPeriod,
@@ -291,13 +490,16 @@ export async function computePayrollRun(
     }
 
     // Independently of whether the tax arithmetic is right, are the deductions
-    // it was computed on right? A wrong contribution makes the taxable base
-    // wrong, and because the engine nets the REPORTED figure the tax variance
-    // would read zero — both wrong, consistently.
+    // it was computed on right? Monthly checks directly; semi-monthly on the
+    // month-completing run over both halves (checkpoint C4).
     const contribution = checkContributions(
       line,
       run.payrollPeriod,
-      result.segregated.grossCompensation,
+      run.payrollPeriod === "semi_monthly"
+        ? isMonthCompleting
+          ? (siblingLines.get(line.employeePartyId) ?? null)
+          : null
+        : null,
     );
     if (contribution.status === "checked") {
       if (contribution.variance !== 0n) contributionVariances += 1;
@@ -328,22 +530,34 @@ export async function computePayrollRun(
         updatedAt: new Date(),
       })
       .where(eq(payrollLines.id, line.id));
-
-    await persistYearState(
-      db,
-      organizationId,
-      line.employeePartyId,
-      run.taxableYear,
-      result.nextState,
-    );
   }
-
-  if (missingPrevious.length > 0) throw new MissingPreviousEmployerError(missingPrevious.length);
 
   await db
     .update(payrollRuns)
     .set({ status: "computed", computedAt: new Date(), updatedAt: new Date() })
     .where(eq(payrollRuns.id, runId));
+
+  // ── Pass 3: persist year state as "through the latest computed period". ──
+  // Replayed over EVERY computed run including this one (this run's lines now
+  // carry their fresh figures), so a recompute of June with December already
+  // computed leaves the row describing the whole computed year, not June.
+  priorRuns.push({ ...run, computedAt: new Date() });
+  priorRuns.sort((a, b) => a.periodIndex - b.periodIndex);
+  priorLinesByRun.set(run.id, lines);
+  for (const line of lines) {
+    const previousEmployer = await loadPreviousEmployer(
+      db,
+      organizationId,
+      line.employeePartyId,
+      run.taxableYear,
+    );
+    const finalState = await replayState(
+      line.employeePartyId,
+      previousEmployer,
+      Number.MAX_SAFE_INTEGER,
+    );
+    await persistYearState(db, organizationId, line.employeePartyId, run.taxableYear, finalState);
+  }
 
   return {
     runId,
@@ -357,55 +571,12 @@ export async function computePayrollRun(
   };
 }
 
-/**
- * Whether this employee looks like a mid-year hire with prior employment but no
- * 2316 on file.
- *
- * Deliberately conservative: it only fires when a year-state row exists showing
- * no periods yet elapsed AND the run is not the year's first period. An
- * employee genuinely starting their first job mid-year has no prior employer
- * and must not be blocked.
- */
-async function hasPriorEmployerGap(
-  db: Db,
-  organizationId: string,
-  line: typeof payrollLines.$inferSelect,
-  run: typeof payrollRuns.$inferSelect,
-): Promise<boolean> {
-  if (run.periodIndex <= 1) return false;
-  const [state] = await db
-    .select()
-    .from(payrollEmployeeYearState)
-    .where(
-      and(
-        eq(payrollEmployeeYearState.organizationId, organizationId),
-        eq(payrollEmployeeYearState.employeePartyId, line.employeePartyId),
-        eq(payrollEmployeeYearState.taxableYear, run.taxableYear),
-      ),
-    );
-  // Nothing accumulated yet in a year already underway means the employee
-  // joined mid-year. Whether they had a prior employer is a question only the
-  // 2316 answers — so the run stops and asks.
-  return state != null && state.periodsElapsed === 0 && Number(state.ytdTaxableRegular) === 0;
-}
-
-async function loadOrCreateYearState(
+async function loadPreviousEmployer(
   db: Db,
   organizationId: string,
   employeePartyId: string,
   taxableYear: number,
-): Promise<EmployeeYearState> {
-  const [row] = await db
-    .select()
-    .from(payrollEmployeeYearState)
-    .where(
-      and(
-        eq(payrollEmployeeYearState.organizationId, organizationId),
-        eq(payrollEmployeeYearState.employeePartyId, employeePartyId),
-        eq(payrollEmployeeYearState.taxableYear, taxableYear),
-      ),
-    );
-
+): Promise<EmployeeYearState["previousEmployer"]> {
   const [prior] = await db
     .select()
     .from(previousEmployer2316)
@@ -416,43 +587,15 @@ async function loadOrCreateYearState(
         eq(previousEmployer2316.taxableYear, taxableYear),
       ),
     );
-
-  const previousEmployer = prior
-    ? {
-        taxableCompensation: prior.taxableCompensation,
-        taxWithheld: prior.taxWithheld,
-        // The Step 2 divisor contribution, read from the 2316 rather than the
-        // calendar — an employment gap makes the calendar reading wrong.
-        periodsCovered: prior.periodsCovered,
-        employmentFrom: prior.employmentFrom,
-        employmentTo: prior.employmentTo,
-      }
-    : null;
-
-  if (!row) {
-    return {
-      taxableYear,
-      method: "regular",
-      latchedReason: null,
-      latchedAtPeriodEnd: null,
-      ytdTaxableRegular: "0",
-      ytdTaxableSupplementary: "0",
-      ytdTaxWithheld: "0",
-      periodsElapsed: 0,
-      previousEmployer,
-    };
-  }
-
+  if (!prior) return null;
   return {
-    taxableYear,
-    method: row.withholdingMethod,
-    latchedReason: (row.latchedReason as TriggerReason | null) ?? null,
-    latchedAtPeriodEnd: row.latchedAtPeriodEnd,
-    ytdTaxableRegular: row.ytdTaxableRegular,
-    ytdTaxableSupplementary: row.ytdTaxableSupplementary,
-    ytdTaxWithheld: row.ytdTaxWithheld,
-    periodsElapsed: row.periodsElapsed,
-    previousEmployer,
+    taxableCompensation: prior.taxableCompensation,
+    taxWithheld: prior.taxWithheld,
+    // The Step 2 divisor contribution, read from the 2316 rather than the
+    // calendar — an employment gap makes the calendar reading wrong.
+    periodsCovered: prior.periodsCovered,
+    employmentFrom: prior.employmentFrom,
+    employmentTo: prior.employmentTo,
   };
 }
 

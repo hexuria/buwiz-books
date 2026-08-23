@@ -33,6 +33,8 @@ try {
     "0046_payroll_filing_state.sql",
     "0047_tax_stage_remainder.sql",
     "0048_statement_clearing_exclusivity.sql",
+    "0049_contribution_deferred_status.sql",
+    "0050_year_state_opening_balance.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");
