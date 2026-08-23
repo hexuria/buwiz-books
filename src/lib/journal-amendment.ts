@@ -73,7 +73,7 @@ export type AmendResult = {
  * should not have existed at all and there is nothing to replace it with.
  *
  * The caller MUST provide a transaction-scoped executor: the reversal and its
- * replacement have to land together or not at all, and 0038's balance
+ * replacement have to land together or not at all, and 0041's balance
  * constraint is deferred to COMMIT.
  */
 export async function amendPostedJournal(
@@ -195,7 +195,7 @@ export async function amendPostedJournal(
       throw new Error("A replacement entry needs at least two lines.");
     }
 
-    // The database enforces balance at COMMIT (0038); this produces a message
+    // The database enforces balance at COMMIT (0041); this produces a message
     // naming the amendment rather than a raw constraint violation.
     const totals = input.lines.reduce(
       (acc, line) => ({

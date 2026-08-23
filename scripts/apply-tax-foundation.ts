@@ -1,4 +1,10 @@
-// Applies the idempotent PH tax migrations, in order.
+// Applies the idempotent post-schema migrations, in order.
+//
+// NAME IS HISTORICAL: this started as the PH tax foundation applier (0037+)
+// and is now the general home for every post-schema migration the managed
+// manifest does not carry (0048 clearing exclusivity, 0049/0050, and future
+// entries). Renaming the file would churn CI, package scripts, and the
+// wiring tests for no behavioral gain — recorded in docs/audit-backlog.md.
 //
 // Runs BEFORE `drizzle-kit push --force` in every build path, for the same
 // reason scripts/apply-ai-foundation.ts does: with unmanaged tables present

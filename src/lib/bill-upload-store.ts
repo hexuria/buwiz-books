@@ -14,6 +14,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { keys } from "./query-keys";
 import { createLogger } from "./logger";
 
 const logger = createLogger("bill-upload");
@@ -490,9 +491,9 @@ async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promis
   }
 
   // Invalidate caches
-  queryClient.invalidateQueries({ queryKey: ["bills"] });
-  queryClient.invalidateQueries({ queryKey: ["parties"] });
-  queryClient.invalidateQueries({ queryKey: ["documents"] });
+  queryClient.invalidateQueries({ queryKey: keys.bills.all() });
+  queryClient.invalidateQueries({ queryKey: keys.parties.all() });
+  queryClient.invalidateQueries({ queryKey: keys.documents.all() });
 
   return bill.id;
 }
@@ -547,15 +548,15 @@ export async function startDocumentReplacement(billId: string, file: File, query
       // Generate preview if PDF (optional, but good for consistency)
       // Note: we'd need documentId to generate preview, which uploadBillDocument returns?
       // Let's perform a lightweight query invalidation early so UI updates
-      queryClient.invalidateQueries({ queryKey: ["bill", billId] }),
+      queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) }),
     ]);
 
     // DONE
     updateJob(jobId, { status: "done" });
 
     // Final invalidation
-    queryClient.invalidateQueries({ queryKey: ["bill", billId] });
-    queryClient.invalidateQueries({ queryKey: ["documents"] });
+    queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
+    queryClient.invalidateQueries({ queryKey: keys.documents.all() });
   } catch (err: unknown) {
     const errMessage = err instanceof Error ? err.message : String(err);
     logger.error("Document replacement error", { error: err });

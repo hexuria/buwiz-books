@@ -10,6 +10,12 @@ Conventions: `M`/`L` = the reviewer's severity. `→ PR-n` = a remediation PR to
 file and should absorb this opportunistically; everything else needs its own future work.
 Locations are as-of the audit commit; line numbers drift, the file:symbol pairs won't.
 
+Pruned 2026-08-23 (verified fixed in the tree): validateImport auth + number-sequences
+export scope (PR-16), org-wide claim check counting `created` (PR-1), inbox service
+blocking-findings org predicate (PR-2), CSV exponential-notation money (PR-15's
+csvMoneyCents). Program 2 (this session's plan) executes the remainder; entries below
+that Program 2 covers are being removed by its PRs as they land.
+
 ## Ledger core & journals
 
 - M `src/lib/inbox/money.ts:46-56` (used `inbox/service.ts:414-429`) — per-line FX rounding at
@@ -44,8 +50,6 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
 - L `src/routes/api/-accounts.ts:612-668` — UTC bucket grid vs local-parsed row timestamps;
   edge days land in the wrong chart bucket, unmatched ones silently dropped. (DST class also
   hits `report-utils.ts:131-132` daysPastDue.)
-- L `src/routes/api/-transactions-import.ts:162,178,264-265` — `Number.parseFloat → String`
-  emits exponential notation that downstream money parsing rejects opaquely. → PR-15 file set.
 - L comments citing "0038/0039" for the balance/mutation triggers actually shipped as
   0041/0042 (`-_mutations.ts:121`, `bill-journal.ts:38`, `journal-amendment.ts:77,198`).
 - L `src/routes/api/transactions/-_batch.ts:75-83` — guard fires on `!== undefined` while the
@@ -92,9 +96,6 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
   `computeFinalizeBalances`.
 - M `src/routes/api/reconciliations/-_list-detail.ts:347-350` — UI `isMatched` ignores
   `statement_line_matches`; split-cleared ledger lines invite a second match. → PR-1 read-side.
-- M `src/lib/reconciliation-claimed-lines.ts:52-59` — org-wide claim check filters
-  `matchStatus='matched'` only, omitting `'created'`, and disagrees with the in-recon variant.
-  → PR-1 candidate.
 - M `src/lib/statement-csv.ts:229-272` — parser returns `ok:true` when ANY row survived; a
   40-of-60-rows-dropped import reports success. (C3 raises balance-integrity to blocking,
   which catches most, not all.)
@@ -127,8 +128,6 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
   FOR UPDATE locks, no AbortSignal.
 - M `src/routes/api/-documents.ts:38` → `ensure-document.ts:95` — no MIME allowlist; stored
   content type echoed to R2 (stored-XSS risk on the storage origin) and fed to the model.
-- L `src/lib/inbox/service.ts:935-945` — blocking-findings query omits the org predicate every
-  sibling carries. → PR-2 same-file one-liner.
 - L swallowed errors: `-ai-entity-resolver.ts:158-165` (failed entity vanishes),
   `-ai-classify-document.ts:112-119` (error ≡ low confidence), `-ai-bill-ocr.ts:229-238`.
 - L `src/lib/inbox/rules.ts:152-155` — float `expenseTotal`, undocumented deviation. → PR-15
@@ -200,11 +199,6 @@ Locations are as-of the audit commit; line numbers drift, the file:symbol pairs 
 - M policy: `services/reports.ts:33` vs `-reports.ts:166-172` — balance sheet (posted-only)
   and aging (point-in-time voided handling) disagree for the same as-of date; pick one
   treatment and apply to both.
-- L `src/routes/api/-export-import.ts:839-889` — `validateImport` has no auth wrapper at all;
-  unauthenticated CPU/memory amplifier. → PR-16 fold-in candidate (same file).
-- L `src/routes/api/-export-import.ts:567-574` — number-sequences export scope filter can
-  never match (`startsWith(orgId)` vs `kind:orgId` scopes); always exports `[]`, and the
-  un-predicated SELECT materializes every tenant's rows. → PR-16 fold-in (same file).
 - L `src/routes/api/-business-groups.ts:290-298` — `recordProjectionMismatches` errors
   swallowed with `.catch(() => undefined)`; shadow rollout reads clean when recording fails.
 - L `src/routes/api/-invitation-lookup.ts:9,181-213` — module-level `db` use is probably

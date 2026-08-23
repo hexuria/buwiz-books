@@ -6,6 +6,7 @@
  * Footer: Difference, Bill Amount, Items Amount
  */
 import { useState, useCallback, useMemo } from "react";
+import { keys } from "../../lib/query-keys";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { saveBillLineItems } from "../../routes/api/-bills";
 import { listAccounts } from "../../routes/api/-accounts";
@@ -130,7 +131,7 @@ export function EditLineItemsPanel({
         },
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
       onSave();
     },
   });

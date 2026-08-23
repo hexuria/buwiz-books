@@ -495,13 +495,6 @@ export const createBill = createServerFn({ method: "POST" }).handler(
             return { ...existing, deduplicated: true };
           }
 
-          if (parsed.ocrBoundingBoxes && parsed.ocrBoundingBoxes.length > 0 && parsed.documentUrl) {
-            // Document URLs can be local://[documentId] or r2://...
-            // the store passes documentId directly into linkDocumentToBill, but we can't easily access the documentId from just the URL.
-            // Wait, bill-upload-store knows the documentId and calls linkDocumentToBill!
-            // Let's just update the documents table when we link the document.
-          }
-
           if (parsed.lineItems.length > 0) {
             await tx.insert(billLineItems).values(
               parsed.lineItems.map((line, i) => ({

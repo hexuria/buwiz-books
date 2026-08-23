@@ -10,6 +10,12 @@ permissions:
 
 jobs:
   static-and-hermetic-tests:
+    # CI of record runs on the public hexuria mirror. The canonical private
+    # repo (codeitlikemiley) has its Actions quota/billing exhausted, so runs
+    # there failed at job start on every push and painted main red. Skipping
+    # by owner keeps pushes landing everywhere while only hexuria executes;
+    # delete these conditions if the private repo's billing is restored.
+    if: github.repository_owner == 'hexuria'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -40,6 +46,7 @@ jobs:
         run: bun run test:component
 
   integration-tests:
+    if: github.repository_owner == 'hexuria'
     runs-on: ubuntu-latest
     services:
       postgres:

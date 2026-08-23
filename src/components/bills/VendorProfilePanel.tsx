@@ -5,6 +5,7 @@
  * Sections: Contact Info → Payment Destination (Bank Transfer / Check) → Footer
  */
 import { useState, useEffect } from "react";
+import { keys } from "../../lib/query-keys";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { updateParty } from "../../routes/api/-parties";
 
@@ -113,7 +114,7 @@ export function VendorProfilePanel({
       return (updateParty as (opts: { data: unknown }) => Promise<unknown>)({ data });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
       onClose();
     },
   });

@@ -35,7 +35,7 @@ import { sumMoney } from "@/lib/inbox/money";
  *
  * The caller must supply a transaction-scoped executor: the header, its lines
  * and the activity log have to land together, and the balance constraint from
- * 0038 is deferred to COMMIT.
+ * 0041 is deferred to COMMIT.
  */
 export async function postBillAccrualJournal(
   db: DbExecutor,
