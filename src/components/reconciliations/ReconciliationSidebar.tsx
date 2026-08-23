@@ -376,9 +376,11 @@ function SummaryTab({
     { label: "Withdrawals (Bank)", value: summary.totalWithdrawalsBank },
     { label: "Withdrawals (Ledger)", value: summary.totalWithdrawalsLedger },
     { label: "", value: "", divider: true },
-    { label: "Unsettled Transactions", value: summary.unsettledTransactions },
+    { label: "Cleared Balance", value: summary.clearedBalance },
+    { label: "Uncleared (Ledger)", value: summary.unsettledTransactions },
     { label: "Ending Ledger Balance", value: summary.endingLedgerBalance },
-    { label: "Unreconciled Difference", value: summary.unreconciledDifference, emphasis: true },
+    // The finalize gate's number: statement ending vs CLEARED balance.
+    { label: "Cleared Difference", value: summary.unreconciledDifference, emphasis: true },
   ];
 
   return (

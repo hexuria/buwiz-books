@@ -3,6 +3,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { moneyToCents } from "@/lib/money";
+import { computeFinalizeBalances } from "@/lib/reconciliation-finalize";
 import {
   reconciliations,
   statementLines,
@@ -302,8 +303,10 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
       // We query both to ensure we capture all relevant transactions.
       let ledgerTxns: any[] = [];
 
+      const bankSideAccountIds = new Set<string>();
       if (recon.ledgerAccountId) {
         const candidateIds = await resolveCandidateAccountIds(db, recon.ledgerAccountId);
+        for (const candidateId of candidateIds) bankSideAccountIds.add(candidateId);
 
         const deptDim = alias(dimensions, "dept_dim");
         const locDim = alias(dimensions, "loc_dim");
@@ -499,25 +502,58 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
         .filter((l) => lineCents(l) < 0)
         .reduce((sum, l) => sum + Math.abs(lineCents(l)), 0);
 
-      const totalDepositsLedgerCents = ledgerTransactions
+      // Ledger-side sums count ONLY lines on the reconciliation's candidate
+      // bank accounts. ledgerTransactions also carries matched COUNTERPART
+      // lines (the expense/revenue side, added for display) — summing those
+      // inflated withdrawals with the other half of every matched entry
+      // (audit P7: the display disagreed with the finalize gate in both
+      // directions).
+      const bankSideTxns = ledgerTransactions.filter(
+        (t) => !bankSideAccountIds.size || bankSideAccountIds.has(t.accountId),
+      );
+      const totalDepositsLedgerCents = bankSideTxns
         .filter((t) => t.amount > 0)
         .reduce((sum, t) => sum + Math.round(t.amount * 100), 0);
-      const totalWithdrawalsLedgerCents = ledgerTransactions
+      const totalWithdrawalsLedgerCents = bankSideTxns
         .filter((t) => t.amount < 0)
         .reduce((sum, t) => sum + Math.abs(Math.round(t.amount * 100)), 0);
 
-      const unsettledCents = activeLines
-        .filter((l) => l.matchStatus === "unmatched")
-        .reduce((sum, l) => sum + Math.abs(lineCents(l)), 0);
+      // The authoritative model IS the finalize gate's: cleared, uncleared,
+      // and the cleared difference come from computeFinalizeBalances — the
+      // same engine that decides whether this reconciliation may finalize —
+      // instead of the legacy all-activity derivation this page carried.
+      const gateBalances = recon.ledgerAccountId
+        ? await computeFinalizeBalances(db, {
+            orgId,
+            reconciliationId: parsed.id,
+            ledgerAccountId: recon.ledgerAccountId,
+            periodStart: recon.periodStart,
+            periodEnd: recon.periodEnd,
+            statementBeginningBalance: recon.statementBeginningBalance ?? "0",
+            statementEndingBalance: recon.statementEndingBalance ?? "0",
+          })
+        : null;
 
-      // Compute ledger balance dynamically: beginning balance + net ledger movement
       const netLedgerMovementCents = totalDepositsLedgerCents - totalWithdrawalsLedgerCents;
-      const ledgerBalCents = beginBalCents + netLedgerMovementCents;
-      const unreconciledDiffCents = endBalCents - ledgerBalCents;
+      const ledgerBalCents = gateBalances
+        ? Math.round(gateBalances.ledgerBalance * 100)
+        : beginBalCents + netLedgerMovementCents;
+      const clearedBalCents = gateBalances
+        ? Math.round(gateBalances.clearedBalance * 100)
+        : beginBalCents;
+      const unsettledCents = gateBalances
+        ? Math.round(gateBalances.unclearedTotal * 100)
+        : activeLines
+            .filter((l) => l.matchStatus === "unmatched")
+            .reduce((sum, l) => sum + Math.abs(lineCents(l)), 0);
+      const unreconciledDiffCents = gateBalances
+        ? Math.round(gateBalances.clearedDifference * 100)
+        : endBalCents - ledgerBalCents;
 
       const summary: ReconciliationSummary = {
         endingBankBalance: formatCurrency(endBalCents / 100),
         openingBankBalance: formatCurrency(beginBalCents / 100),
+        clearedBalance: formatCurrency(clearedBalCents / 100),
         netTransactionsPerBank: formatCurrency(netTxnBankCents / 100),
         unsettledTransactions: formatCurrency(unsettledCents / 100),
         unreconciledDifference: formatCurrency(unreconciledDiffCents / 100),

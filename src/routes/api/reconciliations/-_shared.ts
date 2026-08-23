@@ -176,6 +176,8 @@ export interface LedgerTransaction {
 export interface ReconciliationSummary {
   endingBankBalance: string;
   openingBankBalance: string;
+  /** Opening + net CLEARED activity — the finalize gate's bank-side truth (P7). */
+  clearedBalance: string;
   netTransactionsPerBank: string;
   unsettledTransactions: string;
   unreconciledDifference: string;

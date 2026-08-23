@@ -32,10 +32,23 @@ async function seedSnapshot() {
   const data = SNAPSHOT_DATA(targetOrgId, targetUserId);
 
   try {
-    // Clear out base tables to prevent unique constraint failures, relying on ON DELETE CASCADE
-    await sql`DELETE FROM accounts WHERE organization_id = ${targetOrgId}`;
-    await sql`DELETE FROM parties WHERE organization_id = ${targetOrgId}`;
+    // Clear out base tables to prevent unique constraint failures, relying on
+    // ON DELETE CASCADE. financial_accounts must go FIRST: its
+    // ledger_account_id FK to accounts is RESTRICT, so deleting accounts
+    // while a bank still points at them fails (P7 — surfaced when the seed
+    // ran against a fresh superuser org that links its banks to the chart).
+    // Children first, then parents — a HALF-FAILED prior run must not leave
+    // duplicate-key landmines for the next one (the cleanup previously only
+    // covered three of the nine snapshot tables).
+    await sql`DELETE FROM statement_lines WHERE reconciliation_id IN (SELECT id FROM reconciliations WHERE organization_id = ${targetOrgId})`;
+    await sql`DELETE FROM reconciliations WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM document_attachments WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM journal_headers WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM documents WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM dimensions WHERE organization_id = ${targetOrgId}`;
     await sql`DELETE FROM financial_accounts WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM parties WHERE organization_id = ${targetOrgId}`;
+    await sql`DELETE FROM accounts WHERE organization_id = ${targetOrgId}`;
 
     const order = [
       "accounts",
@@ -50,14 +63,20 @@ async function seedSnapshot() {
       "statement_lines",
     ];
 
-    for (const table of order) {
-      const rows = (data as any)[table];
-      if (rows && rows.length > 0) {
-        // Use postgres helper to easily insert an array of raw objects!
-        await sql`INSERT INTO ${sql(table)} ${sql(rows)}`;
-        console.log(`✅ ${table}: ${rows.length}`);
+    // One transaction for the whole snapshot: 0052's deferred trigger
+    // (posted journals must have lines at COMMIT) rightly refuses the old
+    // header-statement-then-lines-statement pattern, and a seed should be
+    // all-or-nothing anyway.
+    await sql.begin(async (tx) => {
+      for (const table of order) {
+        const rows = (data as any)[table];
+        if (rows && rows.length > 0) {
+          // Use postgres helper to easily insert an array of raw objects!
+          await tx`INSERT INTO ${tx(table)} ${tx(rows)}`;
+          console.log(`✅ ${table}: ${rows.length}`);
+        }
       }
-    }
+    });
 
     console.log("🎯 E2E Snapshot completely restored!");
   } catch (e) {
