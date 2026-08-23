@@ -192,11 +192,17 @@ describeDb("computeFinalizeBalances", () => {
     expect(r.ledgerBalance).toBe(1350);
 
     // The suite shares one fixture — put it back the way it was found.
+    // VOID the journal rather than deleting its lines: the 0042 trigger
+    // (present in CI and any foundation-applied database) forbids deleting a
+    // posted journal's lines, and every balance sum here excludes voided
+    // journals, so voiding restores the arithmetic exactly.
     await db
       .delete(statementLines)
       .where(eq(statementLines.matchedJournalLineId, priorCheck.lineId));
-    await db.delete(journalLines).where(eq(journalLines.journalHeaderId, priorCheck.headerId));
-    await db.delete(journalHeaders).where(eq(journalHeaders.id, priorCheck.headerId));
+    await db
+      .update(journalHeaders)
+      .set({ status: "voided", voidedAt: new Date() })
+      .where(eq(journalHeaders.id, priorCheck.headerId));
   });
 
   it("an unmatched statement line moves the gate difference (blocks finalize)", async () => {
