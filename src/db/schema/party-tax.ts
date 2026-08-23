@@ -27,6 +27,7 @@ import {
   timestamp,
   index,
   uniqueIndex,
+  varchar,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 import { parties } from "./parties";
@@ -122,6 +123,11 @@ export const partyTaxProfiles = pgTable(
      * nothing.
      */
     substitutedFilingEligible: boolean("substituted_filing_eligible").default(false).notNull(),
+    /**
+     * Alphalist nationality (e.g. "FILIPINO", "AMERICAN"). Null means the
+     * 1604-C artifact defaults to FILIPINO and says so in a preflight warning.
+     */
+    nationality: varchar("nationality", { length: 40 }),
 
     // ── Payee-specific ──────────────────────────────────────────────────────
     isPayee: boolean("is_payee").default(false).notNull(),

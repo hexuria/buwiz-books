@@ -98,9 +98,10 @@ describe("export-versions", () => {
       expect(EXPORT_VERSION).toBeGreaterThan(0);
     });
 
-    // P5: v3 adds the PH tax entities to the registry.
-    it("is currently 3", () => {
-      expect(EXPORT_VERSION).toBe(3);
+    // P5: v3 added the PH tax entities. P13: v4 — party_tax_profiles gained
+    // the nullable alphalist `nationality` column (passthrough migration).
+    it("is currently 4", () => {
+      expect(EXPORT_VERSION).toBe(4);
     });
   });
 });

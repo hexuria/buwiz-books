@@ -104,6 +104,12 @@ export const taxWithholdingPayments = pgTable(
       onDelete: "restrict",
     }),
     createdBy: text("created_by"),
+    /**
+     * Stamped when an 0619-E/1601-EQ remittance journal covered this row.
+     * Null = still owed — which is how a payment captured AFTER its period
+     * was remitted surfaces in the next remittance instead of never.
+     */
+    remittedAt: timestamp("remitted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },

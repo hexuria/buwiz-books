@@ -46,6 +46,7 @@ const captureSchema = z.object({
   payeeType: z.enum(["individual", "corporate"]),
   isTopWithholdingAgent: z.boolean(),
   hasSwornDeclaration: z.boolean().default(false),
+  grossIncomeOver720k: z.boolean().default(false),
   grossAmount: z.string().min(1),
   vatAmount: z.string().optional(),
   certificateIssued: z.boolean().default(false),
@@ -70,6 +71,7 @@ export const captureWithholdingPayment = createServerFn({ method: "POST" }).hand
           payeeType: input.payeeType,
           paymentType: input.paymentType,
           hasSwornDeclaration: input.hasSwornDeclaration,
+          grossIncomeOver720k: input.grossIncomeOver720k,
         });
         if (!assessment.required || !assessment.atc) {
           throw new Error(assessment.reason);

@@ -361,6 +361,57 @@ export const getArAging = createServerFn({ method: "GET" }).handler(
       }
       const grandTotal = grandTotalCents / 100;
 
+      // C1 tie-line: credits sitting on the A/R family from NON-invoice
+      // journals (prepayments, credit memos, overpayments posted manually).
+      // The balance sheet's A/R control includes them; the invoice-driven
+      // buckets above cannot. Reporting them per party is what lets
+      // aging + unapplied credits tie to the control account at any as-of.
+      const unappliedRows = await db
+        .select({
+          customerId: journalHeaders.partyId,
+          customerName: parties.name,
+          amount: sql<string>`
+            (COALESCE(SUM(${journalLines.credit}), 0) -
+             COALESCE(SUM(${journalLines.debit}), 0))::text
+          `,
+        })
+        .from(journalLines)
+        .innerJoin(journalHeaders, eq(journalLines.journalHeaderId, journalHeaders.id))
+        .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+        .leftJoin(parties, eq(journalHeaders.partyId, parties.id))
+        .where(
+          and(
+            eq(journalHeaders.organizationId, orgId),
+            effectiveJournalPredicate(),
+            lte(journalHeaders.transactionDate, asOf),
+            eq(accounts.organizationId, orgId),
+            arAccountPredicate,
+            sql`${journalHeaders.sourceDocumentType} IS DISTINCT FROM 'invoice'`,
+            sql`(
+              ${journalHeaders.status} = 'posted'
+              OR (
+                ${journalHeaders.status} = 'voided'
+                AND ${journalHeaders.voidedAt}::date > ${asOf}::date
+              )
+            )`,
+          ),
+        )
+        .groupBy(journalHeaders.partyId, parties.name).having(sql`
+          (COALESCE(SUM(${journalLines.credit}), 0) -
+           COALESCE(SUM(${journalLines.debit}), 0)) >= 0.005
+        `);
+
+      let unappliedCreditsTotalCents = 0;
+      const unappliedCredits = unappliedRows.map((row) => {
+        const cents = moneyToCents(row.amount ?? "0", "unapplied credit");
+        unappliedCreditsTotalCents += cents;
+        return {
+          customerId: row.customerId,
+          customerName: row.customerName ?? "Unassigned",
+          amount: cents / 100,
+        };
+      });
+
       return {
         asOf,
         type: "ar" as const,
@@ -368,6 +419,10 @@ export const getArAging = createServerFn({ method: "GET" }).handler(
         customers,
         bucketTotals,
         grandTotal,
+        unappliedCredits,
+        unappliedCreditsTotal: unappliedCreditsTotalCents / 100,
+        /** grandTotal − unappliedCreditsTotal ties to the A/R control balance. */
+        netReceivable: (grandTotalCents - unappliedCreditsTotalCents) / 100,
         warnings:
           arFamily.length === 0
             ? ["No Accounts Receivable account is configured, so this report may be incomplete."]
