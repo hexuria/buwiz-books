@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { BASE_ACCOUNTS, listPresets } from "@/lib/coa/presets";
 import { flattenPresetAccounts } from "@/lib/coa/preset-types";
-import { PH_RESERVED_BANDS, isInPhReservedBand } from "@/lib/tax/ph-chart";
+import { PH_CHART, PH_RESERVED_BANDS, isInPhReservedBand } from "@/lib/tax/ph-chart";
 
 /**
  * Keeps every non-PH preset out of the number bands reserved for Philippine
@@ -36,11 +36,21 @@ describe("PH reserved number bands", () => {
   });
 
   it.each(listPresets().map((p) => [p.id, p] as const))(
-    "keeps preset %s out of every reserved band",
+    "keeps preset %s inside its lane of the reserved bands",
     (_id, preset) => {
-      const offenders = flattenPresetAccounts(preset.accounts)
-        .filter((n) => isInPhReservedBand(n.account.accountNumber))
-        .map((n) => `${n.account.key} (${n.account.accountNumber})`);
+      const inBand = flattenPresetAccounts(preset.accounts).filter((n) =>
+        isInPhReservedBand(n.account.accountNumber),
+      );
+      if (preset.id === "philippines_smb") {
+        // The PH pack is the one legitimate occupant of the reserved bands —
+        // and it must occupy them EXACTLY as PH_CHART freezes them: every
+        // chart number present, nothing else inside the bands.
+        const presetNumbers = inBand.map((n) => n.account.accountNumber).sort();
+        const chartNumbers = PH_CHART.map((entry) => entry.accountNumber).sort();
+        expect(presetNumbers).toEqual(chartNumbers);
+        return;
+      }
+      const offenders = inBand.map((n) => `${n.account.key} (${n.account.accountNumber})`);
       expect(offenders).toEqual([]);
     },
   );
