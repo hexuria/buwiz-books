@@ -5,20 +5,18 @@
  * Blocking issues stay visible. A certificate with no employer TIN is still
  * generated, watermarked by form-2316-pdf, rather than silently omitted.
  */
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { partyTaxProfiles } from "@/db/schema/party-tax";
-import {
-  payrollEmployeeYearState,
-  payrollLines,
-  payrollRuns,
-  previousEmployer2316,
-} from "@/db/schema/payroll";
+import { payrollLines, payrollRuns, previousEmployer2316 } from "@/db/schema/payroll";
 import { orgTaxProfiles } from "@/db/schema/tax-reference";
 import { preflightAlphalist } from "@/lib/tax/alphalist-preflight";
 import { encodeDat } from "@/lib/tax/dat-encoder";
 import { ALPHALIST_1604C_HEADER, ALPHALIST_1604C_SCHEDULE_1_DETAIL } from "@/lib/tax/dat-layouts";
+import { annualize } from "@/lib/tax/annualization";
 import { buildForm2316, type Form2316 } from "@/lib/tax/form-2316";
+import { taxWithholdingTables } from "@/db/schema/tax-reference";
+import type { Bracket } from "@/lib/tax/withholding";
 import { form2316PdfBuffer } from "@/lib/tax/form-2316-pdf";
 import { addAll, fromScaled, toScaled } from "@/lib/tax/money";
 
@@ -32,9 +30,139 @@ function money(value: string | null | undefined): string {
   return value ?? "0";
 }
 
-function retrnPeriod(periodEnd: string): string {
-  const [year, month, day] = periodEnd.split("-");
-  return `${month}/${day}/${year}`;
+/**
+ * The 1604-C is an ANNUAL information return: its return period is 12/31 of
+ * the taxable year, never the issuing run's own period end (a November run
+ * used to stamp 11/30 on the header and every detail row).
+ */
+function annualReturnPeriod(taxableYear: number): string {
+  return `12/31/${taxableYear}`;
+}
+
+const SUM_COLUMNS = [
+  "basicSalaryMwe",
+  "holidayPayMwe",
+  "overtimePayMwe",
+  "nightShiftDifferentialMwe",
+  "hazardPayMwe",
+  "thirteenthMonthAndOtherBenefits",
+  "deMinimisBenefits",
+  "sssEmployeeShare",
+  "philHealthEmployeeShare",
+  "pagIbigEmployeeShare",
+  "unionDues",
+  "otherExempt",
+  "basicSalary",
+  "representationAllowance",
+  "transportationAllowance",
+  "costOfLivingAllowance",
+  "fixedHousingAllowance",
+  "otherTaxableRegular",
+  "commission",
+  "profitSharing",
+  "directorsFees",
+  "hazardPay",
+  "overtimePay",
+  "otherTaxableSupplementary",
+] as const;
+
+type YearTotals = Record<(typeof SUM_COLUMNS)[number], string> & {
+  employeePartyId: string;
+  taxWithheld: string;
+};
+
+/** Annual brackets in force at year end, for the annualized tax due. */
+async function loadAnnualBrackets(db: DbExecutor, taxableYear: number): Promise<Bracket[]> {
+  const at = `${taxableYear}-12-31`;
+  const rows = await db
+    .select()
+    .from(taxWithholdingTables)
+    .where(eq(taxWithholdingTables.payrollPeriod, "annual"))
+    .orderBy(asc(taxWithholdingTables.bracketIndex));
+  return rows
+    .filter((r) => r.effectiveFrom <= at && (r.effectiveTo == null || r.effectiveTo >= at))
+    .map((r) => ({
+      bracketIndex: r.bracketIndex,
+      floorAmount: r.floorAmount,
+      prescribedTax: r.prescribedTax,
+      rateBps: r.rateBps,
+    }));
+}
+
+type EmployerProfileRow = {
+  tin: string | null;
+  branchCode: string | null;
+  registeredName: string | null;
+};
+
+function form2316Input(
+  taxableYear: number,
+  employer: EmployerProfileRow,
+  profile: any,
+  line: YearTotals,
+  contributions: string,
+  previous: any,
+  taxWithheld: string,
+  taxDue: string,
+) {
+  return {
+    taxableYear,
+    employer: {
+      // Nullability is guarded at the entry point (the run refuses to issue
+      // without employer TIN + name); the coalesce keeps the helper total.
+      tin: employer.tin ?? "",
+      branchCode: employer.branchCode ?? "00000",
+      registeredName: employer.registeredName ?? "",
+      address: "",
+      isMainEmployer: true,
+    },
+    employee: {
+      tin: profile.tin ?? "",
+      lastName: profile.lastName ?? "",
+      firstName: profile.firstName ?? "",
+      middleName: profile.middleName ?? "",
+      address: [profile.addressLine1, profile.city].filter(Boolean).join(", "),
+      birthDate: profile.birthDate,
+      dateHired: profile.dateHired,
+      dateSeparated: profile.dateSeparated,
+      isMinimumWageEarner: profile.isMinimumWageEarner,
+      substitutedFilingEligible: profile.substitutedFilingEligible,
+    },
+    compensation: {
+      basicSalaryMwe: money(line.basicSalaryMwe),
+      holidayPayMwe: money(line.holidayPayMwe),
+      overtimePayMwe: money(line.overtimePayMwe),
+      nightShiftDifferentialMwe: money(line.nightShiftDifferentialMwe),
+      hazardPayMwe: money(line.hazardPayMwe),
+      thirteenthMonthAndOtherBenefits: money(line.thirteenthMonthAndOtherBenefits),
+      deMinimisBenefits: money(line.deMinimisBenefits),
+      mandatoryContributions: contributions,
+      otherNonTaxable: money(line.otherExempt),
+      basicSalary: money(line.basicSalary),
+      representationAllowance: money(line.representationAllowance),
+      transportationAllowance: money(line.transportationAllowance),
+      costOfLivingAllowance: money(line.costOfLivingAllowance),
+      fixedHousingAllowance: money(line.fixedHousingAllowance),
+      otherTaxableRegular: money(line.otherTaxableRegular),
+      commission: money(line.commission),
+      profitSharing: money(line.profitSharing),
+      directorsFees: money(line.directorsFees),
+      taxableThirteenthMonthAndOtherBenefits: "0",
+      hazardPay: money(line.hazardPay),
+      overtimePay: money(line.overtimePay),
+      otherTaxableSupplementary: money(line.otherTaxableSupplementary),
+    },
+    previousEmployer: previous
+      ? {
+          tin: previous.previousEmployerTin ?? "",
+          registeredName: previous.previousEmployerName,
+          taxableCompensation: previous.taxableCompensation,
+          taxWithheld: previous.taxWithheld,
+        }
+      : null,
+    taxWithheldByThisEmployer: taxWithheld,
+    taxDue,
+  };
 }
 
 export async function issuePayrollArtifacts(
@@ -66,18 +194,44 @@ export async function issuePayrollArtifacts(
     throw new Error("Save the employer TIN and registered name on /payroll first.");
   }
 
-  const lines = await db
-    .select()
+  // YEAR-SCOPED, not run-scoped. The 2316 and the 1604-C report the taxable
+  // YEAR; building them from one run's lines under-reported every employee by
+  // a factor equal to the number of periods (the audit's second critical).
+  // payroll_employee_year_state carries only collapsed aggregates, so the
+  // per-component figures the artifacts need are summed from payroll_lines
+  // across every computed run of the year.
+  const sumExprs = Object.fromEntries(
+    SUM_COLUMNS.map((column) => [
+      column,
+      // Peso strings (2dp) straight from SQL: the raw scale-8 SUM ("….00000000")
+      // is 15 characters at ₱100,000 and the .DAT layouts refuse width > 14.
+      sql<string>`(COALESCE(SUM(COALESCE(${payrollLines[column]}, 0)), 0))::numeric(18,2)`,
+    ]),
+  ) as Record<(typeof SUM_COLUMNS)[number], ReturnType<typeof sql<string>>>;
+  const yearTotals = (await db
+    .select({
+      employeePartyId: payrollLines.employeePartyId,
+      ...sumExprs,
+      taxWithheld: sql<string>`(COALESCE(SUM(COALESCE(${payrollLines.reportedTaxWithheld}, ${payrollLines.computedTaxWithheld}, 0)), 0))::numeric(18,2)`,
+    })
     .from(payrollLines)
+    .innerJoin(payrollRuns, eq(payrollLines.payrollRunId, payrollRuns.id))
     .where(
-      and(eq(payrollLines.payrollRunId, runId), eq(payrollLines.organizationId, organizationId)),
-    );
+      and(
+        eq(payrollRuns.organizationId, organizationId),
+        eq(payrollRuns.taxableYear, run.taxableYear),
+        isNotNull(payrollRuns.computedAt),
+      ),
+    )
+    .groupBy(payrollLines.employeePartyId)) as YearTotals[];
+
+  const annualBrackets = await loadAnnualBrackets(db, run.taxableYear);
 
   const certificates: IssuedPayrollArtifacts["certificates"] = [];
   const detailRecords: Array<Record<string, string>> = [];
   const preflightRows = [];
 
-  for (const [index, line] of lines.entries()) {
+  for (const [index, line] of yearTotals.entries()) {
     const [profile] = await db
       .select()
       .from(partyTaxProfiles)
@@ -91,18 +245,6 @@ export async function issuePayrollArtifacts(
     if (!profile) {
       throw new Error(`Employee ${line.employeePartyId} has no tax profile.`);
     }
-
-    const [yearState] = await db
-      .select()
-      .from(payrollEmployeeYearState)
-      .where(
-        and(
-          eq(payrollEmployeeYearState.organizationId, organizationId),
-          eq(payrollEmployeeYearState.employeePartyId, line.employeePartyId),
-          eq(payrollEmployeeYearState.taxableYear, run.taxableYear),
-        ),
-      )
-      .limit(1);
 
     const [previous] = await db
       .select()
@@ -124,65 +266,54 @@ export async function issuePayrollArtifacts(
         toScaled(line.unionDues ?? "0"),
       ),
     );
-    const taxWithheld = line.reportedTaxWithheld ?? line.computedTaxWithheld ?? "0";
-    const taxDue = yearState?.ytdTaxWithheld ?? taxWithheld;
+    const taxWithheld = line.taxWithheld;
 
-    const form = buildForm2316({
-      taxableYear: run.taxableYear,
-      employer: {
-        tin: employer.tin,
-        branchCode: employer.branchCode ?? "00000",
-        registeredName: employer.registeredName,
-        address: "",
-        isMainEmployer: true,
-      },
-      employee: {
-        tin: profile.tin ?? "",
-        lastName: profile.lastName ?? "",
-        firstName: profile.firstName ?? "",
-        middleName: profile.middleName ?? "",
-        address: [profile.addressLine1, profile.city].filter(Boolean).join(", "),
-        birthDate: profile.birthDate,
-        dateHired: profile.dateHired,
-        dateSeparated: profile.dateSeparated,
-        isMinimumWageEarner: profile.isMinimumWageEarner,
-        substitutedFilingEligible: profile.substitutedFilingEligible,
-      },
-      compensation: {
-        basicSalaryMwe: money(line.basicSalaryMwe),
-        holidayPayMwe: money(line.holidayPayMwe),
-        overtimePayMwe: money(line.overtimePayMwe),
-        nightShiftDifferentialMwe: money(line.nightShiftDifferentialMwe),
-        hazardPayMwe: money(line.hazardPayMwe),
-        thirteenthMonthAndOtherBenefits: money(line.thirteenthMonthAndOtherBenefits),
-        deMinimisBenefits: money(line.deMinimisBenefits),
-        mandatoryContributions: contributions,
-        otherNonTaxable: money(line.otherExempt),
-        basicSalary: money(line.basicSalary),
-        representationAllowance: money(line.representationAllowance),
-        transportationAllowance: money(line.transportationAllowance),
-        costOfLivingAllowance: money(line.costOfLivingAllowance),
-        fixedHousingAllowance: money(line.fixedHousingAllowance),
-        otherTaxableRegular: money(line.otherTaxableRegular),
-        commission: money(line.commission),
-        profitSharing: money(line.profitSharing),
-        directorsFees: money(line.directorsFees),
-        taxableThirteenthMonthAndOtherBenefits: "0",
-        hazardPay: money(line.hazardPay),
-        overtimePay: money(line.overtimePay),
-        otherTaxableSupplementary: money(line.otherTaxableSupplementary),
-      },
-      previousEmployer: previous
-        ? {
-            tin: previous.previousEmployerTin ?? "",
-            registeredName: previous.previousEmployerName,
-            taxableCompensation: previous.taxableCompensation,
-            taxWithheld: previous.taxWithheld,
-          }
-        : null,
-      taxWithheldByThisEmployer: taxWithheld,
-      taxDue,
-    });
+    // taxDue comes from ANNUALIZATION, never from the amount withheld — the
+    // audit's third critical set taxDue = ytdTaxWithheld, which made
+    // refundOrDeficiency structurally zero: an over-withheld employee showed
+    // a 0.00 refund and an under-withheld one showed nothing owed. The form
+    // computes its own present-employer taxable total (it owns the MWE
+    // rules), so build it once to obtain that figure, annualize, then build
+    // again with the real tax due. buildForm2316 is pure; the double call is
+    // the price of not re-implementing its aggregation here.
+    const draft = buildForm2316(
+      form2316Input(
+        run.taxableYear,
+        employer,
+        profile,
+        line,
+        contributions,
+        previous,
+        taxWithheld,
+        "0",
+      ),
+    );
+    const annualization =
+      annualBrackets.length > 0
+        ? annualize({
+            trigger: "year_end",
+            taxableRegular: draft.totalTaxableFromPresentEmployer,
+            taxableSupplementary: "0",
+            previousEmployerTaxable: previous?.taxableCompensation ?? "0",
+            taxWithheldByThisEmployer: taxWithheld,
+            taxWithheldByPreviousEmployer: previous?.taxWithheld ?? "0",
+            annualBrackets,
+          })
+        : null;
+    const taxDue = annualization ? annualization.taxDuePesos : "0";
+
+    const form = buildForm2316(
+      form2316Input(
+        run.taxableYear,
+        employer,
+        profile,
+        line,
+        contributions,
+        previous,
+        taxWithheld,
+        taxDue,
+      ),
+    );
 
     certificates.push({
       employeePartyId: line.employeePartyId,
@@ -204,7 +335,7 @@ export async function issuePayrollArtifacts(
     detailRecords.push({
       tinEmpyr: employer.tin,
       branchCodeEmplyr: (employer.branchCode ?? "00000").slice(0, 4),
-      retrnPeriod: retrnPeriod(run.periodEnd),
+      retrnPeriod: annualReturnPeriod(run.taxableYear),
       seqNum: String(index + 1),
       tin: profile.tin ?? "",
       branchCode: (profile.branchCode ?? "00000").slice(0, 4),
@@ -257,7 +388,7 @@ export async function issuePayrollArtifacts(
     {
       tin: employer.tin,
       branchCode: (employer.branchCode ?? "00000").slice(0, 4),
-      retrnPeriod: retrnPeriod(run.periodEnd),
+      retrnPeriod: annualReturnPeriod(run.taxableYear),
     },
   ]);
   const details = encodeDat(ALPHALIST_1604C_SCHEDULE_1_DETAIL, detailRecords);
