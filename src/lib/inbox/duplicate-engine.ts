@@ -105,10 +105,15 @@ export async function loadDuplicateEngineConfig(
     blockingScore: numberConfig(merged, "blockingScore", 70),
     shadowScore: numberConfig(merged, "shadowScore", 50),
     relatedAmountToleranceBps: numberConfig(merged, "relatedAmountToleranceBps", 200),
+    // Scoring version only. reviewRuleConfigs.version increments on EVERY
+    // config edit — including non-scoring settings — and it used to feed
+    // this max, so any settings save invalidated every open finding and
+    // tripped the approval gate's version comparison (checkpoint C8: the
+    // blocking threshold itself stays 70; retunes are deliberate via the
+    // explicit algorithmVersion config or the definition's formulaVersion).
     algorithmVersion: Math.max(
       numberConfig(merged, "algorithmVersion", DUPLICATE_MATCHER_VERSION),
       row?.formulaVersion ?? 1,
-      row?.configVersion ?? 1,
       DUPLICATE_MATCHER_VERSION,
     ),
   };
@@ -271,14 +276,19 @@ async function findCandidateSourceIds(
               eq(sourceRecords.organizationId, orgId),
               eq(sourceRecords.recordState, "active"),
               ne(sourceRecords.id, source.sourceRecordId),
-              eq(sourceRecords.originalCurrency, normalized.originalCurrency),
+              // The matcher normalizes BOTH sides with originalCurrency ??
+              // currency and effectiveDate ?? transactionDate — discovery
+              // must coalesce the same way (the amount predicate always
+              // did), or a candidate whose original_* columns are NULL is
+              // never even offered to the matcher.
+              sql`coalesce(${sourceRecords.originalCurrency}, ${sourceRecords.currency}) = ${normalized.originalCurrency}`,
               sql`round(abs(coalesce(${sourceRecords.originalAmount}, ${sourceRecords.amount})), ${amountDecimalPlaces}) = ${normalized.originalAmount}::numeric`,
               gte(
-                sourceRecords.effectiveDate,
+                sql`coalesce(${sourceRecords.effectiveDate}, ${sourceRecords.transactionDate})`,
                 dateOffset(normalized.effectiveDate, -(config.matchWindowDays ?? 3)),
               ),
               lte(
-                sourceRecords.effectiveDate,
+                sql`coalesce(${sourceRecords.effectiveDate}, ${sourceRecords.transactionDate})`,
                 dateOffset(normalized.effectiveDate, config.matchWindowDays ?? 3),
               ),
             ),
@@ -322,8 +332,13 @@ function effectiveDisposition(
   config: DuplicateEngineConfig,
 ): DuplicateDisposition {
   if (result.disposition !== "blocking") return result.disposition;
+  // Shadow mode is the org's explicit observe-only switch — it demotes
+  // EVERYTHING, exact document hits included (they used to block anyway,
+  // which made "shadow" a lie for the strongest signal). Outside shadow,
+  // an exact document hit still overrides the warning-impact demotion.
+  if (config.mode === "shadow") return "shadow";
   if (result.reason === "exact_document") return "blocking";
-  if (config.mode === "shadow" || config.impact === "warning") return "shadow";
+  if (config.impact === "warning") return "shadow";
   return "blocking";
 }
 
@@ -745,12 +760,31 @@ export async function runDuplicateMatchingForSource(
     };
   }
   if (!config.enabled || config.mode === "off") {
+    // Turning the rule off must not leave yesterday's OPEN blocking cases
+    // pinning approvals forever — stale them the same way container
+    // evidence does, resolving their findings.
+    const existingCases = await duplicateCasesForReevaluation(ctx.db, ctx.orgId, sourceRecordId);
+    const staleCases: string[] = [];
+    for (const duplicateCase of existingCases) {
+      if (duplicateCase.state !== "open") continue;
+      if (
+        await markDuplicateCaseStale(
+          ctx,
+          duplicateCase,
+          source,
+          "rule_disabled",
+          config.algorithmVersion ?? DUPLICATE_MATCHER_VERSION,
+        )
+      ) {
+        staleCases.push(duplicateCase.id);
+      }
+    }
     return {
       sourceRecordId,
       evaluated: 0,
       blockingCases: [],
       shadowCases: [],
-      staleCases: [],
+      staleCases,
       skipped: true,
       mode: config.mode,
     };

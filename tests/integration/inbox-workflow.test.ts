@@ -1078,7 +1078,12 @@ describe("Inbox-first transaction workflow", () => {
     );
   });
 
-  it("keeps an exact-document duplicate blocking while semantic matching is in shadow mode", async () => {
+  // PR-18 deliberate change: shadow mode is the org's explicit observe-only
+  // switch and now demotes EVERYTHING — exact-document hits included. This
+  // test used to pin the opposite (exact hits blocked through shadow mode,
+  // which made "shadow" a lie for the strongest signal); it now proves the
+  // approval proceeds and the case is recorded as shadow evidence.
+  it("shadow mode observes an exact-document duplicate instead of blocking approval", async () => {
     const { orgId, userId, bank, expense, department, location, vendor } =
       await setupApprovalTestOrganization("duplicate-config");
     const [receipt] = await db
@@ -1172,37 +1177,23 @@ describe("Inbox-first transaction workflow", () => {
         },
       ),
     );
-    expect(approval).toMatchObject({
-      approvalOutcome: "blocked",
-      reason: "possible_duplicate",
-      caseId: historicalCase.id,
-    });
+    // Observe-only means the approval posts its journal.
+    expect(approval).toMatchObject({ approvalOutcome: "approved" });
     expect(
-      await db
-        .select({ id: journalHeaders.id })
-        .from(journalHeaders)
-        .where(eq(journalHeaders.organizationId, orgId)),
-    ).toEqual([]);
-    const [unchangedHistoricalCase] = await db
+      (
+        await db
+          .select({ id: journalHeaders.id })
+          .from(journalHeaders)
+          .where(eq(journalHeaders.organizationId, orgId))
+      ).length,
+    ).toBeGreaterThan(0);
+    // The case survives as recorded shadow evidence, not a gate.
+    const [reevaluatedCase] = await db
       .select()
       .from(sourceMatchCandidates)
       .where(eq(sourceMatchCandidates.id, historicalCase.id));
-    expect(unchangedHistoricalCase).toMatchObject({
-      state: "open",
-      disposition: "blocking",
-    });
-    const stillOpenHistoricalFindings = await db
-      .select()
-      .from(reviewFindings)
-      .where(
-        and(
-          eq(reviewFindings.organizationId, orgId),
-          eq(reviewFindings.ruleKey, "possible_duplicate"),
-          eq(reviewFindings.state, "open"),
-          eq(reviewFindings.impact, "blocking"),
-        ),
-      );
-    expect(stillOpenHistoricalFindings.length).toBe(historicalFindings.length);
+    expect(reevaluatedCase.state).toBe("open");
+    expect(reevaluatedCase.disposition).toBe("shadow");
   });
 
   it("persists a newly enforced duplicate case when approval is blocked after shadow mode", async () => {
