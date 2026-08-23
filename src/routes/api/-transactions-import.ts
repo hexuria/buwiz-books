@@ -10,6 +10,7 @@ import { parties } from "../../db/schema/parties";
 import { eq, and } from "drizzle-orm";
 import { withMutationPermissionOrgContext } from "../../lib/server-context";
 import { createTransactionCandidate } from "../../lib/inbox/service";
+import { centsToMoney, moneyToCents } from "../../lib/money";
 import { bankCsvSourceId, hashCsvFileContent, journalCsvSourceId } from "../../lib/csv-idempotency";
 import { resolveMappedAccountId } from "../../lib/coa/resolve-mapped-account";
 
@@ -98,6 +99,20 @@ const importBankTransactionsSchema = z.object({
 });
 
 /** Parse a date string flexibly (MM/DD/YYYY, YYYY-MM-DD, M/D/YYYY, etc.) */
+/**
+ * Parse a CSV money field ($ and , tolerated) to INTEGER CENTS, or null when
+ * it is not a valid amount. Audit PR-15: parseFloat let garbage through as
+ * NaN (which passed the ===0 checks) and float sums drifted the group
+ * balance check; every comparison below is now exact integer arithmetic.
+ */
+function csvMoneyCents(raw: string | null | undefined): number | null {
+  if (!raw) return 0;
+  const normalized = raw.replace(/[,$]/g, "").trim();
+  if (normalized === "") return 0;
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return null;
+  return moneyToCents(normalized, "amount");
+}
+
 function parseFlexibleDate(dateStr: string): string | null {
   // Try ISO format first (YYYY-MM-DD)
   if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
@@ -159,8 +174,8 @@ export const validateBankTransactionCsv = createServerFn({ method: "POST" })
       }
 
       // Validate amount is numeric
-      const amount = Number.parseFloat(result.data.amount.replace(/[,$]/g, ""));
-      if (Number.isNaN(amount) || amount === 0) {
+      const amountCents = csvMoneyCents(result.data.amount);
+      if (amountCents === null || amountCents === 0) {
         validated.push({
           row: i + 1,
           valid: false,
@@ -175,7 +190,7 @@ export const validateBankTransactionCsv = createServerFn({ method: "POST" })
         data: {
           ...result.data,
           date: isoDate,
-          amount: String(amount),
+          amount: centsToMoney(amountCents),
         },
       });
     }
@@ -261,8 +276,12 @@ export const importBankTransactions = createServerFn({ method: "POST" })
 
         for (const row of parsed.rows) {
           try {
-            const amount = Math.abs(Number.parseFloat(row.amount));
-            const isPayIn = Number.parseFloat(row.amount) > 0;
+            const signedCents = csvMoneyCents(row.amount);
+            if (signedCents === null || signedCents === 0) {
+              throw new Error(`Invalid amount: "${row.amount}"`);
+            }
+            const amount = centsToMoney(Math.abs(signedCents));
+            const isPayIn = signedCents > 0;
             const txnType = isPayIn ? "pay_in" : "pay_out";
 
             const isoDate = parseFlexibleDate(row.date) ?? row.date;
@@ -281,8 +300,8 @@ export const importBankTransactions = createServerFn({ method: "POST" })
                 lines: [
                   {
                     accountId: parsed.accountId,
-                    debit: isPayIn ? String(amount) : null,
-                    credit: isPayIn ? null : String(amount),
+                    debit: isPayIn ? amount : null,
+                    credit: isPayIn ? null : amount,
                     lineDescription: row.description,
                     departmentId: deptId ?? null,
                     locationId: locId ?? null,
@@ -290,8 +309,8 @@ export const importBankTransactions = createServerFn({ method: "POST" })
                   },
                   {
                     accountId: contraAccountId,
-                    debit: isPayIn ? null : String(amount),
-                    credit: isPayIn ? String(amount) : null,
+                    debit: isPayIn ? null : amount,
+                    credit: isPayIn ? amount : null,
                     lineDescription: row.description,
                     departmentId: deptId ?? null,
                     locationId: locId ?? null,
@@ -412,14 +431,18 @@ export const validateJournalEntryCsv = createServerFn({ method: "POST" })
         continue;
       }
 
-      // Validate at least one amount
-      const debit = result.data.debitAmount
-        ? Number.parseFloat(result.data.debitAmount.replace(/[,$]/g, ""))
-        : 0;
-      const credit = result.data.creditAmount
-        ? Number.parseFloat(result.data.creditAmount.replace(/[,$]/g, ""))
-        : 0;
-      if (debit === 0 && credit === 0) {
+      // Validate the amounts. parseFloat used to turn garbage into NaN,
+      // which passed the ===0 check and imported as a NaN line.
+      const debitCents = csvMoneyCents(result.data.debitAmount);
+      const creditCents = csvMoneyCents(result.data.creditAmount);
+      if (debitCents === null || creditCents === null) {
+        parsedRows.push({
+          row: i + 1,
+          errors: [`Row ${i + 1}: Invalid amount — debit and credit must be numeric`],
+        });
+        continue;
+      }
+      if (debitCents === 0 && creditCents === 0) {
         parsedRows.push({
           row: i + 1,
           errors: [`Row ${i + 1}: At least one of Debit Amount or Credit Amount must be non-zero`],
@@ -457,19 +480,14 @@ export const validateJournalEntryCsv = createServerFn({ method: "POST" })
     const validatedGroups: ValidatedJournalGroup[] = [];
     for (const [refNum, group] of groups) {
       const groupRows = group.rows;
-      let totalDebits = 0;
-      let totalCredits = 0;
+      let totalDebitsCents = 0;
+      let totalCreditsCents = 0;
       const groupErrors: string[] = [];
 
       for (const row of groupRows) {
-        const d = row.debitAmount ? Number.parseFloat(row.debitAmount.replace(/[,$]/g, "")) : 0;
-        const c = row.creditAmount ? Number.parseFloat(row.creditAmount.replace(/[,$]/g, "")) : 0;
-        totalDebits += d;
-        totalCredits += c;
+        totalDebitsCents += csvMoneyCents(row.debitAmount) ?? 0;
+        totalCreditsCents += csvMoneyCents(row.creditAmount) ?? 0;
       }
-
-      totalDebits = Math.round(totalDebits * 100) / 100;
-      totalCredits = Math.round(totalCredits * 100) / 100;
 
       if (groupRows.length < 2) {
         groupErrors.push(
@@ -477,10 +495,13 @@ export const validateJournalEntryCsv = createServerFn({ method: "POST" })
         );
       }
 
-      const diff = Math.abs(totalDebits - totalCredits);
-      if (diff > 0.01) {
+      // Exact: balanced means the cents AGREE — the old float diff > 0.01
+      // waved through one-cent imbalances. A bad group fails alone; the
+      // other groups still import.
+      if (totalDebitsCents !== totalCreditsCents) {
+        const diffCents = Math.abs(totalDebitsCents - totalCreditsCents);
         groupErrors.push(
-          `Entry "${refNum}" is unbalanced: Debits $${totalDebits.toFixed(2)} ≠ Credits $${totalCredits.toFixed(2)} (diff: $${diff.toFixed(2)})`,
+          `Entry "${refNum}" is unbalanced: Debits $${centsToMoney(totalDebitsCents)} ≠ Credits $${centsToMoney(totalCreditsCents)} (diff: $${centsToMoney(diffCents)})`,
         );
       }
 
@@ -489,8 +510,8 @@ export const validateJournalEntryCsv = createServerFn({ method: "POST" })
         groupOrdinal: group.groupOrdinal,
         valid: groupErrors.length === 0,
         lineCount: groupRows.length,
-        totalDebits,
-        totalCredits,
+        totalDebits: totalDebitsCents / 100,
+        totalCredits: totalCreditsCents / 100,
         errors: groupErrors.length > 0 ? groupErrors : undefined,
         rows: groupRows,
       });
@@ -593,21 +614,15 @@ export const importJournalEntries = createServerFn({ method: "POST" })
             const partyId = firstRow.party ? partyMap.get(firstRow.party.toLowerCase()) : undefined;
 
             // Compute totals and reject unbalanced groups before posting.
-            let totalDebits = 0;
-            let totalCredits = 0;
+            let totalDebitsCents = 0;
+            let totalCreditsCents = 0;
             for (const row of group.rows) {
-              const d = row.debitAmount
-                ? Number.parseFloat(row.debitAmount.replace(/[,$]/g, ""))
-                : 0;
-              const c = row.creditAmount
-                ? Number.parseFloat(row.creditAmount.replace(/[,$]/g, ""))
-                : 0;
-              totalDebits += d;
-              totalCredits += c;
+              totalDebitsCents += csvMoneyCents(row.debitAmount) ?? 0;
+              totalCreditsCents += csvMoneyCents(row.creditAmount) ?? 0;
             }
-            if (Math.round((totalDebits - totalCredits) * 100) !== 0) {
+            if (totalDebitsCents !== totalCreditsCents) {
               throw new Error(
-                `Unbalanced entry: debits ${totalDebits.toFixed(2)} ≠ credits ${totalCredits.toFixed(2)}`,
+                `Unbalanced entry: debits ${centsToMoney(totalDebitsCents)} ≠ credits ${centsToMoney(totalCreditsCents)}`,
               );
             }
 
@@ -628,17 +643,13 @@ export const importJournalEntries = createServerFn({ method: "POST" })
                 );
               }
 
-              const debit = row.debitAmount
-                ? Number.parseFloat(row.debitAmount.replace(/[,$]/g, ""))
-                : 0;
-              const credit = row.creditAmount
-                ? Number.parseFloat(row.creditAmount.replace(/[,$]/g, ""))
-                : 0;
+              const debitCents = csvMoneyCents(row.debitAmount) ?? 0;
+              const creditCents = csvMoneyCents(row.creditAmount) ?? 0;
 
               return {
                 accountId,
-                debit: debit > 0 ? String(debit) : null,
-                credit: credit > 0 ? String(credit) : null,
+                debit: debitCents > 0 ? centsToMoney(debitCents) : null,
+                credit: creditCents > 0 ? centsToMoney(creditCents) : null,
                 lineDescription: row.description || row.memo || null,
                 departmentId: row.department
                   ? (deptMap.get(row.department.toLowerCase()) ?? null)

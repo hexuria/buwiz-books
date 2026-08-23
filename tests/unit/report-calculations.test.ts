@@ -241,7 +241,11 @@ describe("report calculations", () => {
     ]);
   });
 
-  it("builds a balanced trial balance with rounded totals", () => {
+  // PR-15 deliberate change: the old isBalanced was |debits-credits| < 0.01 —
+  // a float epsilon that certified this genuinely imbalanced fixture (raw
+  // difference 0.001) as balanced. The verdict is now exact at the cent:
+  // totals round to different cents here, so the trial balance says so.
+  it("quantizes totals to cents and refuses to call a sub-cent imbalance balanced", () => {
     const rows = [
       row({
         accountId: "cash",
@@ -263,6 +267,28 @@ describe("report calculations", () => {
 
     expect(result.totalDebit).toBe(100.01);
     expect(result.totalCredit).toBe(100);
+    expect(result.isBalanced).toBe(false);
+    expect(result.difference).toBe(0.01);
+  });
+
+  it("calls an exactly-equal trial balance balanced", () => {
+    const rows = [
+      row({
+        accountId: "cash",
+        accountName: "Cash",
+        accountType: "asset",
+        totalDebit: "250.10",
+        totalCredit: "0",
+      }),
+      row({
+        accountId: "revenue",
+        accountName: "Revenue",
+        accountType: "revenue",
+        totalDebit: "0",
+        totalCredit: "250.10",
+      }),
+    ];
+    const result = buildTrialBalance(rows, "2026-03-31");
     expect(result.isBalanced).toBe(true);
     expect(result.difference).toBe(0);
   });

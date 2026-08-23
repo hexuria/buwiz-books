@@ -17,6 +17,7 @@ import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { runReconciliationAgent, type AgentResult } from "../../../lib/reconciliation-agent";
 import {
+  balanceString,
   computeFinalizeBalances,
   RECONCILIATION_BALANCE_TOLERANCE,
 } from "../../../lib/reconciliation-finalize";
@@ -133,8 +134,8 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
               ledgerAccountId: agentBankAcct.ledgerAccountId,
               periodStart: recon.periodStart,
               periodEnd: recon.periodEnd,
-              statementBeginningBalance: Number.parseFloat(recon.statementBeginningBalance ?? "0"),
-              statementEndingBalance: Number.parseFloat(recon.statementEndingBalance ?? "0"),
+              statementBeginningBalance: recon.statementBeginningBalance ?? "0",
+              statementEndingBalance: recon.statementEndingBalance ?? "0",
             });
             netDifference = agentBalances.clearedDifference;
             unmatchedStatementLines = agentBalances.unmatchedStatementLines;
@@ -370,10 +371,8 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                 ledgerAccountId: bankAccount.ledgerAccountId,
                 periodStart: recon.periodStart,
                 periodEnd: recon.periodEnd,
-                statementBeginningBalance: Number.parseFloat(
-                  recon.statementBeginningBalance ?? "0",
-                ),
-                statementEndingBalance: Number.parseFloat(recon.statementEndingBalance ?? "0"),
+                statementBeginningBalance: recon.statementBeginningBalance ?? "0",
+                statementEndingBalance: recon.statementEndingBalance ?? "0",
               });
               if (
                 freshBalances.unmatchedStatementLines > 0 ||
@@ -396,9 +395,9 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                   // terminal state with these columns left NULL, giving inconsistent
                   // audit records for identical outcomes. The agent only reaches this
                   // step when finalizeGateEvaluable was true, so agentBalances is set.
-                  ledgerBalance: freshBalances.ledgerBalance.toFixed(2),
-                  clearedBalance: freshBalances.clearedBalance.toFixed(2),
-                  unclearedTotal: freshBalances.unclearedTotal.toFixed(2),
+                  ledgerBalance: balanceString(freshBalances.ledgerBalance),
+                  clearedBalance: balanceString(freshBalances.clearedBalance),
+                  unclearedTotal: balanceString(freshBalances.unclearedTotal),
                 })
                 .where(eq(reconciliations.id, step.targetId));
               executedCount++;

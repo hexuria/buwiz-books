@@ -2,6 +2,7 @@
  * Reconciliation API — Read / List / Detail / Timeline / Report
  */
 import { createServerFn } from "@tanstack/react-start";
+import { moneyToCents } from "@/lib/money";
 import {
   reconciliations,
   statementLines,
@@ -441,8 +442,10 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
       }
 
       const ledgerTransactions: LedgerTransaction[] = ledgerTxns.map((t) => {
-        const debitAmt = t.debit ? Number.parseFloat(t.debit) : 0;
-        const creditAmt = t.credit ? Number.parseFloat(t.credit) : 0;
+        // Integer cents (audit PR-15): amount is exact, and the summary sums
+        // below accumulate cents rather than drifting floats.
+        const debitCents = t.debit ? moneyToCents(t.debit, "debit") : 0;
+        const creditCents = t.credit ? moneyToCents(t.credit, "credit") : 0;
         const counterpart = counterpartMap.get(t.id);
         return {
           id: t.id,
@@ -452,7 +455,7 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
           description: t.description,
           debit: t.debit,
           credit: t.credit,
-          amount: debitAmt - creditAmt,
+          amount: (debitCents - creditCents) / 100,
           partyId: t.partyId,
           partyName: t.partyName,
           accountId: t.accountId,
@@ -470,48 +473,49 @@ export const getReconciliation = createServerFn({ method: "GET" }).handler(
         };
       });
 
-      // Compute summary
-      const beginBal = Number.parseFloat(recon.statementBeginningBalance ?? "0");
-      const endBal = Number.parseFloat(recon.statementEndingBalance ?? "0");
-      const netTxnBank = endBal - beginBal;
+      // Compute summary — all in integer cents, formatted once at the edge.
+      const beginBalCents = moneyToCents(recon.statementBeginningBalance ?? "0", "balance");
+      const endBalCents = moneyToCents(recon.statementEndingBalance ?? "0", "balance");
+      const netTxnBankCents = endBalCents - beginBalCents;
 
       // Exclude ignored lines from bank-side totals — they don't represent real activity
       const activeLines = lines.filter((l) => l.matchStatus !== "ignored");
+      const lineCents = (l: { amount: string }) => moneyToCents(l.amount, "amount");
 
-      const totalDepositsBank = activeLines
-        .filter((l) => Number.parseFloat(l.amount) > 0)
-        .reduce((sum, l) => sum + Number.parseFloat(l.amount), 0);
-      const totalWithdrawalsBank = activeLines
-        .filter((l) => Number.parseFloat(l.amount) < 0)
-        .reduce((sum, l) => sum + Math.abs(Number.parseFloat(l.amount)), 0);
+      const totalDepositsBankCents = activeLines
+        .filter((l) => lineCents(l) > 0)
+        .reduce((sum, l) => sum + lineCents(l), 0);
+      const totalWithdrawalsBankCents = activeLines
+        .filter((l) => lineCents(l) < 0)
+        .reduce((sum, l) => sum + Math.abs(lineCents(l)), 0);
 
-      const totalDepositsLedger = ledgerTransactions
+      const totalDepositsLedgerCents = ledgerTransactions
         .filter((t) => t.amount > 0)
-        .reduce((sum, t) => sum + t.amount, 0);
-      const totalWithdrawalsLedger = ledgerTransactions
+        .reduce((sum, t) => sum + Math.round(t.amount * 100), 0);
+      const totalWithdrawalsLedgerCents = ledgerTransactions
         .filter((t) => t.amount < 0)
-        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+        .reduce((sum, t) => sum + Math.abs(Math.round(t.amount * 100)), 0);
 
-      const unsettled = activeLines
+      const unsettledCents = activeLines
         .filter((l) => l.matchStatus === "unmatched")
-        .reduce((sum, l) => sum + Math.abs(Number.parseFloat(l.amount)), 0);
+        .reduce((sum, l) => sum + Math.abs(lineCents(l)), 0);
 
       // Compute ledger balance dynamically: beginning balance + net ledger movement
-      const netLedgerMovement = totalDepositsLedger - totalWithdrawalsLedger;
-      const ledgerBal = beginBal + netLedgerMovement;
-      const unreconciledDiff = endBal - ledgerBal;
+      const netLedgerMovementCents = totalDepositsLedgerCents - totalWithdrawalsLedgerCents;
+      const ledgerBalCents = beginBalCents + netLedgerMovementCents;
+      const unreconciledDiffCents = endBalCents - ledgerBalCents;
 
       const summary: ReconciliationSummary = {
-        endingBankBalance: formatCurrency(endBal),
-        openingBankBalance: formatCurrency(beginBal),
-        netTransactionsPerBank: formatCurrency(netTxnBank),
-        unsettledTransactions: formatCurrency(unsettled),
-        unreconciledDifference: formatCurrency(unreconciledDiff),
-        endingLedgerBalance: formatCurrency(ledgerBal),
-        totalDepositsBank: formatCurrency(totalDepositsBank),
-        totalDepositsLedger: formatCurrency(totalDepositsLedger),
-        totalWithdrawalsBank: formatCurrency(totalWithdrawalsBank),
-        totalWithdrawalsLedger: formatCurrency(totalWithdrawalsLedger),
+        endingBankBalance: formatCurrency(endBalCents / 100),
+        openingBankBalance: formatCurrency(beginBalCents / 100),
+        netTransactionsPerBank: formatCurrency(netTxnBankCents / 100),
+        unsettledTransactions: formatCurrency(unsettledCents / 100),
+        unreconciledDifference: formatCurrency(unreconciledDiffCents / 100),
+        endingLedgerBalance: formatCurrency(ledgerBalCents / 100),
+        totalDepositsBank: formatCurrency(totalDepositsBankCents / 100),
+        totalDepositsLedger: formatCurrency(totalDepositsLedgerCents / 100),
+        totalWithdrawalsBank: formatCurrency(totalWithdrawalsBankCents / 100),
+        totalWithdrawalsLedger: formatCurrency(totalWithdrawalsLedgerCents / 100),
       };
 
       // Boxes are keyed by (page, fieldId); legacy rows encoded the page into
@@ -836,8 +840,8 @@ export const getReconciliationReportData = createServerFn({ method: "GET" }).han
       const debits: Array<{ date: string; type: string; payee: string; amount: number }> = [];
 
       for (const txn of ledgerTxns) {
-        const debitAmt = txn.debit ? Number.parseFloat(txn.debit) : 0;
-        const creditAmt = txn.credit ? Number.parseFloat(txn.credit) : 0;
+        const debitAmt = txn.debit ? moneyToCents(txn.debit, "debit") / 100 : 0;
+        const creditAmt = txn.credit ? moneyToCents(txn.credit, "credit") / 100 : 0;
         const payee = txn.partyName ?? txn.description ?? txn.headerMemo ?? "Unknown";
         const typeName = TYPE_LABELS[txn.transactionType] ?? txn.transactionType;
 
@@ -865,8 +869,8 @@ export const getReconciliationReportData = createServerFn({ method: "GET" }).han
           day: "2-digit",
           year: "numeric",
         }),
-        statementEndingBalance: Number.parseFloat(recon.statementEndingBalance ?? "0"),
-        ledgerBalance: Number.parseFloat(recon.ledgerBalance ?? "0"),
+        statementEndingBalance: moneyToCents(recon.statementEndingBalance ?? "0", "balance") / 100,
+        ledgerBalance: moneyToCents(recon.ledgerBalance ?? "0", "balance") / 100,
         credits,
         debits,
 

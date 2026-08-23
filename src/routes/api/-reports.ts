@@ -3,6 +3,7 @@
  * Boundary layer for TanStack Start SSR
  */
 import { createServerFn } from "@tanstack/react-start";
+import { moneyToCents } from "../../lib/money";
 import {
   reportPeriodSchema,
   balanceSheetSchema,
@@ -204,24 +205,32 @@ export const getApAging = createServerFn({ method: "GET" }).handler(
         }
 
         const vendor = vendorMap.get(key)!;
-        const balance = Number.parseFloat(bill.balanceDue ?? "0");
+        // Integer cents (audit PR-15) — the buckets accumulate exactly and
+        // are converted to display numbers once, after all sums are done.
+        const balanceCents = moneyToCents(bill.balanceDue ?? "0", "balanceDue");
         const days = daysPastDue(bill.dueDate, asOf);
         const idx = getBucketIndex(days, buckets);
 
-        vendor.buckets[idx] += balance;
-        vendor.total += balance;
+        vendor.buckets[idx] += balanceCents;
+        vendor.total += balanceCents;
       }
 
       const vendors = [...vendorMap.values()].sort((a, b) => b.total - a.total);
 
       const bucketTotals = Array.from<number>({ length: bucketCount }).fill(0);
-      let grandTotal = 0;
+      let grandTotalCents = 0;
       for (const vendor of vendors) {
         for (let i = 0; i < bucketCount; i++) {
           bucketTotals[i] += vendor.buckets[i];
         }
-        grandTotal += vendor.total;
+        grandTotalCents += vendor.total;
+        vendor.buckets = vendor.buckets.map((cents) => cents / 100);
+        vendor.total /= 100;
       }
+      for (let i = 0; i < bucketCount; i++) {
+        bucketTotals[i] /= 100;
+      }
+      const grandTotal = grandTotalCents / 100;
 
       return {
         asOf,
@@ -325,24 +334,32 @@ export const getArAging = createServerFn({ method: "GET" }).handler(
         }
 
         const customer = customerMap.get(key)!;
-        const balance = Number.parseFloat(invoice.balanceDue ?? "0");
+        // Integer cents (audit PR-15) — the buckets accumulate exactly and
+        // are converted to display numbers once, after all sums are done.
+        const balanceCents = moneyToCents(invoice.balanceDue ?? "0", "balanceDue");
         const days = daysPastDue(invoice.dueDate, asOf);
         const idx = getBucketIndex(days, buckets);
 
-        customer.buckets[idx] += balance;
-        customer.total += balance;
+        customer.buckets[idx] += balanceCents;
+        customer.total += balanceCents;
       }
 
       const customers = [...customerMap.values()].sort((a, b) => b.total - a.total);
 
       const bucketTotals = Array.from<number>({ length: bucketCount }).fill(0);
-      let grandTotal = 0;
+      let grandTotalCents = 0;
       for (const customer of customers) {
         for (let i = 0; i < bucketCount; i++) {
           bucketTotals[i] += customer.buckets[i];
         }
-        grandTotal += customer.total;
+        grandTotalCents += customer.total;
+        customer.buckets = customer.buckets.map((cents) => cents / 100);
+        customer.total /= 100;
       }
+      for (let i = 0; i < bucketCount; i++) {
+        bucketTotals[i] /= 100;
+      }
+      const grandTotal = grandTotalCents / 100;
 
       return {
         asOf,
