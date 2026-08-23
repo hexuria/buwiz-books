@@ -132,6 +132,9 @@ describeDb("PH annual artifacts (2316 / 1604-C)", () => {
     // never the issuing run's period end.
     expect(issued.alphalist.content).toContain("12/31/2026");
     expect(issued.alphalist.content).not.toContain("12/01/2026");
-    expect(issued.alphalist.fileName).toBe(`1604C-123456780-${YEAR}.dat`);
+    // The C1 control record layout is untranscribed, so the file is a
+    // marked preview, never a submittable .dat, and the gap is named.
+    expect(issued.alphalist.fileName).toBe(`1604C-123456780-${YEAR}.dat.incomplete`);
+    expect(issued.alphalist.blockingIssues.join(" ")).toContain("1604C_C1_CONTROL_UNTRANSCRIBED");
   });
 });

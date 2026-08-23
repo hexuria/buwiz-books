@@ -37,6 +37,14 @@ export async function postCwtReceivable(
     .for("update");
 
   if (!certificate) throw new Error(`Certificate ${input.certificateId} was not found.`);
+  if (certificate.certificateType !== "received_2307") {
+    // An ISSUED 2307 records tax WE withheld from a supplier. Posting it here
+    // would debit CWT Receivable for a credit that is not ours — a fabricated
+    // income-tax credit.
+    throw new Error(
+      `Certificate ${certificate.id} is ${certificate.certificateType}; only a received 2307 creates a CWT receivable.`,
+    );
+  }
   if (certificate.journalHeaderId) {
     throw new CwtAlreadyPostedError(certificate.id, certificate.journalHeaderId);
   }

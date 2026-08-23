@@ -397,11 +397,29 @@ export async function issuePayrollArtifacts(
     ...findings.filter((f) => f.severity === "fatal").map((f) => `${f.code}: ${f.message}`),
   ];
 
+  // The 1604-C layout mandates one Header, N Details, ONE CONTROL record per
+  // schedule — and the C1 control record layout is still untranscribed
+  // (dat-layouts UNTRANSCRIBED_LAYOUTS). A file without it will be rejected
+  // by the BIR validation module, so the gap is made LOUD: the filename
+  // cannot be mistaken for a submittable .dat, and the blocking issue names
+  // exactly what is missing. The 2316 certificates are unaffected.
+  const controlRecordMissing = true;
+  const fileName = controlRecordMissing
+    ? `1604C-${employer.tin}-${run.taxableYear}.dat.incomplete`
+    : `1604C-${employer.tin}-${run.taxableYear}.dat`;
+  if (controlRecordMissing) {
+    blockingIssues.unshift(
+      "1604C_C1_CONTROL_UNTRANSCRIBED: the Schedule 1 control record layout has not been " +
+        "transcribed (docs/tax/IMPLEMENTATION-PLAN.md, .DAT spike) — this file is a PREVIEW and " +
+        "must not be submitted.",
+    );
+  }
+
   return {
     runId,
     certificates,
     alphalist: {
-      fileName: `1604C-${employer.tin}-${run.taxableYear}.dat`,
+      fileName,
       content: header.content + details.content,
       blockingIssues,
     },

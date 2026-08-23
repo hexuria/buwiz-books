@@ -309,12 +309,17 @@ export const remitWithholding = createServerFn({ method: "POST" }).handler(
       { routeKey: "tax:ewt-remit", limit: 10, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
         const input = remitSchema.parse(rawData);
-        return postEwtRemittance(db, {
-          organizationId: orgId,
-          userId,
-          month: input.month,
-          year: input.year,
-        });
+        // One transaction: the poster documents that it needs a
+        // transaction-scoped executor (header+lines+certificate pin must be
+        // atomic, and its FOR UPDATE is a no-op outside one).
+        return db.transaction((tx) =>
+          postEwtRemittance(tx, {
+            organizationId: orgId,
+            userId,
+            month: input.month,
+            year: input.year,
+          }),
+        );
       },
     );
   },

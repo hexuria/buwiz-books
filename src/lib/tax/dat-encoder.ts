@@ -219,6 +219,13 @@ function encodeField(
     value = t.value;
   }
 
+  // The hard boundary this module documents but never enforced: after
+  // transliteration, anything still outside printable ASCII (an é, an
+  // en-dash, a non-breaking space) would reach the .DAT and be rejected or
+  // mis-decoded by the BIR validation module. Refuse it here, naming the
+  // field, instead of producing a file that fails at the counter.
+  assertAsciiOnly(value, field.name);
+
   if (field.width != null && value.length > field.width) {
     // Truncation would shift every subsequent field, which is the silent
     // corruption this whole module is built to avoid.
