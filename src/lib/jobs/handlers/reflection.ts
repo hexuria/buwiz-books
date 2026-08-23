@@ -12,6 +12,7 @@
 // ============================================================================
 
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { withOrgContext, type DbExecutor } from "@/db";
 import { processingJobs } from "@/db/schema/inbox";
 import { aiActionProposals, aiLessons, aiRunFeedback } from "@/db/schema/ai";
@@ -43,7 +44,7 @@ export function reflectionDedupeKey(orgId: string, isoWeek: string): string {
 
 export async function processReflectionJob(
   job: ProcessingJob,
-  _ctx: JobContext,
+  ctx: JobContext,
 ): Promise<JobHandlerResult> {
   const orgId = job.organizationId;
   const payload = (job.payload ?? {}) as unknown as ReflectionJobPayload;
@@ -142,6 +143,12 @@ export async function processReflectionJob(
   }
 
   logger.info("Reflection complete", { orgId, kindsExamined: kinds.length, proposed });
+  const completed = await withOrgContext(orgId, "system", "admin", (tx) =>
+    completeProcessingJob(tx, job.id, ctx.workerId),
+  );
+  if (!completed) {
+    return { processed: false, reason: "lease_lost", jobId: job.id };
+  }
   return { processed: true, jobId: job.id, lessonsProposed: proposed };
 }
 

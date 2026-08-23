@@ -49,7 +49,7 @@ import {
   type StatementLineForMatching,
 } from "@/lib/auto-matcher";
 import { getStatementPassword } from "@/lib/financial-account-secrets";
-import { extendProcessingJobLease } from "@/lib/inbox/processing-job-lease";
+import { completeProcessingJob, extendProcessingJobLease } from "@/lib/inbox/processing-job-lease";
 import { createLogger } from "@/lib/logger";
 import { probePdf, renderPdfPagesForOcr } from "@/lib/pdf-unlock";
 import { resolveCandidateAccountIds } from "@/lib/resolve-candidate-accounts";
@@ -322,27 +322,6 @@ async function recordRunValidation(
     .where(eq(agentRuns.id, runId));
 }
 
-async function completeJob(tx: DbExecutor, job: ProcessingJob, workerId: string): Promise<boolean> {
-  const [completed] = await tx
-    .update(processingJobs)
-    .set({
-      status: "completed",
-      lockedBy: null,
-      lockedUntil: null,
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(processingJobs.id, job.id),
-        eq(processingJobs.status, "running"),
-        eq(processingJobs.lockedBy, workerId),
-      ),
-    )
-    .returning({ id: processingJobs.id });
-  return Boolean(completed);
-}
-
 type StageOutcome = { blocked: true; reason: Record<string, unknown> } | { blocked: false };
 
 // ============================================================================
@@ -364,7 +343,7 @@ export async function processStatementOcrJob(
   const run = { runId, orgId, processingJobId: job.id };
 
   const finish = async (extra: Record<string, unknown>): Promise<JobHandlerResult> => {
-    if (!(await orgTx(orgId, (tx) => completeJob(tx, job, workerId)))) {
+    if (!(await orgTx(orgId, (tx) => completeProcessingJob(tx, job.id, workerId)))) {
       return { processed: false, reason: "lease_lost", jobId: job.id };
     }
     return { processed: true, jobId: job.id, reconciliationId, documentId, runId, ...extra };

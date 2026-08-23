@@ -34,6 +34,7 @@ import {
 } from "@/lib/ai/facade";
 import { AiSpendCapError } from "@/lib/ai/spend";
 import { startRun, runStep, completeRun, failRun } from "@/lib/ai/agent-run";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { createProposal } from "@/lib/ai/proposals";
 import type { CoaDraftOutput } from "@/lib/ai/schemas/coa-draft";
 import type { CategoryMappingSuggestOutput } from "@/lib/ai/schemas/category-mapping-suggest";
@@ -127,9 +128,14 @@ async function loadOrgIndustry(tx: DbExecutor, orgId: string): Promise<string> {
 
 export async function processCoaScaffoldJob(
   job: ProcessingJob,
-  _ctx: JobContext,
+  ctx: JobContext,
 ): Promise<JobHandlerResult> {
   const orgId = job.organizationId;
+  // Terminalize the job row on every settled outcome — success, no_chart,
+  // or a typed permanent failure. Without this the job stayed "running",
+  // was retried after lease expiry, and finally terminalized as FAILED even
+  // though the run had finished.
+  const finishJob = () => orgTx((tx) => completeProcessingJob(tx, job.id, ctx.workerId));
   const payload = (job.payload ?? {}) as unknown as CoaScaffoldJobPayload;
 
   const orgTx = <T>(fn: (tx: DbExecutor) => Promise<T>) =>
@@ -159,6 +165,9 @@ export async function processCoaScaffoldJob(
           orgId,
         ),
       );
+      if (!(await finishJob())) {
+        return { processed: false, reason: "lease_lost", jobId: job.id };
+      }
       return { processed: true, jobId: job.id, runId, reason: "no_chart" };
     }
 
@@ -326,6 +335,9 @@ export async function processCoaScaffoldJob(
     });
 
     await orgTx((tx) => completeRun(tx, runId));
+    if (!(await finishJob())) {
+      return { processed: false, reason: "lease_lost", jobId: job.id };
+    }
     return {
       processed: true,
       jobId: job.id,
@@ -344,6 +356,9 @@ export async function processCoaScaffoldJob(
       // missing credential just delays telling the user what is wrong.
       logger.warn("COA scaffold stopped on a configuration failure", { orgId, kind, message });
       await orgTx((tx) => failRun(tx, runId, { kind, message }, orgId)).catch(() => undefined);
+      if (!(await finishJob())) {
+        return { processed: false, reason: "lease_lost", jobId: job.id };
+      }
       return { processed: true, jobId: job.id, runId, reason: kind };
     }
 

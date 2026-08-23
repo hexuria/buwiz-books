@@ -10,10 +10,10 @@
 import { Resend } from "resend";
 import { and, eq, sql } from "drizzle-orm";
 import { withOrgContext, type DbExecutor } from "@/db";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import {
   inboxItems,
   ingestionEvents,
-  processingJobs,
   reviewFindings,
   sourceRecordDocuments,
   sourceRecordVersions,
@@ -564,24 +564,7 @@ export async function processInboundEmailJob(
   }
 
   const finalized = await orgTx(async (tx) => {
-    const [completedJob] = await tx
-      .update(processingJobs)
-      .set({
-        status: "completed",
-        lockedBy: null,
-        lockedUntil: null,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(processingJobs.id, job.id),
-          eq(processingJobs.status, "running"),
-          eq(processingJobs.lockedBy, workerId),
-        ),
-      )
-      .returning({ id: processingJobs.id });
-    if (!completedJob) return false;
+    if (!(await completeProcessingJob(tx, job.id, workerId))) return false;
 
     await tx.execute(sql`
       SELECT pg_advisory_xact_lock(

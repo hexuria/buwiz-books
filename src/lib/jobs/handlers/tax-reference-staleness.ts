@@ -13,19 +13,18 @@
  * organizationId from the queue row (jobs are org-scoped infrastructure) and
  * simply does not need it for the read.
  */
-import { eq } from "drizzle-orm";
 import { withOrgContext } from "@/db";
-import { processingJobs } from "@/db/schema/inbox";
 import { taxReferenceDatasets } from "@/db/schema/tax-reference";
 import { createLogger } from "@/lib/logger";
 import { buildStalenessReport, type StalenessInput } from "@/lib/tax/reference-data-staleness";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
 const logger = createLogger("jobs.tax-reference-staleness");
 
 export async function processTaxReferenceStalenessJob(
   job: ProcessingJob,
-  _context: JobContext,
+  context: JobContext,
 ): Promise<JobHandlerResult> {
   // The datasets table is global and org-less; reading it under the job's
   // org context is harmless and keeps this handler free of the module-level
@@ -59,18 +58,14 @@ export async function processTaxReferenceStalenessJob(
     summary: report.summary,
   });
 
-  await withOrgContext(job.organizationId, "system", "admin", (tx) =>
-    tx
-      .update(processingJobs)
-      .set({
-        status: "completed",
-        lockedBy: null,
-        lockedUntil: null,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(processingJobs.id, job.id)),
+  // Fenced completion — the old update matched on id alone, so an expired
+  // worker could overwrite its successor's claim.
+  const completed = await withOrgContext(job.organizationId, "system", "admin", (tx) =>
+    completeProcessingJob(tx, job.id, context.workerId),
   );
+  if (!completed) {
+    return { processed: false, reason: "lease_lost", jobId: job.id };
+  }
 
   return { processed: true, jobId: job.id };
 }

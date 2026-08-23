@@ -6,6 +6,7 @@
 // rows, plus the run ledger.
 // ============================================================================
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from "vitest";
+import { processingJobs } from "../../src/db/schema/inbox";
 import { createTestDb } from "../utils/db-utils";
 import { and, eq } from "drizzle-orm";
 import postgres from "postgres";
@@ -18,6 +19,7 @@ import { financialAccounts } from "../../src/db/schema/financial-accounts";
 import { accounts } from "../../src/db/schema/accounts";
 import { journalHeaders, journalLines } from "../../src/db/schema/journals";
 import { agentRuns } from "../../src/db/schema/ai";
+import { organization } from "../../src/db/schema/auth";
 
 const { aiCompleteMock } = vi.hoisted(() => ({ aiCompleteMock: vi.fn() }));
 vi.mock("../../src/lib/ai/facade", () => ({ aiComplete: aiCompleteMock }));
@@ -50,6 +52,12 @@ describeDb("match_assist job", () => {
   /** Seed an org with a bank account, a reconciliation, one unmatched line and one ledger candidate. */
   async function seedScenario() {
     const orgId = crypto.randomUUID();
+    // processing_jobs FKs auth_organizations — the job fixture needs a real org row.
+    await db.insert(organization).values({
+      id: orgId,
+      name: "Match Assist Org",
+      slug: `ma-${crypto.randomUUID().slice(0, 12)}`,
+    });
 
     const [ledgerAccount] = await db
       .insert(accounts)
@@ -152,12 +160,27 @@ describeDb("match_assist job", () => {
     return { orgId, reconciliationId: recon.id, statementLineId: line.id, journalLineId: jlId };
   }
 
-  const job = (orgId: string, reconciliationId: string, prefill = false) =>
-    ({
-      id: crypto.randomUUID(),
+  // PR-17: the handler now terminalizes its job row with a fenced
+  // completion, so the fixture must be a REAL running job locked by this
+  // worker — a fabricated id would read as a lost lease.
+  const job = async (orgId: string, reconciliationId: string, prefill = false) => {
+    const [row] = await db
+      .insert(processingJobs)
+      .values({
+        organizationId: orgId,
+        jobType: "match_assist",
+        status: "running",
+        lockedBy: "test-worker",
+        lockedUntil: new Date(Date.now() + 60_000),
+        payload: { reconciliationId, ...(prefill ? { prefill: true } : {}) },
+      })
+      .returning({ id: processingJobs.id });
+    return {
+      id: row.id,
       organizationId: orgId,
       payload: { reconciliationId, ...(prefill ? { prefill: true } : {}) },
-    }) as never;
+    } as never;
+  };
 
   const ctx = { workerId: "test-worker" } as never;
 
@@ -180,7 +203,7 @@ describeDb("match_assist job", () => {
       },
     });
 
-    const result = await processMatchAssistJob(job(s.orgId, s.reconciliationId), ctx);
+    const result = await processMatchAssistJob(await job(s.orgId, s.reconciliationId), ctx);
     expect(result.processed).toBe(true);
 
     const suggestions = await db
@@ -225,7 +248,7 @@ describeDb("match_assist job", () => {
       },
     });
 
-    await processMatchAssistJob(job(s.orgId, s.reconciliationId), ctx);
+    await processMatchAssistJob(await job(s.orgId, s.reconciliationId), ctx);
     const suggestions = await db
       .select()
       .from(reconciliationSuggestions)
@@ -262,7 +285,7 @@ describeDb("match_assist job", () => {
       },
     });
 
-    await processMatchAssistJob(job(s.orgId, s.reconciliationId), ctx);
+    await processMatchAssistJob(await job(s.orgId, s.reconciliationId), ctx);
     const pending = await db
       .select()
       .from(reconciliationSuggestions)
@@ -282,14 +305,20 @@ describeDb("match_assist job", () => {
       .set({ matchStatus: "matched", matchedJournalLineId: s.journalLineId })
       .where(eq(statementLines.id, s.statementLineId));
 
-    const result = await processMatchAssistJob(job(s.orgId, s.reconciliationId), ctx);
+    const result = await processMatchAssistJob(await job(s.orgId, s.reconciliationId), ctx);
     expect(result.processed).toBe(true);
     expect(aiCompleteMock).not.toHaveBeenCalled();
   });
 
   it("fails the run when the reconciliation is gone", async () => {
     const orgId = crypto.randomUUID();
-    const result = await processMatchAssistJob(job(orgId, crypto.randomUUID()), ctx);
+    // processing_jobs FKs auth_organizations — the job fixture needs a real org row.
+    await db.insert(organization).values({
+      id: orgId,
+      name: "Match Assist Org",
+      slug: `ma-${crypto.randomUUID().slice(0, 12)}`,
+    });
+    const result = await processMatchAssistJob(await job(orgId, crypto.randomUUID()), ctx);
     expect(result.reason).toBe("reconciliation_missing");
     const runs = await db
       .select()

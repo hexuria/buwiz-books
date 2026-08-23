@@ -31,6 +31,7 @@ import { getClaimedJournalLineIds } from "@/lib/reconciliation-claimed-lines";
 import { runMatchAssist } from "@/lib/match-assist/run";
 import { runTxnPrefill } from "@/lib/match-assist/prefill";
 import { startRun, runStep, completeRun, failRun } from "@/lib/ai/agent-run";
+import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { extendProcessingJobLease } from "@/lib/inbox/processing-job-lease";
 import { createLogger } from "@/lib/logger";
 import { retryPolicyFor } from "../retry-policy";
@@ -46,8 +47,11 @@ export interface MatchAssistJobPayload {
   prefill?: boolean;
 }
 
-export function matchAssistDedupeKey(reconciliationId: string): string {
-  return `match_assist:${reconciliationId}`;
+export function matchAssistDedupeKey(reconciliationId: string, prefill = false): string {
+  // The flag is part of the key: a queued suggest-only job used to swallow a
+  // prefill request via onConflictDoNothing, and the user's explicit
+  // "prefill what's left" click silently did nothing.
+  return `match_assist:${reconciliationId}${prefill ? ":prefill" : ""}`;
 }
 
 /**
@@ -257,6 +261,9 @@ export async function processMatchAssistJob(
     }
 
     await orgTx((tx) => completeRun(tx, runId));
+    if (!(await orgTx((tx) => completeProcessingJob(tx, job.id, ctx.workerId)))) {
+      return { processed: false, reason: "lease_lost", jobId: job.id };
+    }
     return {
       processed: true,
       jobId: job.id,
@@ -282,7 +289,7 @@ export async function enqueueMatchAssistJob(
   tx: DbExecutor,
   input: { organizationId: string; reconciliationId: string; prefill?: boolean },
 ): Promise<string | null> {
-  const dedupeKey = matchAssistDedupeKey(input.reconciliationId);
+  const dedupeKey = matchAssistDedupeKey(input.reconciliationId, input.prefill === true);
   const [created] = await tx
     .insert(processingJobs)
     .values({

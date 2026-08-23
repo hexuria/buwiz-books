@@ -612,7 +612,8 @@ describe("previously unreachable PH features are wired", () => {
     );
     // The handler owns its completion (registry contract) — the audit found
     // three handlers that never completed and re-ran on lease expiry.
-    expect(handler).toContain('status: "completed"');
+    // PR-17: completion funnels through the shared fenced helper.
+    expect(handler).toContain("completeProcessingJob(");
   });
 
   it("staleness is visible where filings are prepared", () => {
