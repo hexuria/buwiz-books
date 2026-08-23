@@ -120,3 +120,133 @@ describeDb("tenant isolation contract", () => {
     expect(rows.map((r: any) => r.organizationId).sort()).toEqual([ORG_A, ORG_B].sort());
   });
 });
+
+describeDb("credential and identity table policies", () => {
+  // The 2026-08 audit found these five org/user-scoped tables with NO policy
+  // at all — organization_secrets and financial_account_secrets holding
+  // encrypted credentials, and auth_members being the table the tenant
+  // boundary itself is derived from. The policies keep the permissive
+  // IS NULL escape (nothing changes until the role hardening); what this
+  // test pins is that the RATCHET exists and scopes correctly under an org
+  // or user context.
+  let db: any;
+  let sql: postgres.Sql;
+
+  beforeAll(async () => {
+    ({ db, sql } = await createTestDb());
+  });
+  afterAll(async () => {
+    await sql.end();
+  });
+
+  it("every previously-unpoliced table now has RLS enabled with a policy", async () => {
+    const rows = (await db.execute(drizzleSql`
+      SELECT c.relname AS table_name,
+             c.relrowsecurity AS rls_enabled,
+             count(p.polname)::int AS policies
+      FROM pg_class c
+      LEFT JOIN pg_policy p ON p.polrelid = c.oid
+      WHERE c.relname IN (
+        'organization_secrets', 'financial_account_secrets',
+        'auth_members', 'auth_sessions', 'auth_invitations'
+      )
+      GROUP BY c.relname, c.relrowsecurity
+    `)) as Array<{ table_name: string; rls_enabled: boolean; policies: number }>;
+    expect(rows).toHaveLength(5);
+    for (const row of rows) {
+      expect(row.rls_enabled, row.table_name).toBe(true);
+      expect(row.policies, row.table_name).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("org context scopes organization_secrets; user context scopes auth_sessions", async () => {
+    const ORG_A = crypto.randomUUID();
+    const ORG_B = crypto.randomUUID();
+    const USER_A = `secrets-user-a-${crypto.randomUUID()}`;
+    const USER_B = `secrets-user-b-${crypto.randomUUID()}`;
+
+    await db.execute(drizzleSql`
+      INSERT INTO auth_users (id, name, email, email_verified)
+      VALUES (${USER_A}, 'A', ${USER_A + "@t.local"}, true),
+             (${USER_B}, 'B', ${USER_B + "@t.local"}, true)
+    `);
+    await db.execute(drizzleSql`
+      INSERT INTO auth_organizations (id, name, slug)
+      VALUES (${ORG_A}, 'Secrets A', ${"sa-" + ORG_A.slice(0, 8)}),
+             (${ORG_B}, 'Secrets B', ${"sb-" + ORG_B.slice(0, 8)})
+    `);
+    await db.execute(drizzleSql`
+      INSERT INTO organization_secrets (organization_id, resend_api_key)
+      VALUES (${ORG_A}, 'enc-a'), (${ORG_B}, 'enc-b')
+    `);
+    await db.execute(drizzleSql`
+      INSERT INTO auth_sessions (id, token, user_id, expires_at)
+      VALUES (${crypto.randomUUID()}, ${crypto.randomUUID()}, ${USER_A}, now() + interval '1 day'),
+             (${crypto.randomUUID()}, ${crypto.randomUUID()}, ${USER_B}, now() + interval '1 day')
+    `);
+
+    // Under ORG_A's context, only ORG_A's secret is visible.
+    const orgScoped = await db.transaction(async (tx: any) => {
+      await tx.execute(drizzleSql`SET LOCAL ROLE buwiz_app`);
+      await tx.execute(
+        drizzleSql`SELECT set_config('app.current_organization_id', ${ORG_A}, true)`,
+      );
+      return (await tx.execute(
+        drizzleSql`SELECT organization_id FROM organization_secrets WHERE organization_id IN (${ORG_A}, ${ORG_B})`,
+      )) as Array<{ organization_id: string }>;
+    });
+    expect(orgScoped.map((r: any) => r.organization_id)).toEqual([ORG_A]);
+
+    // Under USER_A's context, only USER_A's session is visible.
+    const userScoped = await db.transaction(async (tx: any) => {
+      await tx.execute(drizzleSql`SET LOCAL ROLE buwiz_app`);
+      await tx.execute(drizzleSql`SELECT set_config('app.current_user_id', ${USER_A}, true)`);
+      return (await tx.execute(
+        drizzleSql`SELECT user_id FROM auth_sessions WHERE user_id IN (${USER_A}, ${USER_B})`,
+      )) as Array<{ user_id: string }>;
+    });
+    expect(userScoped.map((r: any) => r.user_id)).toEqual([USER_A]);
+  });
+
+  it("a member row is visible to its own user AND inside its organization", async () => {
+    const ORG = crypto.randomUUID();
+    const OWNER = `member-owner-${crypto.randomUUID()}`;
+    const OTHER = `member-other-${crypto.randomUUID()}`;
+    await db.execute(drizzleSql`
+      INSERT INTO auth_users (id, name, email, email_verified)
+      VALUES (${OWNER}, 'O', ${OWNER + "@t.local"}, true)
+    `);
+    await db.execute(drizzleSql`
+      INSERT INTO auth_organizations (id, name, slug)
+      VALUES (${ORG}, 'Member Org', ${"mo-" + ORG.slice(0, 8)})
+    `);
+    await db.execute(drizzleSql`
+      INSERT INTO auth_members (id, user_id, organization_id, role)
+      VALUES (${crypto.randomUUID()}, ${OWNER}, ${ORG}, 'owner')
+    `);
+
+    // The user sees their own membership with NO org context — the org
+    // picker depends on exactly this.
+    const own = await db.transaction(async (tx: any) => {
+      await tx.execute(drizzleSql`SET LOCAL ROLE buwiz_app`);
+      await tx.execute(drizzleSql`SELECT set_config('app.current_user_id', ${OWNER}, true)`);
+      return (await tx.execute(
+        drizzleSql`SELECT user_id FROM auth_members WHERE organization_id = ${ORG}`,
+      )) as Array<{ user_id: string }>;
+    });
+    expect(own).toHaveLength(1);
+
+    // A DIFFERENT user with a DIFFERENT org context sees nothing.
+    const foreign = await db.transaction(async (tx: any) => {
+      await tx.execute(drizzleSql`SET LOCAL ROLE buwiz_app`);
+      await tx.execute(drizzleSql`SELECT set_config('app.current_user_id', ${OTHER}, true)`);
+      await tx.execute(
+        drizzleSql`SELECT set_config('app.current_organization_id', ${crypto.randomUUID()}, true)`,
+      );
+      return (await tx.execute(
+        drizzleSql`SELECT user_id FROM auth_members WHERE organization_id = ${ORG}`,
+      )) as Array<{ user_id: string }>;
+    });
+    expect(foreign).toHaveLength(0);
+  });
+});

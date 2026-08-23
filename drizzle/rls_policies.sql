@@ -933,3 +933,79 @@ BEGIN
     RAISE NOTICE 'RLS configured for tax_computed_returns';
   END IF;
 END $$;
+
+-- ============================================================================
+-- Credentials and identity tables (2026-08 audit: the five org/user-scoped
+-- tables with NO policy at all — two of them holding encrypted secrets, and
+-- auth_members being the table the entire tenant boundary is derived from).
+--
+-- Every policy keeps the permissive `IS NULL` escape, so nothing changes
+-- until the planned role hardening — the point is that the ratchet EXISTS
+-- when the escape is dropped, instead of these being the only org-scoped
+-- tables without one. better-auth's own adapter runs as the table owner and
+-- is unaffected either way.
+-- ============================================================================
+DO $$
+BEGIN
+  -- Org-scoped secrets: the app-level WHERE organization_id predicate was the
+  -- ONLY boundary on API keys and statement passwords.
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'organization_secrets') THEN
+    ALTER TABLE organization_secrets ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_organization_secrets ON organization_secrets;
+    CREATE POLICY org_isolation_organization_secrets ON organization_secrets FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for organization_secrets';
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'financial_account_secrets') THEN
+    ALTER TABLE financial_account_secrets ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_financial_account_secrets ON financial_account_secrets;
+    CREATE POLICY org_isolation_financial_account_secrets ON financial_account_secrets FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for financial_account_secrets';
+  END IF;
+
+  -- Memberships are readable by their OWN user (cross-org: the org picker
+  -- lists a user's memberships before any org context exists) and by anyone
+  -- inside the row's organization (admins list an org's members).
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auth_members') THEN
+    ALTER TABLE auth_members ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS scope_isolation_auth_members ON auth_members;
+    CREATE POLICY scope_isolation_auth_members ON auth_members FOR ALL
+      USING (
+        (current_organization_id() IS NULL AND current_user_id() IS NULL)
+        OR user_id = current_user_id()
+        OR organization_id = current_organization_id()
+      )
+      WITH CHECK (
+        (current_organization_id() IS NULL AND current_user_id() IS NULL)
+        OR user_id = current_user_id()
+        OR organization_id = current_organization_id()
+      );
+    RAISE NOTICE 'RLS configured for auth_members';
+  END IF;
+
+  -- Sessions belong to their user, full stop.
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auth_sessions') THEN
+    ALTER TABLE auth_sessions ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS user_isolation_auth_sessions ON auth_sessions;
+    CREATE POLICY user_isolation_auth_sessions ON auth_sessions FOR ALL
+      USING (current_user_id() IS NULL OR user_id = current_user_id())
+      WITH CHECK (current_user_id() IS NULL OR user_id = current_user_id());
+    RAISE NOTICE 'RLS configured for auth_sessions';
+  END IF;
+
+  -- Invitations are managed inside their organization. Acceptance runs with
+  -- no context today (the invitee is by definition not yet a member) and
+  -- rides the escape; that path is tracked in docs/audit-backlog.md.
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'auth_invitations') THEN
+    ALTER TABLE auth_invitations ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_auth_invitations ON auth_invitations;
+    CREATE POLICY org_isolation_auth_invitations ON auth_invitations FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for auth_invitations';
+  END IF;
+END $$;
