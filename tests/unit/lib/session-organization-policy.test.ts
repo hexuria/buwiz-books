@@ -1,27 +1,25 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { resolveSessionOrganization } from "../../../src/lib/session-organization-policy";
 
+/**
+ * The audit's session-revocation high, pinned at the policy layer.
+ *
+ * The old resolver short-circuited on the cookie-cached member-role claim:
+ * with better-auth's 24h cookieCache, a member removed from the organization
+ * kept full access — and a demoted admin their admin role — for up to a day,
+ * because no server code ever looked past the cookie. (This file's first test
+ * used to pin exactly that behavior as correct.) The claim is now structurally
+ * untrusted: it is not even an input to the resolver, so every request with an
+ * active organization MUST go through the auth_members lookup, and revocation
+ * bites on the very next request.
+ */
 describe("resolveSessionOrganization", () => {
-  it("uses a complete active-session organization without loading membership", () => {
-    expect(
-      resolveSessionOrganization({
-        activeOrganizationId: "org-a",
-        activeMemberRole: "admin",
-        membership: { state: "not_loaded" },
-      }),
-    ).toEqual({
-      kind: "resolved",
-      orgId: "org-a",
-      role: "admin",
-      activateOrganization: false,
-    });
-  });
-
-  it("requests only the active organization's membership when its role is absent", () => {
+  it("an active organization ALWAYS demands the membership lookup — no cookie claim skips it", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: "org-b",
-        activeMemberRole: null,
         membership: { state: "not_loaded" },
       }),
     ).toEqual({ kind: "lookup_active_membership", orgId: "org-b" });
@@ -31,7 +29,6 @@ describe("resolveSessionOrganization", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: "org-b",
-        activeMemberRole: null,
         membership: {
           state: "loaded",
           membership: { organizationId: "org-b", role: "member" },
@@ -53,7 +50,6 @@ describe("resolveSessionOrganization", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: "org-b",
-        activeMemberRole: null,
         membership: { state: "loaded", membership },
       }),
     ).toEqual({ kind: "forbidden" });
@@ -63,7 +59,6 @@ describe("resolveSessionOrganization", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: null,
-        activeMemberRole: null,
         membership: { state: "not_loaded" },
       }),
     ).toEqual({ kind: "lookup_oldest_membership" });
@@ -73,7 +68,6 @@ describe("resolveSessionOrganization", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: null,
-        activeMemberRole: "admin",
         membership: {
           state: "loaded",
           membership: { organizationId: "org-oldest", role: "member" },
@@ -91,7 +85,6 @@ describe("resolveSessionOrganization", () => {
     expect(
       resolveSessionOrganization({
         activeOrganizationId: null,
-        activeMemberRole: null,
         membership: { state: "loaded", membership: null },
       }),
     ).toEqual({ kind: "no_organization" });
@@ -105,10 +98,37 @@ describe("resolveSessionOrganization", () => {
       expect(
         resolveSessionOrganization({
           activeOrganizationId: null,
-          activeMemberRole: "admin",
           membership: { state: "loaded", membership },
         }),
       ).toEqual({ kind: "forbidden" });
     }
+  });
+});
+
+describe("session revocation wiring", () => {
+  const read = (rel: string) => readFileSync(join(__dirname, "../../..", rel), "utf-8");
+
+  it("the resolver never references the cookie role claim again", () => {
+    const policy = read("src/lib/session-organization-policy.ts");
+    expect(policy).not.toContain("activeMemberRole");
+  });
+
+  it("the middleware feeds the resolver session org id and membership evidence only", () => {
+    const middleware = read("src/lib/auth-middleware.ts");
+    const calls = middleware.match(/resolveSessionOrganization\(\{[\s\S]*?\}\)/g) ?? [];
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const call of calls) {
+      expect(call).not.toContain("activeMemberRole");
+    }
+  });
+
+  it("member removal and role change both revoke the target's sessions", () => {
+    const orgSettings = read("src/routes/api/-org-settings.ts");
+    expect(orgSettings).toContain(
+      'import { revokeUserSessionsAsAdmin } from "../../lib/session-revocation"',
+    );
+    const revocations =
+      orgSettings.match(/await revokeUserSessionsAsAdmin\(existing\.userId\)/g) ?? [];
+    expect(revocations.length).toBe(2);
   });
 });

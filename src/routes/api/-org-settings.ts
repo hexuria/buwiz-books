@@ -6,6 +6,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { serverBrand } from "@/config/brand";
 import { organization, member, user, invitation } from "../../db/schema/auth";
+import { revokeUserSessionsAsAdmin } from "../../lib/session-revocation";
 import { eq, and, desc } from "drizzle-orm";
 import { createLogger } from "../../lib/logger";
 import {
@@ -625,7 +626,11 @@ export const updateMemberRole = createServerFn({ method: "POST" }).handler(
         }
 
         const [existing] = await ctx.db
-          .select({ organizationId: member.organizationId, role: member.role })
+          .select({
+            organizationId: member.organizationId,
+            role: member.role,
+            userId: member.userId,
+          })
           .from(member)
           .where(eq(member.id, memberId))
           .limit(1);
@@ -641,6 +646,10 @@ export const updateMemberRole = createServerFn({ method: "POST" }).handler(
           .update(member)
           .set({ role, updatedAt: new Date() })
           .where(eq(member.id, memberId));
+
+        // Kill the target's sessions so the cookie-cached role claim dies with
+        // the old role (see session-revocation.ts for why this runs on dbAdmin).
+        await revokeUserSessionsAsAdmin(existing.userId);
 
         return { success: true };
       },
@@ -663,7 +672,11 @@ export const removeOrgMember = createServerFn({ method: "POST" }).handler(
         if (!memberId) throw new Error("memberId is required");
 
         const [existing] = await ctx.db
-          .select({ organizationId: member.organizationId, role: member.role })
+          .select({
+            organizationId: member.organizationId,
+            role: member.role,
+            userId: member.userId,
+          })
           .from(member)
           .where(eq(member.id, memberId))
           .limit(1);
@@ -676,6 +689,10 @@ export const removeOrgMember = createServerFn({ method: "POST" }).handler(
         }
 
         await ctx.db.delete(member).where(eq(member.id, memberId));
+
+        // Kill the removed member's sessions so their next request re-auths
+        // instead of riding the 24h cookie cache (see session-revocation.ts).
+        await revokeUserSessionsAsAdmin(existing.userId);
 
         return { success: true };
       },

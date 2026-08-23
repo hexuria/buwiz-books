@@ -44,6 +44,10 @@ export async function requireSession(headers: Headers) {
  * Returns userId, orgId, and role — avoids redundant session fetches.
  * Throws AuthenticationError if not authenticated.
  *
+ * The role ALWAYS comes from a live auth_members read, never from the
+ * cookie-cached session claim — removal and demotion take effect on the very
+ * next request instead of after the 24h cookie cache expires.
+ *
  * If no active organization is set on the session, auto-resolves from
  * the user's first membership to avoid "No active organization" errors.
  */
@@ -51,10 +55,8 @@ export async function getSessionContext(headers: Headers): Promise<SessionContex
   const session = await requireSession(headers);
 
   const activeOrganizationId = getSessionActiveOrganizationId(session);
-  const activeMemberRole = getSessionActiveMemberRole(session);
   let resolution = resolveSessionOrganization({
     activeOrganizationId,
-    activeMemberRole,
     membership: { state: "not_loaded" },
   });
 
@@ -88,7 +90,6 @@ export async function getSessionContext(headers: Headers): Promise<SessionContex
 
     resolution = resolveSessionOrganization({
       activeOrganizationId,
-      activeMemberRole,
       membership: { state: "loaded", membership },
     });
   }
@@ -221,7 +222,10 @@ export async function getActiveOrganizationId(headers: Headers): Promise<string 
 }
 
 /**
- * Get the current user's role in the active organization.
+ * Get the current user's role in the active organization, as CLAIMED by the
+ * cookie-cached session — up to 24h stale. Display purposes only; never use
+ * this for authorization (getSessionContext re-resolves the role from
+ * auth_members on every call).
  * Returns null if no active organization.
  */
 export async function getActiveMemberRole(headers: Headers): Promise<string | null> {

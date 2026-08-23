@@ -16,25 +16,23 @@ export type SessionOrganizationResolution =
 
 /**
  * Resolve one internally consistent organization/role pair from session state
- * and, when needed, one organization-membership lookup.
+ * plus one organization-membership lookup.
+ *
+ * The session cookie's cached role claim is deliberately NOT an input. With
+ * better-auth's 24h cookieCache, trusting the cookie's member-role field meant a removed
+ * member kept full access — and a demoted one their old role — for up to a
+ * day after the auth_members row changed, because nothing on the server ever
+ * looked past the cookie. Authorization is always re-resolved from the
+ * membership row (one indexed read per request); the cookie cache keeps
+ * serving identity, never authorization.
  */
 export function resolveSessionOrganization(input: {
   activeOrganizationId: string | null;
-  activeMemberRole: string | null;
   membership: MembershipEvidence;
 }): SessionOrganizationResolution {
-  const { activeOrganizationId, activeMemberRole, membership } = input;
+  const { activeOrganizationId, membership } = input;
 
   if (activeOrganizationId) {
-    if (activeMemberRole) {
-      return {
-        kind: "resolved",
-        orgId: activeOrganizationId,
-        role: activeMemberRole,
-        activateOrganization: false,
-      };
-    }
-
     if (membership.state === "not_loaded") {
       return { kind: "lookup_active_membership", orgId: activeOrganizationId };
     }
