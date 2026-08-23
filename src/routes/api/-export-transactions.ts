@@ -580,25 +580,31 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
           ]);
         }
 
-        // Retained Earnings row (no account number)
-        const retainedEarnings = tb.totalDebit - tb.totalCredit;
-        if (Math.abs(retainedEarnings) > 0.001) {
+        // Retained Earnings plug (no account number). The old row put the
+        // plug on the wrong side AND hard-coded the debit cell to zero via a
+        // ternary whose both branches were zero, then excluded it from the total
+        // row — so the sheet never footed. Debits exceeding credits need a
+        // CREDIT plug, and vice versa, and the totals must include it.
+        const reCents = Math.round((tb.totalDebit - tb.totalCredit) * 100);
+        const rePlugDebitCents = reCents < 0 ? -reCents : 0;
+        const rePlugCreditCents = reCents > 0 ? reCents : 0;
+        if (reCents !== 0) {
           data.push([
             { v: null },
             { v: null },
             { v: "Retained Earnings" },
-            cell(retainedEarnings < 0 ? 0 : 0, { fmt: CURRENCY_FMT }),
-            cell(retainedEarnings < 0 ? Math.abs(retainedEarnings) : 0, { fmt: CURRENCY_FMT }),
+            cell(rePlugDebitCents / 100, { fmt: CURRENCY_FMT }),
+            cell(rePlugCreditCents / 100, { fmt: CURRENCY_FMT }),
           ]);
         }
 
-        // Total row
+        // Total row — foots exactly because the plug is counted.
         data.push([
           { v: null },
           { v: null },
           { v: "Total Balance" },
-          cell(tb.totalDebit, { fmt: CURRENCY_FMT }),
-          cell(tb.totalCredit, { fmt: CURRENCY_FMT }),
+          cell(tb.totalDebit + rePlugDebitCents / 100, { fmt: CURRENCY_FMT }),
+          cell(tb.totalCredit + rePlugCreditCents / 100, { fmt: CURRENCY_FMT }),
         ]);
 
         const wb = XLSX.utils.book_new();
@@ -638,9 +644,10 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
         ];
 
         // Helper to add section with proper indentation
+        // No current/non-current split is computed, so the labels must not
+        // claim one.
         const addBSSection = (label: string, sectionAccts: any[]) => {
           data.push([{ v: " " }, { v: label.toUpperCase() }, { v: null }]);
-          data.push([{ v: " " }, { v: "   Current " + label }, { v: null }]);
           for (const acct of sectionAccts) {
             const indent = "       ";
             data.push([
@@ -655,11 +662,6 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
         const assetAccts = bs.sections.asset?.accounts ?? [];
         addBSSection("Assets", assetAccts);
         data.push([
-          { v: " " },
-          { v: "   Total Current Assets" },
-          cell(bs.totalAssets, { fmt: CURRENCY_FMT }),
-        ]);
-        data.push([
           { v: "10000" },
           { v: "TOTAL ASSETS" },
           cell(bs.totalAssets, { fmt: CURRENCY_FMT }),
@@ -668,11 +670,6 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
         // LIABILITIES
         const liabilityAccts = bs.sections.liability?.accounts ?? [];
         addBSSection("Liabilities", liabilityAccts);
-        data.push([
-          { v: " " },
-          { v: "   Total Current Liabilities" },
-          cell(bs.totalLiabilities, { fmt: CURRENCY_FMT }),
-        ]);
         data.push([
           { v: "20000" },
           { v: "TOTAL LIABILITIES" },
@@ -759,8 +756,11 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
               cell(acct.current, { fmt: CURRENCY_FMT }),
             ]);
           }
+          const firstExpenseNumber = pl.expenses.accounts[0]?.accountNumber;
           data.push([
-            { v: pl.expenses.accounts[0]?.accountNumber?.slice(0, 3) + "00" || "60000" },
+            // `undefined + "00"` is the truthy string "undefined00", so the
+            // || fallback never fired — check the number first.
+            { v: firstExpenseNumber ? firstExpenseNumber.slice(0, 3) + "00" : "60000" },
             { v: "TOTAL OPERATING EXPENSES" },
             cell(pl.expenses.total, { fmt: CURRENCY_FMT }),
           ]);
@@ -774,19 +774,27 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
           cell(netOperating, { fmt: CURRENCY_FMT }),
         ]);
 
-        // OTHER EXPENSES
-        if (pl.otherExpenses && pl.otherExpenses.accounts.length > 0) {
+        // OTHER INCOME / OTHER EXPENSES — the net row used to subtract ONLY
+        // other expenses (other income was rendered after it and never
+        // netted), overstating or understating NET OTHER INCOME whenever
+        // both existed.
+        const hasOtherIncome = pl.otherIncome && pl.otherIncome.accounts.length > 0;
+        const hasOtherExpenses = pl.otherExpenses && pl.otherExpenses.accounts.length > 0;
+        if (hasOtherIncome) {
+          addPLSection("Other Income", pl.otherIncome);
+        }
+        if (hasOtherExpenses) {
           addPLSection("Other Expenses", pl.otherExpenses);
+        }
+        if (hasOtherIncome || hasOtherExpenses) {
+          const netOtherCents =
+            Math.round((pl.otherIncome?.total ?? 0) * 100) -
+            Math.round((pl.otherExpenses?.total ?? 0) * 100);
           data.push([
             { v: " " },
             { v: "NET OTHER INCOME" },
-            cell(-pl.otherExpenses.total, { fmt: CURRENCY_FMT }),
+            cell(netOtherCents / 100, { fmt: CURRENCY_FMT }),
           ]);
-        }
-
-        // OTHER INCOME
-        if (pl.otherIncome && pl.otherIncome.accounts.length > 0) {
-          addPLSection("Other Income", pl.otherIncome);
         }
 
         // NET INCOME
@@ -894,6 +902,39 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
           cell(cf.financing.total, { fmt: CURRENCY_FMT }),
         ]);
 
+        // UNCLASSIFIED — balance-sheet movement no section claims. The report
+        // model surfaces it as a reconciling line; dropping it from the
+        // export made the exported statement silently stop tying.
+        if (cf.unclassified && cf.unclassified.items.length > 0) {
+          data.push([{ v: " " }, { v: "UNCLASSIFIED (REVIEW SUBTYPES)" }, { v: null }]);
+          for (const item of cf.unclassified.items) {
+            data.push([
+              { v: item.accountNumber ?? " " },
+              { v: `   ${item.name}` },
+              cell(item.amount, { fmt: CURRENCY_FMT }),
+            ]);
+          }
+          data.push([
+            { v: " " },
+            { v: "NET UNCLASSIFIED MOVEMENT" },
+            cell(cf.unclassified.total, { fmt: CURRENCY_FMT }),
+          ]);
+        }
+
+        // Opening cash = bank-account balances on the as-of balance sheet at
+        // the day before the period starts (it was hard-coded to zero, which
+        // made CASH AT END equal the period's net change instead of a
+        // balance).
+        const { computeBalanceSheet: computeOpeningBs } = await import("../../services/reports");
+        const openingDate = new Date(dateFrom + "T00:00:00");
+        openingDate.setDate(openingDate.getDate() - 1);
+        const openingIso = openingDate.toISOString().slice(0, 10);
+        const openingBs = await computeOpeningBs(orgId, openingIso, "none", db);
+        const openingCashCents = (openingBs.sections.asset?.accounts ?? [])
+          .filter((acct: any) => acct.subtype === "bank_accounts")
+          .reduce((sum: number, acct: any) => sum + Math.round(acct.balance * 100), 0);
+        const netChangeCents = Math.round(cf.netChange * 100);
+
         // Summary
         data.push([
           { v: " " },
@@ -903,12 +944,12 @@ export const exportFinancialPackage = createServerFn({ method: "GET" }).handler(
         data.push([
           { v: " " },
           { v: "CASH AT BEGINNING OF PERIOD" },
-          cell(0, { fmt: CURRENCY_FMT }),
+          cell(openingCashCents / 100, { fmt: CURRENCY_FMT }),
         ]);
         data.push([
           { v: " " },
           { v: "CASH AT END OF PERIOD" },
-          cell(cf.netChange, { fmt: CURRENCY_FMT }),
+          cell((openingCashCents + netChangeCents) / 100, { fmt: CURRENCY_FMT }),
         ]);
 
         const wb = XLSX.utils.book_new();

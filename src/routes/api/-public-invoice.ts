@@ -127,6 +127,12 @@ export const getPublicInvoice = createServerFn({ method: "GET" })
 
     if (!invoice) return null;
 
+    // Status gate: a DRAFT has never been issued to anyone — the public link
+    // must be indistinguishable from a nonexistent invoice. A VOIDED invoice
+    // stays viewable (the customer legitimately received it) but is served
+    // below with nothing due, so the page cannot ask for money.
+    if (invoice.status === "draft") return null;
+
     // Fetch customer name
     let customerName: string | null = null;
     if (invoice.customerId) {
@@ -211,7 +217,9 @@ export const getPublicInvoice = createServerFn({ method: "GET" })
       taxAmount: String(invoice.taxAmount),
       total: String(invoice.total),
       amountPaid: String(invoice.amountPaid),
-      balanceDue: String(invoice.balanceDue),
+      // Belt over the void-time zeroing: a voided invoice NEVER shows a due
+      // amount, whatever the stored column says.
+      balanceDue: invoice.status === "voided" ? "0.00" : String(invoice.balanceDue),
       notes: invoice.notes,
       paymentTerms: invoice.paymentTerms,
       customerName,
