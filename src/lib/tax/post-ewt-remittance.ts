@@ -11,6 +11,7 @@ import { requireMappedAccountId } from "@/lib/coa/resolve-mapped-account";
 import { requirePhAccount } from "@/lib/tax/ph-account-resolver";
 import { asJsonPayload } from "@/lib/tax/json-payload";
 import { summarizeEwtRemittance } from "@/lib/tax/ewt-remittance";
+import { reconcileQuarter, remittanceObligationsFor } from "@/lib/tax/ewt";
 
 export class EwtNothingToRemitError extends Error {
   constructor(periodStart: string, periodEnd: string) {
@@ -44,7 +45,51 @@ export async function postEwtRemittance(
       .map((payment) => payment.taxWithheld),
   });
 
-  if (!summary.shouldPost) throw new EwtNothingToRemitError(summary.periodStart, summary.periodEnd);
+  // The quarterly 1601-EQ covers the WHOLE quarter — but months 1 and 2 were
+  // already debited by their own 0619-E remittance journals. Posting the full
+  // quarter again drove EWT payable negative by two months and over-credited
+  // cash (₱10k+₱10k on 0619-E, then ₱30k on the EQ). reconcileQuarter exists
+  // for exactly this netting; what counts as "remitted" is what was ACTUALLY
+  // posted, read back by the prior journals' idempotency keys, so a skipped
+  // monthly remittance is correctly still owed on the quarterly return.
+  let amountToPost = summary.taxWithheld;
+  let nettingNote = "";
+  if (summary.formCode === "1601EQ") {
+    const quarterStartMonth = input.month - 2;
+    const priorAmounts: string[] = [];
+    for (const priorMonth of [quarterStartMonth, quarterStartMonth + 1]) {
+      const prior = remittanceObligationsFor(priorMonth, input.year)[0];
+      if (!prior) {
+        priorAmounts.push("0");
+        continue;
+      }
+      const [posted] = await db
+        .select({ totalAmount: journalHeaders.totalAmount })
+        .from(journalHeaders)
+        .where(
+          eq(
+            journalHeaders.idempotencyKey,
+            `ewt-remittance:${input.organizationId}:${prior.formCode}:${prior.periodStart}:${prior.periodEnd}`,
+          ),
+        )
+        .limit(1);
+      priorAmounts.push(posted?.totalAmount ?? "0");
+    }
+    const reconciliation = reconcileQuarter({
+      quarterWithheld: summary.taxWithheld,
+      remittedMonth1: priorAmounts[0],
+      remittedMonth2: priorAmounts[1],
+    });
+    if (!reconciliation.reconciled) {
+      throw new Error(reconciliation.issues.join(" "));
+    }
+    amountToPost = reconciliation.stillDue;
+    nettingNote = ` (quarter ${summary.taxWithheld} less ${priorAmounts[0]} and ${priorAmounts[1]} remitted on 0619-E)`;
+  }
+
+  if (!summary.shouldPost || Number(amountToPost) === 0) {
+    throw new EwtNothingToRemitError(summary.periodStart, summary.periodEnd);
+  }
 
   const { locked, closedThrough } = await isDateInLockedPeriod(
     input.organizationId,
@@ -71,8 +116,8 @@ export async function postEwtRemittance(
       transactionType: "journal",
       source: "manual",
       functionalCurrency,
-      memo: `${summary.formCode} remittance ${summary.periodStart} to ${summary.periodEnd}`,
-      totalAmount: summary.taxWithheld,
+      memo: `${summary.formCode} remittance ${summary.periodStart} to ${summary.periodEnd}${nettingNote}`,
+      totalAmount: amountToPost,
       status: "posted",
       sourceDocumentType: "tax_remittance",
       createdBy: input.userId,
@@ -85,7 +130,7 @@ export async function postEwtRemittance(
     {
       journalHeaderId: header.id,
       accountId: ewtAccountId,
-      debit: summary.taxWithheld,
+      debit: amountToPost,
       credit: null,
       lineDescription: `${summary.formCode} remittance`,
       sortOrder: 0,
@@ -94,7 +139,7 @@ export async function postEwtRemittance(
       journalHeaderId: header.id,
       accountId: cashAccountId,
       debit: null,
-      credit: summary.taxWithheld,
+      credit: amountToPost,
       lineDescription: "Cash remitted to BIR",
       sortOrder: 1,
     },
@@ -136,7 +181,7 @@ export async function postEwtRemittance(
   return {
     journalHeaderId: header.id,
     formCode: summary.formCode,
-    taxWithheld: summary.taxWithheld,
+    taxWithheld: amountToPost,
     dueDate: summary.dueDate,
   };
 }

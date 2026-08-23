@@ -80,11 +80,13 @@ export const captureReceived2307 = createServerFn({ method: "POST" }).handler(
         if (!row) throw new Error("Could not capture certificate");
         let journalHeaderId: string | null = null;
         try {
-          const posted = await postCwtReceivable(db, {
-            organizationId: orgId,
-            userId,
-            certificateId: row.id,
-          });
+          const posted = await db.transaction((tx) =>
+            postCwtReceivable(tx, {
+              organizationId: orgId,
+              userId,
+              certificateId: row.id,
+            }),
+          );
           journalHeaderId = posted.journalHeaderId;
         } catch (error) {
           if (error instanceof MissingPhAccountError || error instanceof UnmappedAccountError) {
@@ -151,11 +153,13 @@ export const postReceived2307Cwt = createServerFn({ method: "POST" }).handler(
       { routeKey: "tax:2307-cwt", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
         const input = postCwtSchema.parse(rawData);
-        return postCwtReceivable(db, {
-          organizationId: orgId,
-          userId,
-          certificateId: input.certificateId,
-        });
+        return db.transaction((tx) =>
+          postCwtReceivable(tx, {
+            organizationId: orgId,
+            userId,
+            certificateId: input.certificateId,
+          }),
+        );
       },
     );
   },
