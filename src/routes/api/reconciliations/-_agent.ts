@@ -7,8 +7,11 @@ import {
   statementLines,
   reconciliationFlags,
   reconciliationSuggestions,
+  statementLineMatches,
 } from "../../../db/schema/reconciliations";
 import { financialAccounts } from "../../../db/schema/financial-accounts";
+import { isDateInLockedPeriod } from "../../../lib/period-close";
+import { findClaimedJournalLine } from "../../../lib/reconciliation-claimed-lines";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { insertActivityLog } from "@/lib/insert-activity-log";
@@ -64,6 +67,16 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
 
         if (!recon) throw new Error("Reconciliation not found");
         if (recon.status === "finalized") throw new Error("Reconciliation already finalized");
+        {
+          // Same gate as the manual path: an agent run must not mutate a
+          // reconciliation whose period a human has closed.
+          const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
+          if (locked) {
+            throw new Error(
+              `Cannot run the agent: period is locked through ${closedThrough}. Open the period first.`,
+            );
+          }
+        }
 
         // ── 2. Fetch pending suggestions ───────────────────────────────────────
         const suggestions = await db
@@ -177,6 +190,22 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
               switch (s.suggestionType) {
                 case "auto_match": {
                   if (s.statementLineId && s.journalLineId) {
+                    // A stale suggestion may target a line another statement
+                    // line has since cleared (either representation). Skip it
+                    // and leave it pending for a human — an agent run should
+                    // not die on one conflict, and must never double-clear.
+                    const claim = await findClaimedJournalLine(db, orgId, [s.journalLineId], {
+                      excludeStatementLineId: s.statementLineId,
+                    });
+                    if (claim) continue;
+                    await db
+                      .delete(statementLineMatches)
+                      .where(
+                        and(
+                          eq(statementLineMatches.statementLineId, s.statementLineId),
+                          eq(statementLineMatches.organizationId, orgId),
+                        ),
+                      );
                     await db
                       .update(statementLines)
                       .set({
@@ -201,6 +230,18 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                   // applySuggestion path treats them the same way); silently redating a
                   // posted transaction could move it across months or into a closed period.
                   if (s.journalLineId && s.statementLineId) {
+                    const claim = await findClaimedJournalLine(db, orgId, [s.journalLineId], {
+                      excludeStatementLineId: s.statementLineId,
+                    });
+                    if (claim) continue;
+                    await db
+                      .delete(statementLineMatches)
+                      .where(
+                        and(
+                          eq(statementLineMatches.statementLineId, s.statementLineId),
+                          eq(statementLineMatches.organizationId, orgId),
+                        ),
+                      );
                     await db
                       .update(statementLines)
                       .set({

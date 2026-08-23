@@ -17,6 +17,10 @@ import {
 } from "../../../db/schema/journals";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
+import {
+  claimConflictMessage,
+  findClaimedJournalLine,
+} from "../../../lib/reconciliation-claimed-lines";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { learnAliasFromMatch } from "@/lib/match-assist/learn";
 import { persistReconciliationAnomalies } from "@/lib/reconciliation-anomaly-flags";
@@ -69,7 +73,7 @@ export const reconfigureReconciliation = createServerFn({ method: "POST" })
         }
 
         // Period lock check — prevent changes in locked periods
-        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd);
+        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
         if (locked) {
           throw new Error(
             `Cannot modify reconciliation: period is locked through ${closedThrough}. Open the period first.`,
@@ -309,7 +313,7 @@ export const matchTransaction = createServerFn({ method: "POST" })
           throw new Error("Cannot modify a finalized reconciliation");
 
         // Period lock check
-        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd);
+        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
         if (locked) {
           throw new Error(
             `Cannot modify reconciliation: period is locked through ${closedThrough}. Open the period first.`,
@@ -340,27 +344,17 @@ export const matchTransaction = createServerFn({ method: "POST" })
             );
           }
 
-          const [existing] = await db
-            .select({ id: statementLines.id, reconciliationId: statementLines.reconciliationId })
-            .from(statementLines)
-            .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
-            .where(
-              and(
-                eq(reconciliations.organizationId, orgId),
-                eq(statementLines.matchedJournalLineId, parsed.journalLineId),
-                sql`${statementLines.id} != ${parsed.statementLineId}`,
-              ),
-            )
-            .limit(1);
-
-          if (existing) {
-            throw new Error(
-              existing.reconciliationId === parsed.reconciliationId
-                ? "This ledger transaction is already matched to another statement line. " +
-                    "Unmatch it first before re-assigning."
-                : "This ledger transaction is already cleared by another reconciliation. " +
-                    "A journal line can only be reconciled once.",
-            );
+          // The claim check must consider BOTH clearing representations. The
+          // old query read only statement_lines, so a line cleared by a SPLIT
+          // row could be claimed 1:1 as well — each side's unique index is
+          // per-table, and computeFinalizeBalances would then count the same
+          // ledger line twice. The 0048 triggers enforce this at COMMIT; this
+          // check exists so the failure is an actionable message instead.
+          const claim = await findClaimedJournalLine(db, orgId, [parsed.journalLineId], {
+            excludeStatementLineId: parsed.statementLineId,
+          });
+          if (claim) {
+            throw new Error(claimConflictMessage(claim));
           }
         }
 
@@ -374,19 +368,19 @@ export const matchTransaction = createServerFn({ method: "POST" })
           matchedJournalLineId: parsed.action === "match" ? parsed.journalLineId : null,
         };
 
-        // Unmatching (or re-matching) must also clear any SPLIT clearing rows,
-        // or the ledger lines would stay claimed by an invisible link and the
-        // finalize math would keep counting them as cleared.
-        if (parsed.action !== "match" || !parsed.journalLineId) {
-          await db
-            .delete(statementLineMatches)
-            .where(
-              and(
-                eq(statementLineMatches.statementLineId, parsed.statementLineId),
-                eq(statementLineMatches.organizationId, orgId),
-              ),
-            );
-        }
+        // ANY redefinition of this line's clearing — match, unmatch, or
+        // ignore — clears its split rows. This used to run only on unmatch,
+        // so a 1:1 match placed over an existing split left both
+        // representations live and the finalize math counted the line's
+        // clearing twice.
+        await db
+          .delete(statementLineMatches)
+          .where(
+            and(
+              eq(statementLineMatches.statementLineId, parsed.statementLineId),
+              eq(statementLineMatches.organizationId, orgId),
+            ),
+          );
 
         await db
           .update(statementLines)
@@ -570,7 +564,7 @@ export const reopenReconciliation = createServerFn({ method: "POST" })
         if (recon.status !== "finalized") throw new Error("Reconciliation is not finalized");
 
         // Period lock check — cannot reopen a recon in a locked period
-        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd);
+        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
         if (locked) {
           throw new Error(
             `Cannot reopen reconciliation: period is locked through ${closedThrough}. Open the period first.`,
@@ -583,6 +577,13 @@ export const reopenReconciliation = createServerFn({ method: "POST" })
             status: "in_progress",
             finalizedAt: null,
             finalizedById: null,
+            // The snapshot columns describe the moment of finalization; once
+            // reopened they describe nothing, and leaving them made the list
+            // and detail views show stale figures as if current.
+            clearedBalance: null,
+            unclearedTotal: null,
+            ledgerBalance: null,
+            aiAutoFinalized: false,
             updatedAt: new Date(),
           })
           .where(eq(reconciliations.id, parsed.id))
@@ -629,7 +630,7 @@ export const deleteReconciliation = createServerFn({ method: "POST" })
           throw new Error("Cannot delete a finalized reconciliation");
 
         // Period lock check
-        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd);
+        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
         if (locked) {
           throw new Error(
             `Cannot delete reconciliation: period is locked through ${closedThrough}. Open the period first.`,
@@ -698,7 +699,7 @@ export const resolveReconciliationFlag = createServerFn({ method: "POST" })
           throw new Error("Cannot modify a finalized reconciliation");
 
         // Period lock check
-        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd);
+        const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
         if (locked) {
           throw new Error(
             `Cannot modify reconciliation: period is locked through ${closedThrough}. Open the period first.`,

@@ -146,6 +146,8 @@ export interface RunStatus {
   kind: AgentRunKind;
   status: string;
   blockedReason: Record<string, unknown> | null;
+  /** The run's own record of what it targets — the only trustworthy source for an override. */
+  configSnapshot: Record<string, unknown> | null;
   steps: Array<{ step: string; status: string; error: Record<string, unknown> | null }>;
 }
 
@@ -171,6 +173,7 @@ export async function getRunStatus(
     kind: run.kind,
     status: run.status,
     blockedReason: run.blockedReason ?? null,
+    configSnapshot: run.configSnapshot ?? null,
     steps: steps.map((s) => ({ step: s.step, status: s.status, error: s.error ?? null })),
   };
 }

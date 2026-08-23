@@ -429,6 +429,7 @@ export const deleteTransactionsBatch = createServerFn({ method: "POST" })
         const headers = await db
           .select({
             id: journalHeaders.id,
+            status: journalHeaders.status,
             transactionDate: journalHeaders.transactionDate,
             duplicateOfHeaderId: journalHeaders.duplicateOfHeaderId,
           })
@@ -436,6 +437,17 @@ export const deleteTransactionsBatch = createServerFn({ method: "POST" })
           .where(and(inArray(journalHeaders.id, ids), eq(journalHeaders.organizationId, orgId)))
           .orderBy(asc(journalHeaders.id))
           .for("update");
+
+        // Posted ledger history is immutable through this path. Void first —
+        // that leaves a record — then delete if policy allows. Before this
+        // check, the only thing refusing the hard-delete of a posted journal
+        // was the 0042 trigger, and only on databases that had it applied.
+        const postedCount = headers.filter((h) => h.status === "posted").length;
+        if (postedCount > 0) {
+          throw new Error(
+            `Cannot delete ${postedCount} posted transaction(s). Void them first; voiding keeps the audit trail.`,
+          );
+        }
 
         // Period-lock guard: no transaction dated in a closed period may be deleted.
         const validIds = headers.map((header) => header.id);

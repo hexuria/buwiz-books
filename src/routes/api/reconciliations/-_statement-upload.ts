@@ -2,6 +2,7 @@
  * Reconciliation API — Statement Upload, OCR, Document Attachment, PDF Generation
  */
 import { createServerFn } from "@tanstack/react-start";
+import { isDateInLockedPeriod } from "../../../lib/period-close";
 import { z } from "zod";
 import {
   reconciliations,
@@ -838,8 +839,7 @@ export const resumeStatementPipeline = createServerFn({ method: "POST" })
       "create",
       { routeKey: "reconciliation:resume-statement-pipeline", limit: 10, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
-        const { runId, reconciliationId, documentId } =
-          resumeStatementPipelineSchema.parse(rawData);
+        const { runId } = resumeStatementPipelineSchema.parse(rawData);
 
         const blocked = await getRunStatus(db, orgId, runId);
         if (!blocked) throw new Error("Statement pipeline run not found");
@@ -847,6 +847,22 @@ export const resumeStatementPipeline = createServerFn({ method: "POST" })
         if (blocked.status !== "blocked" || reason?.kind !== "validation") {
           throw new Error("Only a validation-blocked statement run can be overridden");
         }
+
+        // The override targets come from the BLOCKED RUN's own snapshot,
+        // never from the request: trusting the client here let a caller with
+        // one validation-blocked run re-run the pipeline — with the
+        // validation gate disabled — against any other reconciliation.
+        const snapshot = (blocked.configSnapshot ?? {}) as {
+          reconciliationId?: string;
+          documentId?: string;
+        };
+        const reconciliationId = snapshot.reconciliationId;
+        const documentId = snapshot.documentId;
+        if (!reconciliationId || !documentId) {
+          throw new Error("This run's snapshot is missing its target; it cannot be overridden.");
+        }
+
+        await assertReconciliationMutable(db, orgId, reconciliationId);
 
         await insertActivityLog(
           {
@@ -979,6 +995,40 @@ export const attachExistingDocument = createServerFn({ method: "POST" }).handler
 // ============================================================================
 
 /**
+ * Refuse statement-mutating operations on a finalized or period-locked
+ * reconciliation. uploadBankStatement and runStatementOcr already enforced
+ * this; the remove/regenerate paths did not, and either could destroy a
+ * finalized reconciliation's statement lines — the cascade also drops
+ * statement_line_matches, releasing every cleared ledger line to be cleared
+ * AGAIN next period.
+ */
+async function assertReconciliationMutable(
+  db: DbExecutor,
+  orgId: string,
+  reconciliationId: string,
+): Promise<void> {
+  const [recon] = await db
+    .select({
+      id: reconciliations.id,
+      status: reconciliations.status,
+      periodEnd: reconciliations.periodEnd,
+    })
+    .from(reconciliations)
+    .where(and(eq(reconciliations.id, reconciliationId), eq(reconciliations.organizationId, orgId)))
+    .limit(1);
+  if (!recon) throw new Error("Reconciliation not found");
+  if (recon.status === "finalized") {
+    throw new Error("Cannot modify the statement of a finalized reconciliation. Reopen it first.");
+  }
+  const { locked, closedThrough } = await isDateInLockedPeriod(orgId, recon.periodEnd, db);
+  if (locked) {
+    throw new Error(
+      `Cannot modify reconciliation: period is locked through ${closedThrough}. Open the period first.`,
+    );
+  }
+}
+
+/**
  * Remove the linked statement document from a reconciliation.
  * Clears statementDocumentId and optionally deletes the document + statement lines.
  */
@@ -995,6 +1045,8 @@ export const removeStatementDocument = createServerFn({ method: "POST" }).handle
         };
 
         if (!reconciliationId) throw new Error("reconciliationId is required");
+
+        await assertReconciliationMutable(db, orgId, reconciliationId);
 
         const removal = await removeReconciliationStatementRecord(db, {
           organizationId: orgId,
@@ -1047,6 +1099,8 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
       { routeKey: "reconciliation:generate-statement-pdf", limit: 15, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
         const parsed = z.object({ reconciliationId: z.string().uuid() }).parse(rawData);
+
+        await assertReconciliationMutable(db, orgId, parsed.reconciliationId);
 
         // Fetch reconciliation + bank account info
         const [recon] = await db
@@ -1448,6 +1502,8 @@ export const removeReconciliationStatement = createServerFn({ method: "POST" }).
       async ({ orgId, userId, db }) => {
         const { reconciliationId } = rawData as { reconciliationId: string };
         if (!reconciliationId) throw new Error("reconciliationId is required");
+
+        await assertReconciliationMutable(db, orgId, reconciliationId);
 
         const removal = await removeReconciliationStatementRecord(db, {
           organizationId: orgId,
