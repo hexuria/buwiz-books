@@ -122,6 +122,10 @@ export const exportData = createServerFn({ method: "POST" }).handler(
             if (!includeInactive) conditions.push(eq(financialAccounts.isActive, true));
             if (ids?.banks?.length) conditions.push(inArray(financialAccounts.id, ids.banks));
 
+            // The ledger link exports as a RESOLVABLE pair (number + name),
+            // not the raw uuid — ids mean nothing in another database, which
+            // is how the link silently vanished on every import (audit,
+            // rules doc "Common Mistake #3"). Wire details ride along.
             const rows = await db
               .select({
                 accountName: financialAccounts.accountName,
@@ -131,9 +135,15 @@ export const exportData = createServerFn({ method: "POST" }).handler(
                 isManual: financialAccounts.isManual,
                 connectionStatus: financialAccounts.connectionStatus,
                 isActive: financialAccounts.isActive,
-                ledgerAccountId: financialAccounts.ledgerAccountId,
+                accountNumber: financialAccounts.accountNumber,
+                routingNumber: financialAccounts.routingNumber,
+                swiftCode: financialAccounts.swiftCode,
+                iban: financialAccounts.iban,
+                ledgerAccountNumber: accounts.accountNumber,
+                ledgerAccountName: accounts.name,
               })
               .from(financialAccounts)
+              .leftJoin(accounts, eq(financialAccounts.ledgerAccountId, accounts.id))
               .where(and(...conditions))
               .orderBy(asc(financialAccounts.accountName));
 
@@ -163,11 +173,15 @@ export const exportData = createServerFn({ method: "POST" }).handler(
                 bankAccountNumber: parties.bankAccountNumber,
                 mailingAddress: parties.mailingAddress,
                 paymentTerms: parties.paymentTerms,
+                creditLimit: parties.creditLimit,
                 description: parties.description,
                 notes: parties.notes,
                 isActive: parties.isActive,
+                defaultAccountNumber: accounts.accountNumber,
+                defaultAccountName: accounts.name,
               })
               .from(parties)
+              .leftJoin(accounts, eq(parties.defaultAccountId, accounts.id))
               .where(and(...conditions))
               .orderBy(asc(parties.name));
 
@@ -191,13 +205,20 @@ export const exportData = createServerFn({ method: "POST" }).handler(
                 phone: parties.phone,
                 website: parties.website,
                 address: parties.address,
+                taxId: parties.taxId,
+                bankRoutingNumber: parties.bankRoutingNumber,
+                bankAccountNumber: parties.bankAccountNumber,
+                mailingAddress: parties.mailingAddress,
                 paymentTerms: parties.paymentTerms,
                 creditLimit: parties.creditLimit,
                 description: parties.description,
                 notes: parties.notes,
                 isActive: parties.isActive,
+                defaultAccountNumber: accounts.accountNumber,
+                defaultAccountName: accounts.name,
               })
               .from(parties)
+              .leftJoin(accounts, eq(parties.defaultAccountId, accounts.id))
               .where(and(...conditions))
               .orderBy(asc(parties.name));
 
@@ -650,6 +671,12 @@ const bankRowSchema = z.object({
   isManual: z.boolean().optional().default(true),
   connectionStatus: z.string().optional().nullable(),
   isActive: z.boolean().optional().default(true),
+  accountNumber: z.string().optional().nullable(),
+  routingNumber: z.string().optional().nullable(),
+  swiftCode: z.string().optional().nullable(),
+  iban: z.string().optional().nullable(),
+  ledgerAccountNumber: z.string().optional().nullable(),
+  ledgerAccountName: z.string().optional().nullable(),
 });
 
 const vendorRowSchema = z.object({
@@ -683,9 +710,12 @@ const vendorRowSchema = z.object({
     .optional()
     .nullable(),
   paymentTerms: z.string().optional().nullable(),
+  creditLimit: z.string().optional().nullable(),
   description: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   isActive: z.boolean().optional().default(true),
+  defaultAccountNumber: z.string().optional().nullable(),
+  defaultAccountName: z.string().optional().nullable(),
 });
 
 const customerRowSchema = z.object({
@@ -706,9 +736,24 @@ const customerRowSchema = z.object({
     .nullable(),
   paymentTerms: z.string().optional().nullable(),
   creditLimit: z.string().optional().nullable(),
+  taxId: z.string().optional().nullable(),
+  bankRoutingNumber: z.string().optional().nullable(),
+  bankAccountNumber: z.string().optional().nullable(),
+  mailingAddress: z
+    .object({
+      street: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      postalCode: z.string().optional(),
+      country: z.string().optional(),
+    })
+    .optional()
+    .nullable(),
   description: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
   isActive: z.boolean().optional().default(true),
+  defaultAccountNumber: z.string().optional().nullable(),
+  defaultAccountName: z.string().optional().nullable(),
 });
 
 const categoryRowSchema = z.object({
@@ -912,13 +957,60 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
       "update",
       { routeKey: "export-import:execute", limit: 10, windowMs: 300_000 },
       async ({ orgId, db }) => {
-        const { entityType, rows } = executeImportSchema.parse(rawData);
+        const { entityType, rows: rawRows } = executeImportSchema.parse(rawData);
 
         const results: Array<{
           name: string;
           success: boolean;
           error?: string;
         }> = [];
+
+        // Validation used to be ADVISORY: validateImport checked the rows,
+        // but execute inserted whatever the client sent (audit, tenancy /
+        // export-import — rules doc "Common Mistake #3" family). Every row
+        // is now parsed against the entity schema; invalid rows fail
+        // individually with their row number, valid rows proceed with
+        // schema defaults applied.
+        const rowSchema = getRowSchema(entityType);
+        const rows: Record<string, any>[] = [];
+        for (const [index, raw] of rawRows.entries()) {
+          const parsed = rowSchema.safeParse(raw);
+          if (parsed.success) {
+            rows.push(parsed.data as Record<string, any>);
+          } else {
+            results.push({
+              name: String(raw.name ?? raw.accountName ?? `row ${index + 1}`),
+              success: false,
+              error: `Row ${index + 1}: ${parsed.error.issues
+                .map((issue) => `${String(issue.path.join("."))}: ${issue.message}`)
+                .join("; ")}`,
+            });
+          }
+        }
+
+        /** Resolve an org-owned ledger account by number, then name. */
+        const resolveAccountRef = async (
+          number: string | null | undefined,
+          name: string | null | undefined,
+        ): Promise<string | null> => {
+          if (number) {
+            const [byNumber] = await db
+              .select({ id: accounts.id })
+              .from(accounts)
+              .where(and(eq(accounts.organizationId, orgId), eq(accounts.accountNumber, number)))
+              .limit(1);
+            if (byNumber) return byNumber.id;
+          }
+          if (name) {
+            const [byName] = await db
+              .select({ id: accounts.id })
+              .from(accounts)
+              .where(and(eq(accounts.organizationId, orgId), eq(accounts.name, name)))
+              .limit(1);
+            if (byName) return byName.id;
+          }
+          return null;
+        };
 
         switch (entityType) {
           case "banks": {
@@ -955,6 +1047,14 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
                   isManual: row.isManual ?? true,
                   connectionStatus: "disconnected",
                   isActive: row.isActive ?? true,
+                  accountNumber: row.accountNumber || null,
+                  routingNumber: row.routingNumber || null,
+                  swiftCode: row.swiftCode || null,
+                  iban: row.iban || null,
+                  ledgerAccountId: await resolveAccountRef(
+                    row.ledgerAccountNumber,
+                    row.ledgerAccountName,
+                  ),
                 });
                 results.push({ name: row.accountName, success: true });
               } catch (err) {
@@ -1003,6 +1103,10 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
                   description: row.description || null,
                   notes: row.notes || null,
                   isActive: row.isActive ?? true,
+                  defaultAccountId: await resolveAccountRef(
+                    row.defaultAccountNumber,
+                    row.defaultAccountName,
+                  ),
                 });
                 results.push({ name: row.name, success: true });
               } catch (err) {
