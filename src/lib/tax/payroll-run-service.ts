@@ -25,8 +25,9 @@ import { and, asc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import { asOf } from "./as-of";
 import { computeStatutoryContributions } from "./contributions";
+import type { AnnualizationEntry } from "@/lib/tax/annualization-posting-summary";
 import { runWithholding } from "./engine";
-import { toPesoString, toScaled, type ScaledMoney } from "./money";
+import { toPesoString, toScaled, type ScaledMoney, fromScaled } from "./money";
 import type { Bracket, EmployeeYearState, TriggerReason } from "./withholding";
 import type { ContributionCheckStatus } from "../../db/schema/payroll";
 import {
@@ -85,6 +86,13 @@ export interface ComputePayrollRunResult {
   contributionVariances: number;
   /** Lines the contribution check did not run on, and why. */
   contributionChecksSkipped: number;
+  /**
+   * Present only on an annualization run: the per-employee true-up figures
+   * (positive = refund owed to the employee, negative = deficiency), ready
+   * for postAnnualization. Deriving them here — where the annualized engine
+   * result is in hand — is what finally makes the year-end posting reachable.
+   */
+  annualizationEntries?: AnnualizationEntry[];
 }
 
 /**
@@ -459,6 +467,7 @@ export async function computePayrollRun(
   let anyReported = false;
   let contributionVariances = 0;
   let contributionChecksSkipped = 0;
+  const annualizationEntries: AnnualizationEntry[] = [];
 
   // ── Pass 2: compute and persist the lines. ──
   for (const line of lines) {
@@ -471,6 +480,20 @@ export async function computePayrollRun(
       state,
       annualize: run.isAnnualizationRun ? { trigger: "year_end", annualBrackets } : undefined,
     });
+
+    if (run.isAnnualizationRun && result.annualization) {
+      const a = result.annualization;
+      annualizationEntries.push({
+        employeePartyId: line.employeePartyId,
+        refundOrDeficiency:
+          a.excess > 0n
+            ? fromScaled(a.excess)
+            : a.deficiency > 0n
+              ? `-${fromScaled(a.deficiency)}`
+              : "0",
+        uncollectibleDeficiency: a.uncollectibleDeficiency > 0n,
+      });
+    }
 
     const computed = toScaled(result.taxPesos);
     totalComputed = (totalComputed + computed) as ScaledMoney;
@@ -568,6 +591,7 @@ export async function computePayrollRun(
     totalReportedPesos: anyReported ? toPesoString(totalReported) : null,
     contributionVariances,
     contributionChecksSkipped,
+    ...(run.isAnnualizationRun ? { annualizationEntries } : {}),
   };
 }
 
