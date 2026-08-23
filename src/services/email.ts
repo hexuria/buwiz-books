@@ -43,6 +43,21 @@ function formatInvoiceAmount(total: string, currency: string): string {
 }
 
 // Utility to extract just the email portion from a string like "Name <email@domain.com>"
+/**
+ * Escape a value for interpolation into an email's HTML body. Customer and
+ * organization names, memos and invoice numbers are user-controlled: a
+ * vendor named `<img src=x onerror=...>` must render as text in the
+ * recipient's mail client, not execute in whatever renders the HTML.
+ */
+export function escapeHtml(value: string | null | undefined): string {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 function extractEmail(fromStr: string): string {
   const match = fromStr.match(/<([^>]+)>/);
   return match ? match[1].trim() : fromStr.trim();
@@ -98,19 +113,19 @@ export async function sendInvoiceEmail(
   const htmlBody = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
       <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 32px; color: white; margin-bottom: 24px;">
-        <h2 style="margin: 0 0 4px; font-size: 18px; font-weight: 600;">${data.fromCompany}</h2>
-        <p style="margin: 0; opacity: 0.7; font-size: 13px;">${data.invoiceNumber}</p>
+        <h2 style="margin: 0 0 4px; font-size: 18px; font-weight: 600;">${escapeHtml(data.fromCompany)}</h2>
+        <p style="margin: 0; opacity: 0.7; font-size: 13px;">${escapeHtml(data.invoiceNumber)}</p>
       </div>
 
       <div style="background: #f8fafc; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
-        <p style="margin: 0 0 8px; font-size: 28px; font-weight: 700; color: #1e293b;">${amount}</p>
-        <p style="margin: 0; font-size: 13px; color: #64748b;">Due ${data.dueDate}</p>
+        <p style="margin: 0 0 8px; font-size: 28px; font-weight: 700; color: #1e293b;">${escapeHtml(amount)}</p>
+        <p style="margin: 0; font-size: 13px; color: #64748b;">Due ${escapeHtml(data.dueDate)}</p>
       </div>
 
       <p style="color: #475569; line-height: 1.6;">
-        Hi ${data.customerName},<br /><br />
-        Please find your invoice <strong>${data.invoiceNumber}</strong> for <strong>${amount}</strong>.
-        ${data.memo ? `<br /><br />${data.memo}` : ""}
+        Hi ${escapeHtml(data.customerName)},<br /><br />
+        Please find your invoice <strong>${escapeHtml(data.invoiceNumber)}</strong> for <strong>${escapeHtml(amount)}</strong>.
+        ${data.memo ? `<br /><br />${escapeHtml(data.memo)}` : ""}
       </p>
 
       <div style="text-align: center; margin: 32px 0;">
@@ -121,7 +136,7 @@ export async function sendInvoiceEmail(
 
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
       <p style="font-size: 12px; color: #94a3b8; text-align: center;">
-        &copy; ${new Date().getFullYear()} ${data.fromCompany}
+        &copy; ${new Date().getFullYear()} ${escapeHtml(data.fromCompany)}
       </p>
     </div>
   `;
@@ -199,14 +214,14 @@ export async function sendApproverInviteEmail(
   const htmlBody = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
       <div style="background: linear-gradient(135deg, #1e293b 0%, #334155 100%); border-radius: 12px; padding: 32px; color: white; margin-bottom: 24px;">
-        <h2 style="margin: 0 0 4px; font-size: 18px; font-weight: 600;">${data.workspaceName}</h2>
+        <h2 style="margin: 0 0 4px; font-size: 18px; font-weight: 600;">${escapeHtml(data.workspaceName)}</h2>
         <p style="margin: 0; opacity: 0.7; font-size: 13px;">Approver Invitation</p>
       </div>
 
       <div style="background: #f8fafc; border-radius: 12px; padding: 24px; margin-bottom: 24px;">
         <p style="margin: 0; font-size: 15px; color: #1e293b; line-height: 1.6;">
-          <strong>${data.inviterName}</strong> has invited you to join
-          <strong>${data.workspaceName}</strong> as a bill approver.
+          <strong>${escapeHtml(data.inviterName)}</strong> has invited you to join
+          <strong>${escapeHtml(data.workspaceName)}</strong> as a bill approver.
         </p>
       </div>
 
@@ -216,7 +231,7 @@ export async function sendApproverInviteEmail(
       </p>
 
       <div style="text-align: center; margin: 32px 0;">
-        <a href="${data.joinUrl}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; padding: 14px 48px; border-radius: 8px; font-weight: 600; font-size: 15px;">
+        <a href="${escapeHtml(data.joinUrl)}" style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: white; text-decoration: none; padding: 14px 48px; border-radius: 8px; font-weight: 600; font-size: 15px;">
           Accept Invitation
         </a>
       </div>
@@ -227,7 +242,7 @@ export async function sendApproverInviteEmail(
 
       <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;" />
       <p style="font-size: 12px; color: #94a3b8; text-align: center;">
-        &copy; ${new Date().getFullYear()} ${data.workspaceName}
+        &copy; ${new Date().getFullYear()} ${escapeHtml(data.workspaceName)}
       </p>
     </div>
   `;

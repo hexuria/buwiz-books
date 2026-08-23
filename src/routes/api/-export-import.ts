@@ -565,11 +565,15 @@ export const exportData = createServerFn({ method: "POST" }).handler(
 
           case "numberSequences": {
             const rows = await db.select().from(numberSequences);
-            // Filter to org-specific scopes
+            // Scopes are `journal:<orgId>` / `invoice:<orgId>` — the old
+            // filter checked startsWith(orgId), which matches NOTHING, so
+            // every export silently shipped zero sequences and an import
+            // restarted numbering at 1.
+            const orgSuffix = `:${orgId}`;
             result.numberSequences = rows
-              .filter((r) => r.scope.startsWith(orgId))
+              .filter((r) => r.scope.endsWith(orgSuffix))
               .map((r) => ({
-                scope: r.scope.replace(`${orgId}:`, ""),
+                scope: r.scope.slice(0, -orgSuffix.length),
                 currentValue: r.currentValue,
               }));
             break;
@@ -838,53 +842,57 @@ function parseCsvContent(content: string): Record<string, any>[] {
 
 export const validateImport = createServerFn({ method: "POST" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
-    const { entityType, content, format } = validateImportSchema.parse(rawData);
-    const schema = getRowSchema(entityType);
+    // Validation is read-only, but it was the ONLY function in this module
+    // with no auth at all — an anonymous JSON/CSV parsing endpoint.
+    return withSessionOrgContext(async () => {
+      const { entityType, content, format } = validateImportSchema.parse(rawData);
+      const schema = getRowSchema(entityType);
 
-    let rows: Record<string, any>[];
-    if (format === "csv") {
-      rows = parseCsvContent(content);
-    } else {
-      const parsed = JSON.parse(content);
-      // Support v2 format { meta, data: { type: [...] } }, v1 format { entities: { type: [...] } }, or flat array
-      if (Array.isArray(parsed)) {
-        rows = parsed;
-      } else if (parsed?.data?.[entityType]) {
-        rows = Array.isArray(parsed.data[entityType]) ? parsed.data[entityType] : [];
-      } else if (parsed?.entities?.[entityType]) {
-        rows = parsed.entities[entityType];
+      let rows: Record<string, any>[];
+      if (format === "csv") {
+        rows = parseCsvContent(content);
       } else {
-        rows = [];
+        const parsed = JSON.parse(content);
+        // Support v2 format { meta, data: { type: [...] } }, v1 format { entities: { type: [...] } }, or flat array
+        if (Array.isArray(parsed)) {
+          rows = parsed;
+        } else if (parsed?.data?.[entityType]) {
+          rows = Array.isArray(parsed.data[entityType]) ? parsed.data[entityType] : [];
+        } else if (parsed?.entities?.[entityType]) {
+          rows = parsed.entities[entityType];
+        } else {
+          rows = [];
+        }
       }
-    }
 
-    const validated: Array<{
-      row: number;
-      valid: boolean;
-      data?: Record<string, any>;
-      errors?: string[];
-    }> = [];
+      const validated: Array<{
+        row: number;
+        valid: boolean;
+        data?: Record<string, any>;
+        errors?: string[];
+      }> = [];
 
-    for (let i = 0; i < rows.length; i++) {
-      const result = schema.safeParse(rows[i]);
-      if (result.success) {
-        validated.push({ row: i + 1, valid: true, data: result.data as Record<string, any> });
-      } else {
-        validated.push({
-          row: i + 1,
-          valid: false,
-          errors: result.error.issues.map((e) => `${String(e.path.join("."))}: ${e.message}`),
-        });
+      for (let i = 0; i < rows.length; i++) {
+        const result = schema.safeParse(rows[i]);
+        if (result.success) {
+          validated.push({ row: i + 1, valid: true, data: result.data as Record<string, any> });
+        } else {
+          validated.push({
+            row: i + 1,
+            valid: false,
+            errors: result.error.issues.map((e) => `${String(e.path.join("."))}: ${e.message}`),
+          });
+        }
       }
-    }
 
-    return {
-      entityType,
-      total: rows.length,
-      valid: validated.filter((v) => v.valid).length,
-      invalid: validated.filter((v) => !v.valid).length,
-      rows: validated,
-    };
+      return {
+        entityType,
+        total: rows.length,
+        valid: validated.filter((v) => v.valid).length,
+        invalid: validated.filter((v) => !v.valid).length,
+        rows: validated,
+      };
+    });
   },
 );
 
