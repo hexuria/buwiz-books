@@ -298,8 +298,10 @@ export const matchTransaction = createServerFn({ method: "POST" })
             id: reconciliations.id,
             status: reconciliations.status,
             periodEnd: reconciliations.periodEnd,
+            ledgerAccountId: financialAccounts.ledgerAccountId,
           })
           .from(reconciliations)
+          .leftJoin(financialAccounts, eq(financialAccounts.id, reconciliations.bankAccountId))
           .where(
             and(
               eq(reconciliations.id, parsed.reconciliationId),
@@ -325,7 +327,7 @@ export const matchTransaction = createServerFn({ method: "POST" })
         // transaction could be double-cleared in successive periods.
         if (parsed.action === "match" && parsed.journalLineId) {
           const [effectiveLine] = await db
-            .select({ id: journalLines.id })
+            .select({ id: journalLines.id, accountId: journalLines.accountId })
             .from(journalLines)
             .innerJoin(journalHeaders, eq(journalLines.journalHeaderId, journalHeaders.id))
             .where(
@@ -341,6 +343,16 @@ export const matchTransaction = createServerFn({ method: "POST" })
           if (!effectiveLine) {
             throw new Error(
               "Only an effective posted journal can be reconciled. Unmatch suppressed duplicates first.",
+            );
+          }
+
+          // The line must sit on THIS reconciliation's bank account. Matching
+          // an expense-side line "succeeded" before: the statement line read
+          // matched, contributed nothing to the cleared balance, and left an
+          // unexplained clearedDifference.
+          if (recon.ledgerAccountId && effectiveLine.accountId !== recon.ledgerAccountId) {
+            throw new Error(
+              "This journal line is not on the reconciliation's bank account. Match statement lines to the bank-side line of a transaction.",
             );
           }
 

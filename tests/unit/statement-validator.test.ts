@@ -247,7 +247,7 @@ describe("Statement Validator", () => {
     expect(balCheck!.passed).toBe(true);
   });
 
-  it("should warn on balance discrepancy greater than $0.02", () => {
+  it("blocks on balance discrepancy greater than $0.02", () => {
     const txns = [{ date: "2026-01-05", description: "Deposit", amount: 500.0 }];
     const parsed = makeParsedStatement({
       transactions: txns,
@@ -261,7 +261,10 @@ describe("Statement Validator", () => {
     const balCheck = result.checks.find((c) => c.check === "balance_integrity");
     expect(balCheck).toBeDefined();
     expect(balCheck!.passed).toBe(false);
-    expect(balCheck!.severity).toBe("warning");
+    // Blocking on purpose (audit C3): beginning + transactions ≠ ending is
+    // the one check that catches dropped/duplicated rows and inverted
+    // balances, and a warning never stopped the import.
+    expect(balCheck!.severity).toBe("error");
   });
 
   // ── Empty Transactions ────────────────────────────────────────────────────

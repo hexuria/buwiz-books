@@ -1,37 +1,24 @@
-import { eq } from "drizzle-orm";
-import { accounts } from "../db/schema/accounts";
 import type { DbExecutor } from "../db";
 
 /**
- * Resolve all COA account IDs that should be searched for a given ledger account.
- * Returns the ledgerAccountId itself, its sibling accounts under the same parent,
- * and the parent account — since transactions may be posted at any of these levels.
+ * The COA account ids to search when matching a reconciliation's statement
+ * lines: exactly the reconciliation's own ledger account.
+ *
+ * This used to include every SIBLING under the same parent plus the parent
+ * itself, while computeFinalizeBalances sums only the exact account. A
+ * Checking statement line auto-matched to a Savings journal line of the same
+ * amount looked matched, contributed nothing to the cleared balance — a
+ * permanent clearedDifference — and claimed the Savings line org-wide so its
+ * own reconciliation could never clear it. Siblings belong to their own
+ * reconciliations; a parent-posted line staying visibly unmatched is the
+ * honest outcome.
+ *
+ * The signature keeps the executor (and stays async) so the four call sites
+ * did not change; the narrowing is the entire fix.
  */
 export async function resolveCandidateAccountIds(
-  db: DbExecutor,
+  _db: DbExecutor,
   ledgerAccountId: string,
 ): Promise<string[]> {
-  const candidateIds: string[] = [ledgerAccountId];
-
-  const [ledgerAcct] = await db
-    .select({ parentId: accounts.parentId })
-    .from(accounts)
-    .where(eq(accounts.id, ledgerAccountId))
-    .limit(1);
-
-  if (ledgerAcct?.parentId) {
-    const siblings = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(eq(accounts.parentId, ledgerAcct.parentId));
-
-    for (const s of siblings) {
-      if (!candidateIds.includes(s.id)) candidateIds.push(s.id);
-    }
-    if (!candidateIds.includes(ledgerAcct.parentId)) {
-      candidateIds.push(ledgerAcct.parentId);
-    }
-  }
-
-  return candidateIds;
+  return [ledgerAccountId];
 }

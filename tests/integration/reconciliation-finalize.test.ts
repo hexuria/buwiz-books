@@ -8,6 +8,7 @@ import { accounts } from "../../src/db/schema/accounts";
 import { financialAccounts } from "../../src/db/schema/financial-accounts";
 import { reconciliations, statementLines } from "../../src/db/schema/reconciliations";
 import { journalHeaders, journalLines } from "../../src/db/schema/journals";
+import { eq } from "drizzle-orm";
 import { computeFinalizeBalances } from "../../src/lib/reconciliation-finalize";
 import type postgres from "postgres";
 
@@ -156,6 +157,46 @@ describeDb("computeFinalizeBalances", () => {
     // Legacy all-GL math would have computed 1350 and BLOCKED this correct reconciliation.
     expect(r.ledgerBalance).toBe(1350);
     expect(r.unmatchedStatementLines).toBe(0);
+  });
+
+  it("a prior-period check clearing THIS period counts as cleared, not as period activity", async () => {
+    // The textbook outstanding check: written in February (prior period),
+    // clearing on the March statement. Bounding cleared journals below by
+    // periodStart made clearedBalance permanently short by exactly this item
+    // — March could never finalize, the exact case the module header claims
+    // to support.
+    const priorCheck = await postBankTxn("2026-02-25", "120.00", "credit");
+    await addStatementLine({
+      date: "2026-03-03",
+      amount: "-120.00",
+      matchedTo: priorCheck.lineId,
+      matchStatus: "matched",
+    });
+
+    const r = await computeFinalizeBalances(db, {
+      orgId: ORG,
+      reconciliationId: RECON,
+      ledgerAccountId: LEDGER_ACCT,
+      periodStart: "2026-03-01",
+      periodEnd: "2026-03-31",
+      statementBeginningBalance: 1000,
+      statementEndingBalance: 1380,
+    });
+    // Cleared: 1000 + 300 + 200 − 120 = 1380 → the February check counts.
+    expect(r.clearedBalance).toBe(1380);
+    expect(r.clearedDifference).toBe(0);
+    // unclearedTotal still describes MARCH's ledger activity only: the
+    // outstanding 150 check from the base fixture. The February clear must
+    // not distort it.
+    expect(r.unclearedTotal).toBe(-150);
+    expect(r.ledgerBalance).toBe(1350);
+
+    // The suite shares one fixture — put it back the way it was found.
+    await db
+      .delete(statementLines)
+      .where(eq(statementLines.matchedJournalLineId, priorCheck.lineId));
+    await db.delete(journalLines).where(eq(journalLines.journalHeaderId, priorCheck.headerId));
+    await db.delete(journalHeaders).where(eq(journalHeaders.id, priorCheck.headerId));
   });
 
   it("an unmatched statement line moves the gate difference (blocks finalize)", async () => {
