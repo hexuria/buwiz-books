@@ -12,6 +12,15 @@ const { aiCompleteMock, persistMock, lookupAliasesMock } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../src/lib/ai/facade", () => ({ aiComplete: aiCompleteMock }));
+// P9: the facade owns its org context now — pass the scoped callback its tx.
+vi.mock("@/db", () => ({
+  db: {},
+  withOrgContext: (_o: string, _u: string, _r: string, fn: (tx: unknown) => unknown) => fn({}),
+}));
+vi.mock("../../../src/db", () => ({
+  db: {},
+  withOrgContext: (_o: string, _u: string, _r: string, fn: (tx: unknown) => unknown) => fn({}),
+}));
 vi.mock("../../../src/lib/match-assist/persist", () => ({
   persistLlmMatchSuggestions: persistMock,
 }));
@@ -20,8 +29,6 @@ vi.mock("../../../src/lib/match-assist/aliases", () => ({
 }));
 
 import { runMatchAssist } from "../../../src/lib/match-assist/run";
-
-const db = {} as never;
 
 const line = (id: string, amount = -100) => ({
   id,
@@ -51,7 +58,7 @@ describe("runMatchAssist", () => {
   });
 
   it("skips the model entirely when there is nothing to match", async () => {
-    const result = await runMatchAssist(db, {
+    const result = await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [],
@@ -62,7 +69,7 @@ describe("runMatchAssist", () => {
   });
 
   it("skips the model when blocking finds no candidates", async () => {
-    const result = await runMatchAssist(db, {
+    const result = await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [line("a")],
@@ -87,7 +94,7 @@ describe("runMatchAssist", () => {
     }));
     void ledger;
 
-    await runMatchAssist(db, {
+    await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: lines,
@@ -100,7 +107,7 @@ describe("runMatchAssist", () => {
   });
 
   it("passes the batch's own candidates as the grounding set", async () => {
-    await runMatchAssist(db, {
+    await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [line("a")],
@@ -122,7 +129,7 @@ describe("runMatchAssist", () => {
       issues: ["decisions: Required"],
     });
 
-    const result = await runMatchAssist(db, {
+    const result = await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [line("a")],
@@ -135,7 +142,7 @@ describe("runMatchAssist", () => {
   });
 
   it("records invocation ids for provenance", async () => {
-    const result = await runMatchAssist(db, {
+    const result = await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [line("a")],
@@ -147,7 +154,7 @@ describe("runMatchAssist", () => {
   it("supplies alias hints to blocking when a party name is known", async () => {
     lookupAliasesMock.mockResolvedValue(new Map([["VENDOR A", "party-1"]]));
 
-    await runMatchAssist(db, {
+    await runMatchAssist({
       orgId: "org-1",
       reconciliationId: "rec-1",
       statementLines: [line("a")],

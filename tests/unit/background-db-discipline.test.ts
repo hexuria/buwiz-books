@@ -24,9 +24,9 @@ describe("background db discipline", () => {
 
   // Files allowed to import the bare `db` binding, each tied to a documented
   // justification that must remain in the file. This list only shrinks.
-  const BARE_DB_ALLOWLIST: Record<string, string> = {
-    "match-assist.ts": "DOCUMENTED exception",
-  };
+  // EMPTY since P9 converted the match-assist facade to own its org
+  // context — the list may only ever shrink.
+  const BARE_DB_ALLOWLIST: Record<string, string> = {};
 
   it("no job handler imports the module-level db (documented exceptions aside)", () => {
     const files = readdirSync(join(root, HANDLERS_DIR)).filter((f) => f.endsWith(".ts"));
@@ -83,5 +83,29 @@ describe("background db discipline", () => {
     expect(getBlock).not.toContain("allocateInvoiceNumber(");
     const createBlock = source.slice(source.indexOf("export const createInvoice"));
     expect(createBlock).toContain("allocateInvoiceNumber(orgId, db)");
+  });
+});
+
+describe("AI facade org-context (P9)", () => {
+  const root = join(__dirname, "../..");
+  const read = (rel: string) => readFileSync(join(root, rel), "utf-8");
+
+  it("the match-assist facade owns its org context — no executor threading", () => {
+    for (const rel of ["src/lib/match-assist/run.ts", "src/lib/match-assist/prefill.ts"]) {
+      const source = read(rel);
+      expect(source).toContain('withOrgContext(input.orgId, "system", "admin"');
+      expect(source).not.toMatch(/import \{[^}]*\bdb\b[^}]*\} from "[^"]*\/db"/);
+    }
+  });
+
+  it("runtime reads (settings, spend, metadata, credentials) take executors", () => {
+    const runtime = read("src/lib/ai/facade-runtime.ts");
+    expect(runtime).toContain("await assertWithinSpendCap(tx, orgId,");
+    expect(runtime).toContain("loadOrgMetadata(tx, orgId)");
+    expect(runtime).toContain("getOrgCredentials(tx, ctx.orgId, hop.provider)");
+    const spend = read("src/lib/ai/spend.ts");
+    expect(spend).not.toMatch(/import \{ db \}/);
+    const credentials = read("src/lib/ai/credentials.ts");
+    expect(credentials).toContain("executor: DbExecutor,");
   });
 });

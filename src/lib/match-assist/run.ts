@@ -8,7 +8,7 @@
 // persistLlmMatchSuggestions — the 84-cap choke point.
 // ============================================================================
 
-import type { DbExecutor } from "../../db";
+import { withOrgContext, type DbExecutor } from "../../db";
 import type { LedgerTransactionForMatching } from "../auto-matcher";
 import { aiComplete } from "../ai/facade";
 import type { MatchAssistOutput } from "../ai/schemas/match-assist";
@@ -49,10 +49,12 @@ export interface RunMatchAssistResult {
  * deterministic matcher, so a bad model response degrades to "no extra
  * suggestions" rather than failing the pipeline.
  */
-export async function runMatchAssist(
-  db: DbExecutor,
-  input: RunMatchAssistInput,
-): Promise<RunMatchAssistResult> {
+export async function runMatchAssist(input: RunMatchAssistInput): Promise<RunMatchAssistResult> {
+  // Org context is this facade's OWN responsibility (P9, completing the
+  // PR-12 discipline): each short query runs in its own withOrgContext
+  // transaction; the model calls between them never hold a connection.
+  const scoped = <R>(op: (tx: DbExecutor) => Promise<R>): Promise<R> =>
+    withOrgContext(input.orgId, "system", "admin", op);
   const result: RunMatchAssistResult = {
     blocksBuilt: 0,
     suggestionsInserted: 0,
@@ -64,10 +66,12 @@ export async function runMatchAssist(
   if (input.statementLines.length === 0 || input.ledgerTxns.length === 0) return result;
 
   // Alias hints: normalizedDescriptor → partyName (blocking compares names).
-  const aliasPartyIds = await lookupVendorAliases(
-    db,
-    input.orgId,
-    input.statementLines.map((l) => l.description),
+  const aliasPartyIds = await scoped((tx) =>
+    lookupVendorAliases(
+      tx,
+      input.orgId,
+      input.statementLines.map((l) => l.description),
+    ),
   );
   const aliasPartyByDescriptor = new Map<string, string>();
   for (const [descriptor, partyId] of aliasPartyIds) {
@@ -116,13 +120,15 @@ export async function runMatchAssist(
       ]),
     );
 
-    const persisted = await persistLlmMatchSuggestions(db, {
-      orgId: input.orgId,
-      reconciliationId: input.reconciliationId,
-      decisions: response.data.decisions,
-      statementLines: lineById,
-      candidatesByLine,
-    });
+    const persisted = await scoped((tx) =>
+      persistLlmMatchSuggestions(tx, {
+        orgId: input.orgId,
+        reconciliationId: input.reconciliationId,
+        decisions: response.data.decisions,
+        statementLines: lineById,
+        candidatesByLine,
+      }),
+    );
     result.suggestionsInserted += persisted.inserted;
     result.rejected.push(...persisted.rejected);
   }

@@ -256,12 +256,12 @@ describeDb("org AI credentials + settings", () => {
       apiKey: ANTHROPIC_KEY,
     });
 
-    const before = await getOrgCredentials(revokeOrg, "anthropic");
+    const before = await getOrgCredentials(db, revokeOrg, "anthropic");
     expect(before.map((c) => c.credentialId)).toContain(created.id);
 
     await revokeOrgAiCredential(db, { orgId: revokeOrg, actorId, credentialId: created.id });
 
-    const after = await getOrgCredentials(revokeOrg, "anthropic");
+    const after = await getOrgCredentials(db, revokeOrg, "anthropic");
     expect(after).toHaveLength(0);
 
     // The admin list keeps the row, flagged — revocation is a soft delete.

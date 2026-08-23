@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { and, eq } from "drizzle-orm";
-import type { DbExecutor } from "../../db";
+import { withOrgContext, type DbExecutor } from "../../db";
 import { accounts } from "../../db/schema/accounts";
 import { parties } from "../../db/schema/parties";
 import { aiComplete } from "../ai/facade";
@@ -52,50 +52,57 @@ export interface RunTxnPrefillResult {
  * Create create_txn proposals for unmatched lines. Best-effort per line:
  * one bad model response never aborts the batch.
  */
-export async function runTxnPrefill(
-  db: DbExecutor,
-  input: RunTxnPrefillInput,
-): Promise<RunTxnPrefillResult> {
+export async function runTxnPrefill(input: RunTxnPrefillInput): Promise<RunTxnPrefillResult> {
+  // Same P9 contract as runMatchAssist: short org-context transactions per
+  // query; model calls outside.
+  const scoped = <R>(op: (tx: DbExecutor) => Promise<R>): Promise<R> =>
+    withOrgContext(input.orgId, "system", "admin", op);
   const result: RunTxnPrefillResult = { proposalsCreated: 0, skipped: 0, degraded: false };
   const lines = input.lines.slice(0, MAX_LINES_PER_RUN);
   if (lines.length === 0) return result;
 
   // Server-side org context — the authoritative grounding set.
-  const [orgAccounts, orgParties] = await Promise.all([
-    db
-      .select({
-        id: accounts.id,
-        name: accounts.name,
-        accountNumber: accounts.accountNumber,
-        accountType: accounts.accountType,
-      })
-      .from(accounts)
-      .where(and(eq(accounts.organizationId, input.orgId), eq(accounts.isActive, true))),
-    db
-      .select({ id: parties.id, name: parties.name })
-      .from(parties)
-      .where(and(eq(parties.organizationId, input.orgId), eq(parties.isActive, true))),
-  ]);
+  const [orgAccounts, orgParties] = await scoped((tx) =>
+    Promise.all([
+      tx
+        .select({
+          id: accounts.id,
+          name: accounts.name,
+          accountNumber: accounts.accountNumber,
+          accountType: accounts.accountType,
+        })
+        .from(accounts)
+        .where(and(eq(accounts.organizationId, input.orgId), eq(accounts.isActive, true))),
+      tx
+        .select({ id: parties.id, name: parties.name })
+        .from(parties)
+        .where(and(eq(parties.organizationId, input.orgId), eq(parties.isActive, true))),
+    ]),
+  );
 
   const accountIds = new Set(orgAccounts.map((a) => a.id));
   const partyIds = new Set(orgParties.map((p) => p.id));
   const partyNameById = new Map(orgParties.map((p) => [p.id, p.name]));
 
-  const aliasByDescriptor = await lookupVendorAliases(
-    db,
-    input.orgId,
-    lines.map((l) => l.description),
+  const aliasByDescriptor = await scoped((tx) =>
+    lookupVendorAliases(
+      tx,
+      input.orgId,
+      lines.map((l) => l.description),
+    ),
   );
 
   for (const line of lines) {
     try {
       // Don't stack duplicates for the same statement line.
-      const existing = await listProposals(db, input.orgId, {
-        status: "pending",
-        kind: "create_txn",
-        sourceRef: { entityType: "statement_line", entityId: line.id },
-        limit: 1,
-      });
+      const existing = await scoped((tx) =>
+        listProposals(tx, input.orgId, {
+          status: "pending",
+          kind: "create_txn",
+          sourceRef: { entityType: "statement_line", entityId: line.id },
+          limit: 1,
+        }),
+      );
       if (existing.length > 0) {
         result.skipped++;
         continue;
@@ -138,19 +145,21 @@ export async function runTxnPrefill(
         l.categoryId && !accountIds.has(l.categoryId) ? { ...l, categoryId: "" } : l,
       );
 
-      await createProposal(db, {
-        orgId: input.orgId,
-        kind: "create_txn",
-        payload: {
-          statementLineId: line.id,
-          reconciliationId: input.reconciliationId,
-          transaction: parsed as unknown as Record<string, unknown>,
-        },
-        invocationId: response.invocationId,
-        confidence: normalizeConfidence(parsed.confidence, { scaleHint: "unit" }),
-        sourceRef: { entityType: "statement_line", entityId: line.id },
-        createdBy: input.userId,
-      });
+      await scoped((tx) =>
+        createProposal(tx, {
+          orgId: input.orgId,
+          kind: "create_txn",
+          payload: {
+            statementLineId: line.id,
+            reconciliationId: input.reconciliationId,
+            transaction: parsed as unknown as Record<string, unknown>,
+          },
+          invocationId: response.invocationId,
+          confidence: normalizeConfidence(parsed.confidence, { scaleHint: "unit" }),
+          sourceRef: { entityType: "statement_line", entityId: line.id },
+          createdBy: input.userId,
+        }),
+      );
       result.proposalsCreated++;
     } catch (err) {
       result.skipped++;
