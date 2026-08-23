@@ -349,7 +349,10 @@ describeDb("statement_ocr pipeline handler", () => {
     };
     expect(reason.kind).toBe("validation");
     expect(reason.validation.errors.join(" ")).toContain("Account number mismatch");
-    expect(reason.validation.warnings.join(" ")).toContain("Balance discrepancy");
+    // Balance discrepancy is BLOCKING now (audit C3) — it moved from
+    // warnings to errors, because it is the one check that catches
+    // dropped/duplicated rows and inverted balances.
+    expect(reason.validation.errors.join(" ")).toContain("Balance discrepancy");
 
     // The job itself completed — a bad statement is not a transient fault.
     const [job] = await db
@@ -554,6 +557,81 @@ describeDb("statement_ocr pipeline handler", () => {
       .from(reconciliationFlags)
       .where(eq(reconciliationFlags.reconciliationId, fixture.reconciliationId));
     expect(flags.every((flag) => flag.reconciliationId === fixture.reconciliationId)).toBe(true);
+  });
+
+  it("re-running OCR on the same statement does not duplicate decided lines", async () => {
+    const fixture = await createFixture("stmt-reocr-dup");
+    const keptJournalLineId = await postBankTxn(fixture, "2026-03-05", 300, "ACME DEPOSIT");
+
+    // The extraction the document ALWAYS yields — both runs see these two.
+    const sameStatement = [
+      { date: "2026-03-05", description: "ACME DEPOSIT", amount: 300 },
+      { date: "2026-03-12", description: "OFFICE SUPPLIES", amount: -75.5 },
+    ];
+    aiState.statement = validStatement(sameStatement);
+
+    const first = await processStatementOcrJob(reRunnableJob(fixture), {
+      workerId: fixture.workerId,
+    });
+    expect(first.completed).toBe(true);
+
+    // The user matches one of the two extracted lines by hand.
+    const linesAfterFirst = await db
+      .select()
+      .from(statementLines)
+      .where(eq(statementLines.reconciliationId, fixture.reconciliationId));
+    expect(linesAfterFirst).toHaveLength(2);
+    const deposit = linesAfterFirst.find((line) => Number(line.amount) === 300);
+    expect(deposit).toBeDefined();
+    await db
+      .update(statementLines)
+      .set({ matchStatus: "matched", matchedJournalLineId: keptJournalLineId })
+      .where(eq(statementLines.id, deposit!.id));
+
+    // Re-run OCR on the SAME document: identical extraction, but a FRESH run
+    // and job — the real re-OCR path opens a new run, and steps are memoized
+    // per run. Before the multiset dedupe, the surviving matched line stayed
+    // AND the same transaction was inserted again — a phantom unmatched twin
+    // that blocked finalization and inflated the totals.
+    aiState.statement = validStatement(sameStatement);
+    const [rerun] = await db
+      .insert(agentRuns)
+      .values({ organizationId: fixture.orgId, kind: "statement_pipeline" })
+      .returning();
+    const [rerunJob] = await db
+      .insert(processingJobs)
+      .values({
+        organizationId: fixture.orgId,
+        jobType: "statement_ocr",
+        dedupeKey: `statement_ocr:${fixture.reconciliationId}:${fixture.documentId}:rerun`,
+        status: "running",
+        attempts: 1,
+        lockedBy: fixture.workerId,
+        lockedUntil: new Date(Date.now() + 300_000),
+        payload: {
+          reconciliationId: fixture.reconciliationId,
+          documentId: fixture.documentId,
+          runId: rerun.id,
+        },
+      })
+      .returning();
+    const second = await processStatementOcrJob(rerunJob as ProcessingJob, {
+      workerId: fixture.workerId,
+    });
+    expect(second.completed).toBe(true);
+
+    const lines = await db
+      .select()
+      .from(statementLines)
+      .where(eq(statementLines.reconciliationId, fixture.reconciliationId));
+    expect(lines).toHaveLength(2);
+    const matched = lines.filter((line) => line.matchStatus === "matched");
+    expect(matched).toHaveLength(1);
+    expect(matched[0]!.matchedJournalLineId).toBe(keptJournalLineId);
+    // Two genuinely identical bank transactions still import as two: the
+    // dedupe consumes ONE extracted row per surviving line, no more.
+    const supplies = lines.filter((line) => Number(line.amount) === -75.5);
+    expect(supplies).toHaveLength(1);
   });
 
   it("parses a CSV deterministically and never calls the model", async () => {

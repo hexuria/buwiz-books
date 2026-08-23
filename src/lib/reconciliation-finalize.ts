@@ -49,18 +49,24 @@ export function computeClearedBalance(opts: {
   statementEndingBalance: number;
   clearedDebit: number;
   clearedCredit: number;
+  clearedPriorDebit?: number;
+  clearedPriorCredit?: number;
   totalDebit: number;
   totalCredit: number;
   unmatchedStatementLines: number;
 }): FinalizeBalances {
   const clearedNet = opts.clearedDebit - opts.clearedCredit;
+  // Of the cleared net, this much is prior-period outstanding items — real
+  // clears for the bank (they count in clearedBalance) but not part of THIS
+  // period's ledger activity (they must not distort unclearedTotal).
+  const clearedPriorNet = (opts.clearedPriorDebit ?? 0) - (opts.clearedPriorCredit ?? 0);
   const totalNet = opts.totalDebit - opts.totalCredit;
   const clearedBalance = round2(opts.statementBeginningBalance + clearedNet);
   const ledgerBalance = round2(opts.statementBeginningBalance + totalNet);
   return {
     clearedBalance,
     ledgerBalance,
-    unclearedTotal: round2(totalNet - clearedNet),
+    unclearedTotal: round2(totalNet - (clearedNet - clearedPriorNet)),
     clearedDifference: round2(opts.statementEndingBalance - clearedBalance),
     unmatchedStatementLines: opts.unmatchedStatementLines,
   };
@@ -106,14 +112,20 @@ export async function computeFinalizeBalances(
   // `matchedJournalLineId` column OR — for one-to-many split matches —
   // through statement_line_matches. Both must count, or a reconciliation with
   // splits would look unbalanced and refuse to finalize.
+  // Cleared journals are bounded only ABOVE by the period end. A cheque
+  // written 28 January that clears on the February statement is the textbook
+  // outstanding check; bounding below by periodStart made clearedBalance
+  // permanently short by exactly such items, so February could never
+  // finalize. The prior-period portion is measured separately below so
+  // unclearedTotal keeps describing THIS period's ledger activity.
   const clearedFilter = and(
     eq(journalLines.accountId, opts.ledgerAccountId),
     eq(journalHeaders.organizationId, opts.orgId),
     eq(journalHeaders.status, "posted"),
     effectiveJournalPredicate(),
-    gte(journalHeaders.transactionDate, opts.periodStart),
     lte(journalHeaders.transactionDate, opts.periodEnd),
   );
+  const priorPeriodOnly = sql`${journalHeaders.transactionDate} < ${opts.periodStart}`;
 
   const [clearedDirect] = await db
     .select({
@@ -148,9 +160,47 @@ export async function computeFinalizeBalances(
       ),
     );
 
-  // Double counting is impossible: a split line has matchedJournalLineId
-  // null, and the join table's unique index stops a ledger line appearing in
-  // both. Summing the two disjoint sets is therefore safe.
+  // The prior-period portion of what this statement cleared — outstanding
+  // items from earlier periods. Needed so unclearedTotal can stay scoped to
+  // THIS period's ledger activity while clearedBalance counts every clear.
+  const [clearedDirectPrior] = await db
+    .select({
+      clearedDebit: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
+      clearedCredit: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
+    })
+    .from(statementLines)
+    .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
+    .innerJoin(journalHeaders, eq(journalLines.journalHeaderId, journalHeaders.id))
+    .where(
+      and(
+        eq(statementLines.reconciliationId, opts.reconciliationId),
+        inArray(statementLines.matchStatus, ["matched", "created"]),
+        clearedFilter,
+        priorPeriodOnly,
+      ),
+    );
+  const [clearedSplitPrior] = await db
+    .select({
+      clearedDebit: sql<string>`COALESCE(SUM(${journalLines.debit}), 0)`,
+      clearedCredit: sql<string>`COALESCE(SUM(${journalLines.credit}), 0)`,
+    })
+    .from(statementLineMatches)
+    .innerJoin(statementLines, eq(statementLineMatches.statementLineId, statementLines.id))
+    .innerJoin(journalLines, eq(statementLineMatches.journalLineId, journalLines.id))
+    .innerJoin(journalHeaders, eq(journalLines.journalHeaderId, journalHeaders.id))
+    .where(
+      and(
+        eq(statementLines.reconciliationId, opts.reconciliationId),
+        inArray(statementLines.matchStatus, ["matched", "created"]),
+        clearedFilter,
+        priorPeriodOnly,
+      ),
+    );
+
+  // Double counting across the two representations is enforced impossible:
+  // every claiming write path checks findClaimedJournalLine, and the 0048
+  // DEFERRABLE constraint triggers refuse a journal line present in both at
+  // COMMIT. Summing the two sets is therefore safe.
   const cleared = {
     clearedDebit: String(
       Number.parseFloat(clearedDirect?.clearedDebit ?? "0") +
@@ -178,6 +228,12 @@ export async function computeFinalizeBalances(
     statementEndingBalance: opts.statementEndingBalance,
     clearedDebit: Number.parseFloat(cleared?.clearedDebit ?? "0"),
     clearedCredit: Number.parseFloat(cleared?.clearedCredit ?? "0"),
+    clearedPriorDebit:
+      Number.parseFloat(clearedDirectPrior?.clearedDebit ?? "0") +
+      Number.parseFloat(clearedSplitPrior?.clearedDebit ?? "0"),
+    clearedPriorCredit:
+      Number.parseFloat(clearedDirectPrior?.clearedCredit ?? "0") +
+      Number.parseFloat(clearedSplitPrior?.clearedCredit ?? "0"),
     totalDebit: Number.parseFloat(totals?.totalDebit ?? "0"),
     totalCredit: Number.parseFloat(totals?.totalCredit ?? "0"),
     unmatchedStatementLines: unmatched?.count ?? 0,

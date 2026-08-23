@@ -147,7 +147,12 @@ export function validateStatement(
     passed: balancesMatch,
     expected: `Beginning (${parsed.metadata.beginningBalance}) + Transactions (${txnSum.toFixed(2)}) = ${expectedEnd.toFixed(2)}`,
     actual: `Ending balance: ${parsed.metadata.endingBalance}`,
-    severity: balancesMatch ? "info" : "warning",
+    // Blocking on purpose (audit C3): beginning + transactions ≠ ending is
+    // the one check that catches dropped or duplicated rows and inverted
+    // balances, and a warning never stopped the import. The force/override
+    // path still exists for statements that genuinely disagree with
+    // themselves.
+    severity: balancesMatch ? "info" : "error",
     message: balancesMatch
       ? `Balance check passes: beginning + transactions = ending balance`
       : `Balance discrepancy: expected ending ${expectedEnd.toFixed(2)}, statement shows ${parsed.metadata.endingBalance} (diff: ${balanceDiff.toFixed(2)})`,

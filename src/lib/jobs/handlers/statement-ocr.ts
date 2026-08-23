@@ -258,8 +258,13 @@ function synthesizeCsvStatement(
   const transactions = parsed.transactions;
   const dates = transactions.map((t) => t.date).sort();
 
-  const first = transactions[0];
-  const last = transactions[transactions.length - 1];
+  // FILE order is not statement order — many banks export newest-first, which
+  // swapped beginning and ending balances here while the period dates (taken
+  // from the sorted copy) stayed correct. Order by date for the balance
+  // endpoints too.
+  const ordered = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
+  const first = ordered[0];
+  const last = ordered[ordered.length - 1];
   let beginningBalance = 0;
   let endingBalance = 0;
   if (first?.runningBalance != null && last?.runningBalance != null) {
@@ -545,6 +550,9 @@ export async function processStatementOcrJob(
           id: statementLines.id,
           matchStatus: statementLines.matchStatus,
           source: statementLines.source,
+          transactionDate: statementLines.transactionDate,
+          description: statementLines.description,
+          amount: statementLines.amount,
         })
         .from(statementLines)
         .where(eq(statementLines.reconciliationId, reconciliationId));
@@ -597,11 +605,35 @@ export async function processStatementOcrJob(
         await tx.delete(statementLines).where(inArray(statementLines.id, deletableIds));
       }
 
+      // Re-running OCR on the SAME document must not duplicate the lines a
+      // user already decided. Survivors (protected / user-decided / manual)
+      // are removed from the fresh extraction as a MULTISET — one survivor
+      // consumes one extracted row — so two genuinely identical bank
+      // transactions still import as two when only one was decided.
+      const deletable = new Set(deletableIds);
+      const lineKey = (date: string, amount: string | number, description: string) =>
+        `${date}|${Number(amount).toFixed(2)}|${description.trim().toLowerCase().replace(/\s+/g, " ")}`;
+      const survivorCounts = new Map<string, number>();
+      for (const line of existing) {
+        if (deletable.has(line.id)) continue;
+        const key = lineKey(line.transactionDate, line.amount, line.description);
+        survivorCounts.set(key, (survivorCounts.get(key) ?? 0) + 1);
+      }
+
       const confidence = statement.classification.confidence
         ? String(statement.classification.confidence)
         : null;
-      const rows: Array<typeof statementLines.$inferInsert> = statement.transactions.map(
-        (txn, index) => ({
+      const rows: Array<typeof statementLines.$inferInsert> = statement.transactions
+        .filter((txn) => {
+          const key = lineKey(txn.date, txn.amount, txn.description);
+          const remaining = survivorCounts.get(key) ?? 0;
+          if (remaining > 0) {
+            survivorCounts.set(key, remaining - 1);
+            return false;
+          }
+          return true;
+        })
+        .map((txn, index) => ({
           reconciliationId,
           transactionDate: txn.date,
           description: txn.description,
@@ -609,8 +641,7 @@ export async function processStatementOcrJob(
           sortOrder: index,
           source: "ocr" as const,
           ocrConfidence: confidence,
-        }),
-      );
+        }));
       for (let offset = 0; offset < rows.length; offset += STATEMENT_LINE_CHUNK) {
         await tx.insert(statementLines).values(rows.slice(offset, offset + STATEMENT_LINE_CHUNK));
       }
