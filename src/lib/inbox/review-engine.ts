@@ -134,7 +134,9 @@ export function evaluateUnusualSpend(
 
 export function evaluateNonZeroClearing(rows: LedgerRow[], windowStart: string): FindingTarget[] {
   const accountMonths = new Map<string, Map<string, number>>();
-  for (const row of rows.filter((item) => item.subtype?.includes("clearing"))) {
+  // Case-insensitive to match the SQL prefilter — "Clearing_Suspense" was
+  // fetched by lower(...) LIKE and then dropped here (audit P8).
+  for (const row of rows.filter((item) => item.subtype?.toLowerCase().includes("clearing"))) {
     const months = accountMonths.get(row.accountId) ?? new Map<string, number>();
     const month = monthKey(row.transactionDate);
     months.set(

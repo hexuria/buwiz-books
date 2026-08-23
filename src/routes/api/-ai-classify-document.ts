@@ -115,7 +115,12 @@ export const classifyDocument = createServerFn({ method: "POST" })
             documentId,
             orgId,
           });
-          return { documentType: "other", confidence: 0 };
+          // A provider failure is NOT a confident "other" — returning
+          // {other, 0} made outages indistinguishable from real low-confidence
+          // classifications and silently mis-filed documents (P8).
+          throw new Error(
+            `Document classification failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
         }
       },
     ) as any;

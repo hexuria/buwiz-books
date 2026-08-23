@@ -105,6 +105,7 @@ export interface DuplicateMatchResult {
     | "amount_missing"
     | "amount_mismatch"
     | "currency_mismatch"
+    | "missing_currency"
     | "insufficient_identity";
   signals: DuplicateSignalBreakdown;
   algorithmVersion: number;
@@ -528,7 +529,9 @@ export function scoreDuplicatePair(
   signals.dateScore = Math.max(0, 15 - differenceDays * 5);
 
   if (!left.originalCurrency || !right.originalCurrency) {
-    return emptyResult(left, right, settings.algorithmVersion, "currency_mismatch", signals);
+    // ABSENT currency is not a MISMATCH — the old label sent operators
+    // hunting a currency conflict that did not exist (audit P8).
+    return emptyResult(left, right, settings.algorithmVersion, "missing_currency", signals);
   }
   const currenciesEqual = left.originalCurrency === right.originalCurrency;
   signals.currenciesEqual = currenciesEqual;
@@ -562,8 +565,17 @@ export function scoreDuplicatePair(
   }
 
   if (amountsEqual) {
-    const disposition: DuplicateDisposition =
-      score >= settings.blockingScore
+    // D4 (checkpoint C8, recorded product call): without a reference number
+    // the reachable score (party 20 + date 15 + description ≤20 + source 10)
+    // cannot hit the blocking threshold of 70 — the same receipt captured
+    // twice through two channels never blocked. Exact amount + SAME DAY +
+    // exact party with NO reference on either side is deterministic enough
+    // to block; the threshold itself stays 70 for every scored path.
+    const noReferenceStrongCombo =
+      exactParty && differenceDays === 0 && !left.normalizedReference && !right.normalizedReference;
+    const disposition: DuplicateDisposition = noReferenceStrongCombo
+      ? "blocking"
+      : score >= settings.blockingScore
         ? "blocking"
         : score >= settings.shadowScore
           ? "shadow"
