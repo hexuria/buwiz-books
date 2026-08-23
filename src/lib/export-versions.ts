@@ -4,7 +4,7 @@
  */
 
 /** Current export format version. Bump when adding new entities or changing field shapes. */
-export const EXPORT_VERSION = 2;
+export const EXPORT_VERSION = 3;
 
 /**
  * All entity types supported by the versioned export format.
@@ -27,6 +27,20 @@ export const EXPORTABLE_ENTITIES = [
   "invoices",
   "numberSequences",
   "orgSettings",
+  // v3: the Philippine tax tables (audit P5 — "a full export is not a full
+  // backup"). Order matters: runs before lines/year-state.
+  "phOrgTaxProfile",
+  "phOrgTaxBranches",
+  "phTaxYearElections",
+  "phTaxRegistrations",
+  "phPartyTaxProfiles",
+  "phPreviousEmployer2316",
+  "phWithholdingPayments",
+  "phTaxCertificates",
+  "phPayrollRuns",
+  "phPayrollLines",
+  "phPayrollYearState",
+  "phComputedReturns",
 ] as const;
 
 export type ExportableEntity = (typeof EXPORTABLE_ENTITIES)[number];
@@ -49,6 +63,18 @@ export const ENTITY_LABELS: Record<ExportableEntity, string> = {
   invoices: "Invoices (A/R)",
   numberSequences: "Number Sequences",
   orgSettings: "Organization Settings",
+  phOrgTaxProfile: "PH Tax Profile",
+  phOrgTaxBranches: "PH Tax Branches",
+  phTaxYearElections: "PH Tax Year Elections",
+  phTaxRegistrations: "PH Tax Registrations",
+  phPartyTaxProfiles: "PH Party Tax Profiles",
+  phPreviousEmployer2316: "PH Previous-Employer 2316",
+  phWithholdingPayments: "PH Withholding Payments",
+  phTaxCertificates: "PH Tax Certificates",
+  phPayrollRuns: "PH Payroll Runs",
+  phPayrollLines: "PH Payroll Lines",
+  phPayrollYearState: "PH Payroll Year State",
+  phComputedReturns: "PH Computed Returns (as-filed)",
 };
 
 /** Metadata block included in every versioned export file */

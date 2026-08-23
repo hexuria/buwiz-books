@@ -19,6 +19,7 @@ type MigrationFn = (data: Record<string, unknown>) => VersionedExportFile;
  */
 const migrations: Record<number, MigrationFn> = {
   1: migrateV1toV2,
+  2: migrateV2toV3,
 };
 
 // ============================================================================
@@ -105,4 +106,19 @@ function migrateV1toV2(legacy: Record<string, unknown>): VersionedExportFile {
     meta,
     data: entities,
   };
+}
+
+// ============================================================================
+// v2 → v3 Migration
+// ============================================================================
+
+/**
+ * v3 adds the Philippine tax entities. A v2 file simply has none of them —
+ * the data passes through unchanged and only the meta version advances, so
+ * every v2 file remains importable forever (rules doc Mistake #1).
+ */
+function migrateV2toV3(data: Record<string, unknown>): VersionedExportFile {
+  const file = data as unknown as VersionedExportFile;
+  const meta: ExportMeta = { ...file.meta, version: 3 };
+  return { meta, data: file.data };
 }

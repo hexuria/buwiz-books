@@ -10,14 +10,16 @@ describe("export-migrations", () => {
   // ── migrateToLatest ───────────────────────────────────────────────────────
 
   describe("migrateToLatest", () => {
-    it("passes through v2 data unchanged", () => {
+    // P5 deliberate change: v3 added the PH tax entities, so a v2 file now
+    // MIGRATES (data untouched, meta lifted) instead of passing through.
+    it("lifts v2 data to the current version without touching it", () => {
       const result = migrateToLatest(v2Sample);
-      expect(result).toEqual(v2Sample);
+      expect(result.data).toEqual(v2Sample.data);
+      expect(result.meta.version).toBe(EXPORT_VERSION);
     });
 
-    it("preserves meta block on v2 passthrough", () => {
+    it("preserves meta identity on the v2 lift", () => {
       const result = migrateToLatest(v2Sample);
-      expect(result.meta.version).toBe(2);
       expect(result.meta.organizationName).toBe("Test Org");
       expect(result.meta.entities).toEqual(["categories", "departments", "vendors"]);
     });
@@ -29,9 +31,9 @@ describe("export-migrations", () => {
       expect(result.meta.version).toBe(EXPORT_VERSION);
     });
 
-    it("sets meta.version = 2 after v1 migration", () => {
+    it("chains v1 all the way to the current version", () => {
       const result = migrateToLatest(v1Sample);
-      expect(result.meta.version).toBe(2);
+      expect(result.meta.version).toBe(EXPORT_VERSION);
     });
 
     it("preserves exportedAt from v1", () => {
@@ -84,7 +86,7 @@ describe("export-migrations", () => {
     it("handles empty entities object in v1 gracefully", () => {
       const emptyV1 = { exportedAt: "2026-01-01T00:00:00Z", entities: {} };
       const result = migrateToLatest(emptyV1);
-      expect(result.meta.version).toBe(2);
+      expect(result.meta.version).toBe(EXPORT_VERSION);
       expect(result.meta.entities).toEqual([]);
       expect(result.data).toEqual({});
     });
