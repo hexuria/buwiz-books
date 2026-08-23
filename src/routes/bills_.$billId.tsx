@@ -4,6 +4,7 @@
  * Header bar with primary action + kebab menu
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { keys } from "../lib/query-keys";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { lazy, Suspense, useState, useRef, useEffect, useCallback } from "react";
 import { useSession } from "@/lib/auth-client";
@@ -278,7 +279,7 @@ function BillDetailPage() {
   });
 
   const { data: bill, isLoading } = useQuery({
-    queryKey: ["bill", billId],
+    queryKey: keys.bills.detail(billId),
     queryFn: () =>
       (getBill as (opts: { data: unknown }) => Promise<BillDetail>)({
         data: { id: billId },
@@ -312,7 +313,7 @@ function BillDetailPage() {
       }),
     onSuccess: (_result, variables) => {
       clearStableIdempotencyKey(transitionIntentRef, variables.idempotencyKey);
-      queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
       queryClient.invalidateQueries({ queryKey: ["bills"] });
     },
   });
@@ -323,7 +324,7 @@ function BillDetailPage() {
         data: { id: billId, ...data },
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
       queryClient.invalidateQueries({ queryKey: ["bills"] });
     },
   });
@@ -754,7 +755,7 @@ function BillDetailPage() {
                     await (rescanBoundingBoxes as (opts: { data: unknown }) => Promise<any>)({
                       data: { billId: bill.id },
                     });
-                    await queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+                    await queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
                   } finally {
                     setIsRescanning(false);
                   }
@@ -776,7 +777,7 @@ function BillDetailPage() {
                       await (rescanBoundingBoxes as (opts: { data: unknown }) => Promise<any>)({
                         data: { billId: bill.id },
                       });
-                      await queryClient.invalidateQueries({ queryKey: ["bill", billId] });
+                      await queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
                     } catch (e) {
                       logger.error("Re-scan failed", { error: e });
                     } finally {
