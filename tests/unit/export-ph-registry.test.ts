@@ -56,8 +56,9 @@ describe("PH export registry", () => {
     expect(profileSchema.shape && "partyId" in profileSchema.shape).toBe(false);
   });
 
-  it("v3 is current, and the migration chain lifts v1 and v2 files to it", () => {
-    expect(EXPORT_VERSION).toBe(3);
+  it("v4 is current, and the migration chain lifts older files to it", () => {
+    // P13 bumped v3 → v4 (party_tax_profiles.nationality, passthrough).
+    expect(EXPORT_VERSION).toBe(4);
     const v2 = {
       meta: {
         version: 2,
@@ -69,7 +70,7 @@ describe("PH export registry", () => {
       data: { vendors: [{ name: "Old Vendor" }] },
     };
     const migrated = migrateToLatest(v2);
-    expect(migrated.meta.version).toBe(3);
+    expect(migrated.meta.version).toBe(4);
     expect((migrated.data as Record<string, unknown>).vendors).toEqual([{ name: "Old Vendor" }]);
   });
 

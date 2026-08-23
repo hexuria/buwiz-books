@@ -158,6 +158,17 @@ const FROZEN: ReadonlyArray<
     "5b",
   ],
   [
+    // Deliberate addition (audit P13): union dues get their own leaf instead
+    // of the 25100 family parent.
+    "ph_union_dues_payable",
+    "25150",
+    "Union Dues Payable",
+    "liability",
+    "payroll_liabilities",
+    "payroll_liabilities",
+    "5b",
+  ],
+  [
     "ph_net_pay_payable",
     "25170",
     "Net Pay Payable",

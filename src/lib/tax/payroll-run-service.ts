@@ -23,11 +23,12 @@
  */
 import { and, asc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import { asOf } from "./as-of";
+import { asOf, pickInForce } from "./as-of";
 import { computeStatutoryContributions } from "./contributions";
 import type { AnnualizationEntry } from "@/lib/tax/annualization-posting-summary";
 import { runWithholding } from "./engine";
 import { toPesoString, toScaled, type ScaledMoney, fromScaled } from "./money";
+import { BENEFITS_CEILING_PESOS } from "./benefits";
 import type { Bracket, EmployeeYearState, TriggerReason } from "./withholding";
 import type { ContributionCheckStatus } from "../../db/schema/payroll";
 import {
@@ -219,7 +220,11 @@ function checkContributions(
  * compensation is PAID, and a run straddling 31 December would otherwise
  * resolve to the wrong generation for its own payments.
  */
-async function loadBrackets(db: Db, period: PayrollPeriod, periodEnd: string): Promise<Bracket[]> {
+export async function loadBrackets(
+  db: Db,
+  period: PayrollPeriod,
+  periodEnd: string,
+): Promise<Bracket[]> {
   const at = asOf(periodEnd);
   const rows = await db
     .select()
@@ -227,8 +232,24 @@ async function loadBrackets(db: Db, period: PayrollPeriod, periodEnd: string): P
     .where(eq(taxWithholdingTables.payrollPeriod, period))
     .orderBy(asc(taxWithholdingTables.bracketIndex));
 
-  return rows
-    .filter((r) => r.effectiveFrom <= at && (r.effectiveTo == null || r.effectiveTo >= at))
+  // Two dataset generations can BOTH be in force for the as-of date (a
+  // corrected table is issued without end-dating the old one). A plain
+  // in-force filter then returns the union of both generations' rows and the
+  // engine walks a table with duplicate/contradictory brackets. Resolve each
+  // bracket index through pickInForce — "the most recent issuance wins" —
+  // exactly like every other dated reference read.
+  const byIndex = new Map<number, (typeof rows)[number][]>();
+  for (const row of rows) {
+    const bucket = byIndex.get(row.bracketIndex);
+    if (bucket) bucket.push(row);
+    else byIndex.set(row.bracketIndex, [row]);
+  }
+  const picked = [...byIndex.values()]
+    .map((candidates) => pickInForce(candidates, at))
+    .filter((row): row is NonNullable<typeof row> => row !== null);
+
+  return picked
+    .sort((a, b) => a.bracketIndex - b.bracketIndex)
     .map((r) => ({
       bracketIndex: r.bracketIndex,
       floorAmount: r.floorAmount,
@@ -237,8 +258,38 @@ async function loadBrackets(db: Db, period: PayrollPeriod, periodEnd: string): P
     }));
 }
 
+/**
+ * The ₱90,000 ceiling on 13th month + other benefits is ANNUAL, and the
+ * register import supplies one uncapped figure. Split it against the
+ * employee's remaining YEAR-TO-DATE headroom: the portion inside the ceiling
+ * stays non-taxable, the excess becomes supplementary taxable income
+ * (`taxableThirteenthMonthAndOtherBenefits`, the engine input that existed
+ * for exactly this and was never wired). Testing a single period's figure
+ * against ₱90,000 — the old behavior, headroom fixed at the full ceiling —
+ * under-withheld anyone who crossed the ceiling across several runs.
+ */
+export function splitBenefitsAgainstCeiling(
+  amount: string | null,
+  ytdBenefitsBefore: ScaledMoney,
+): { nonTaxable: string; taxableExcess: string } {
+  const benefits = toScaled(amount ?? "0");
+  const ceiling = toScaled(BENEFITS_CEILING_PESOS);
+  const headroomRaw = (ceiling - ytdBenefitsBefore) as ScaledMoney;
+  const headroom = headroomRaw > 0n ? headroomRaw : (0n as ScaledMoney);
+  const nonTaxable = benefits < headroom ? benefits : headroom;
+  const taxableExcess = (benefits - nonTaxable) as ScaledMoney;
+  return { nonTaxable: fromScaled(nonTaxable), taxableExcess: fromScaled(taxableExcess) };
+}
+
 /** Every column that feeds the three-bucket segregation, as the engine expects it. */
-function toCompensationInput(line: typeof payrollLines.$inferSelect) {
+function toCompensationInput(
+  line: typeof payrollLines.$inferSelect,
+  ytdBenefitsBefore: ScaledMoney = 0n as ScaledMoney,
+) {
+  const benefitsSplit = splitBenefitsAgainstCeiling(
+    line.thirteenthMonthAndOtherBenefits,
+    ytdBenefitsBefore,
+  );
   return {
     regular: {
       basicSalary: line.basicSalary,
@@ -255,6 +306,7 @@ function toCompensationInput(line: typeof payrollLines.$inferSelect) {
       overtimePay: line.overtimePay ?? undefined,
       hazardPay: line.hazardPay ?? undefined,
       otherTaxableSupplementary: line.otherTaxableSupplementary ?? undefined,
+      taxableThirteenthMonthAndOtherBenefits: benefitsSplit.taxableExcess,
     },
     nonTaxable: {
       basicSalaryMwe: line.basicSalaryMwe ?? undefined,
@@ -262,7 +314,7 @@ function toCompensationInput(line: typeof payrollLines.$inferSelect) {
       overtimePayMwe: line.overtimePayMwe ?? undefined,
       nightShiftDifferentialMwe: line.nightShiftDifferentialMwe ?? undefined,
       hazardPayMwe: line.hazardPayMwe ?? undefined,
-      thirteenthMonthAndOtherBenefits: line.thirteenthMonthAndOtherBenefits ?? undefined,
+      thirteenthMonthAndOtherBenefits: benefitsSplit.nonTaxable,
       deMinimisBenefits: line.deMinimisBenefits ?? undefined,
       nonTaxableRetirementSeparation: line.nonTaxableRetirementSeparation ?? undefined,
       otherExempt: line.otherExempt ?? undefined,
@@ -386,6 +438,8 @@ export async function computePayrollRun(
     );
   const openingByEmployee = new Map(openingRows.map((row) => [row.employeePartyId, row]));
 
+  const ytdBenefitsByEmployee = new Map<string, ScaledMoney>();
+
   const replayState = async (
     employeePartyId: string,
     previousEmployer: EmployeeYearState["previousEmployer"],
@@ -403,6 +457,7 @@ export async function computePayrollRun(
       periodsElapsed: opening?.openingPeriodsElapsed ?? 0,
       previousEmployer,
     };
+    let ytdBenefits = 0n as ScaledMoney;
     for (const prior of priorRuns) {
       if (prior.periodIndex >= beforePeriodIndex) continue;
       const priorLine = (priorLinesByRun.get(prior.id) ?? []).find(
@@ -410,7 +465,7 @@ export async function computePayrollRun(
       );
       if (!priorLine) continue;
       const priorResult = runWithholding({
-        compensation: toCompensationInput(priorLine),
+        compensation: toCompensationInput(priorLine, ytdBenefits),
         period: prior.payrollPeriod,
         periodEnd: prior.periodEnd,
         brackets: await bracketsFor(prior.payrollPeriod, prior.periodEnd),
@@ -420,7 +475,10 @@ export async function computePayrollRun(
           : undefined,
       });
       state = priorResult.nextState;
+      ytdBenefits = (ytdBenefits +
+        toScaled(priorLine.thirteenthMonthAndOtherBenefits ?? "0")) as ScaledMoney;
     }
+    ytdBenefitsByEmployee.set(employeePartyId, ytdBenefits);
     return state;
   };
 
@@ -472,8 +530,10 @@ export async function computePayrollRun(
   // ── Pass 2: compute and persist the lines. ──
   for (const line of lines) {
     const state = startingStates.get(line.employeePartyId)!;
+    const ytdBenefitsBefore =
+      ytdBenefitsByEmployee.get(line.employeePartyId) ?? (0n as ScaledMoney);
     const result = runWithholding({
-      compensation: toCompensationInput(line),
+      compensation: toCompensationInput(line, ytdBenefitsBefore),
       period: run.payrollPeriod,
       periodEnd: run.periodEnd,
       brackets,
@@ -579,7 +639,14 @@ export async function computePayrollRun(
       previousEmployer,
       Number.MAX_SAFE_INTEGER,
     );
-    await persistYearState(db, organizationId, line.employeePartyId, run.taxableYear, finalState);
+    await persistYearState(
+      db,
+      organizationId,
+      line.employeePartyId,
+      run.taxableYear,
+      finalState,
+      ytdBenefitsByEmployee.get(line.employeePartyId) ?? (0n as ScaledMoney),
+    );
   }
 
   return {
@@ -629,6 +696,7 @@ async function persistYearState(
   employeePartyId: string,
   taxableYear: number,
   next: EmployeeYearState,
+  ytdThirteenthMonthAndOtherBenefits: ScaledMoney,
 ): Promise<void> {
   await db
     .insert(payrollEmployeeYearState)
@@ -642,6 +710,7 @@ async function persistYearState(
       ytdTaxableRegular: next.ytdTaxableRegular,
       ytdTaxableSupplementary: next.ytdTaxableSupplementary,
       ytdTaxWithheld: next.ytdTaxWithheld,
+      ytdThirteenthMonthAndOtherBenefits: fromScaled(ytdThirteenthMonthAndOtherBenefits),
       periodsElapsed: next.periodsElapsed,
     })
     .onConflictDoUpdate({
@@ -657,6 +726,7 @@ async function persistYearState(
         ytdTaxableRegular: next.ytdTaxableRegular,
         ytdTaxableSupplementary: next.ytdTaxableSupplementary,
         ytdTaxWithheld: next.ytdTaxWithheld,
+        ytdThirteenthMonthAndOtherBenefits: fromScaled(ytdThirteenthMonthAndOtherBenefits),
         periodsElapsed: next.periodsElapsed,
         updatedAt: new Date(),
       },

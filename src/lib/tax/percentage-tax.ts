@@ -43,6 +43,7 @@ import {
   toScaled,
   ZERO,
   type ScaledMoney,
+  toPesoString,
 } from "@/lib/tax/money";
 
 /** The VAT-registration threshold on gross sales or receipts. */
@@ -303,6 +304,8 @@ export interface PercentageTaxReturn {
   taxDue: string;
   taxCreditsPayments: string;
   stillDue: string;
+  /** Credits/payments beyond the quarter's liability. */
+  excessCredits: string;
   blockingIssues: string[];
 }
 
@@ -366,11 +369,15 @@ export function buildPercentageTaxReturn(input: {
     periodStart,
     periodEnd,
     dueDate: due.toISOString().slice(0, 10),
-    grossReceipts: fromScaled(receipts),
+    // Form emission: 2551Q fields are centavo strings.
+    grossReceipts: toPesoString(receipts),
     rateBps,
-    taxDue: fromScaled(taxDue),
-    taxCreditsPayments: fromScaled(credits),
-    stillDue: stillDue > ZERO ? fromScaled(stillDue) : "0",
+    taxDue: toPesoString(taxDue),
+    taxCreditsPayments: toPesoString(credits),
+    stillDue: stillDue > ZERO ? toPesoString(stillDue) : "0.00",
+    // Credits beyond the liability used to vanish into the "0" above —
+    // surfaced so an over-credited quarter is visible and claimable.
+    excessCredits: stillDue < ZERO ? toPesoString(-stillDue as ScaledMoney) : "0.00",
     blockingIssues,
   };
 }

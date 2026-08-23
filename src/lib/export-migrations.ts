@@ -20,6 +20,7 @@ type MigrationFn = (data: Record<string, unknown>) => VersionedExportFile;
 const migrations: Record<number, MigrationFn> = {
   1: migrateV1toV2,
   2: migrateV2toV3,
+  3: migrateV3toV4,
 };
 
 // ============================================================================
@@ -120,5 +121,17 @@ function migrateV1toV2(legacy: Record<string, unknown>): VersionedExportFile {
 function migrateV2toV3(data: Record<string, unknown>): VersionedExportFile {
   const file = data as unknown as VersionedExportFile;
   const meta: ExportMeta = { ...file.meta, version: 3 };
+  return { meta, data: file.data };
+}
+
+/**
+ * v3 → v4: party_tax_profiles gained a nullable `nationality` column
+ * (alphalist nationality; absent means FILIPINO-by-default with a preflight
+ * warning). Pure passthrough — v3 rows simply have no nationality key and
+ * the schema-derived row validator treats the column as optional.
+ */
+function migrateV3toV4(data: Record<string, unknown>): VersionedExportFile {
+  const file = data as unknown as VersionedExportFile;
+  const meta: ExportMeta = { ...file.meta, version: 4 };
   return { meta, data: file.data };
 }

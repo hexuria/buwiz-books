@@ -202,6 +202,19 @@ export const PH_CHART: readonly PhChartEntry[] = [
     stage: "5b",
   },
   {
+    // Union dues were credited to 25100 Payroll Liabilities — the PARENT of
+    // this whole 251xx family — so the one figure remitted to a third party
+    // (the union) was indistinguishable from the family roll-up. Deliberate
+    // chart addition; the lock test's independent copy is updated with it.
+    key: "ph_union_dues_payable",
+    accountNumber: "25150",
+    name: "Union Dues Payable",
+    accountType: "liability",
+    subtype: "payroll_liabilities",
+    parentKey: "payroll_liabilities",
+    stage: "5b",
+  },
+  {
     key: "ph_net_pay_payable",
     accountNumber: "25170",
     name: "Net Pay Payable",

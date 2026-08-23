@@ -45,6 +45,7 @@ import {
   toScaled,
   ZERO,
   type ScaledMoney,
+  toPesoString,
 } from "@/lib/tax/money";
 
 /**
@@ -313,6 +314,12 @@ export interface VatReturn {
   /** Positive: payable. Negative: excess input VAT carried to next quarter. */
   vatPayable: string;
   carryoverToNextQuarter: string;
+  /**
+   * Credits/payments that exceeded the quarter's liability. NOT input-VAT
+   * carryover — unused credits are a different 2550Q line, and lumping them
+   * into the input-VAT carryover overstated next quarter's creditable input.
+   */
+  unusedTaxCredits: string;
 
   blockingIssues: string[];
 }
@@ -359,6 +366,17 @@ export function buildVatReturn(input: VatReturnInput): VatReturn {
 
   const payable = (netOutput - totalInput - credits) as ScaledMoney;
 
+  // Split a negative payable into its two very different components: input
+  // VAT in excess of output (carried forward as creditable input) versus
+  // credits/payments beyond the liability (reported, never converted into
+  // input VAT).
+  const inputVatExcessRaw = (totalInput - netOutput) as ScaledMoney;
+  const inputVatExcess = inputVatExcessRaw > ZERO ? inputVatExcessRaw : ZERO;
+  const liabilityAfterInputRaw = (netOutput - totalInput) as ScaledMoney;
+  const liabilityAfterInput = liabilityAfterInputRaw > ZERO ? liabilityAfterInputRaw : ZERO;
+  const creditsUsed = credits < liabilityAfterInput ? credits : liabilityAfterInput;
+  const unusedCredits = (credits - creditsUsed) as ScaledMoney;
+
   const blockingIssues: string[] = [];
   if (deduction > output) {
     blockingIssues.push(
@@ -380,18 +398,21 @@ export function buildVatReturn(input: VatReturnInput): VatReturn {
     periodEnd,
     dueDate,
 
-    outputVat: fromScaled(output),
-    uncollectedDeduction: fromScaled(deduction),
-    recoveredUncollected: fromScaled(recovered),
-    netOutputVat: fromScaled(netOutput),
+    // Form emission: 2550Q fields are centavo strings — toPesoString, not
+    // the internal 8-decimal representation.
+    outputVat: toPesoString(output),
+    uncollectedDeduction: toPesoString(deduction),
+    recoveredUncollected: toPesoString(recovered),
+    netOutputVat: toPesoString(netOutput),
 
-    creditableInputVat: fromScaled(creditableInput),
-    inputVatCarryover: fromScaled(carryover),
-    totalInputVat: fromScaled(totalInput),
+    creditableInputVat: toPesoString(creditableInput),
+    inputVatCarryover: toPesoString(carryover),
+    totalInputVat: toPesoString(totalInput),
 
     // Excess input VAT is carried forward, never refunded on the return.
-    vatPayable: payable > ZERO ? fromScaled(payable) : "0",
-    carryoverToNextQuarter: payable < ZERO ? fromScaled(-payable as ScaledMoney) : "0",
+    vatPayable: payable > ZERO ? toPesoString(payable) : "0.00",
+    carryoverToNextQuarter: toPesoString(inputVatExcess),
+    unusedTaxCredits: toPesoString(unusedCredits),
 
     blockingIssues,
   };

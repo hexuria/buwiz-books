@@ -177,7 +177,7 @@ export async function postPayrollRun(
     "ph_sss_payable",
     "ph_philhealth_payable",
     "ph_pagibig_payable",
-    "payroll_liabilities",
+    "ph_union_dues_payable",
     "ph_net_pay_payable",
   ]);
 
@@ -253,7 +253,9 @@ export async function postPayrollRun(
       lineDescription: "Pag-IBIG payable — employee and employer share",
     },
     {
-      accountId: account.payroll_liabilities,
+      // A leaf, not the 25100 family parent: this balance is remitted to the
+      // union and must reconcile on its own.
+      accountId: account.ph_union_dues_payable,
       credit: totals.unionDues,
       lineDescription: "Union dues withheld",
     },

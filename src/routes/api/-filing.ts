@@ -105,15 +105,41 @@ export const takeFilingSnapshot = createServerFn({ method: "POST" }).handler(
           );
         }
 
+        // Every figure the 1604-C/alphalist REPORTS per employee goes under
+        // the checksum — six of ~27 used to be covered, so a post-snapshot
+        // edit to (say) commission or de minimis re-produced the same
+        // "as-filed" checksum. Variance/expected-* diagnostics stay out:
+        // they are internal reconciliation aids, not filed figures.
         const snapshotLines: SnapshotLine[] = assembled.lines.map((line) => ({
           key: line.employeePartyId,
           values: {
-            gross: line.basicSalary,
-            withheld: line.reportedTaxWithheld ?? line.computedTaxWithheld,
-            computed: line.computedTaxWithheld,
+            basicSalary: line.basicSalary,
+            representationAllowance: line.representationAllowance,
+            transportationAllowance: line.transportationAllowance,
+            costOfLivingAllowance: line.costOfLivingAllowance,
+            fixedHousingAllowance: line.fixedHousingAllowance,
+            otherTaxableRegular: line.otherTaxableRegular,
+            commission: line.commission,
+            profitSharing: line.profitSharing,
+            directorsFees: line.directorsFees,
+            overtimePay: line.overtimePay,
+            hazardPay: line.hazardPay,
+            otherTaxableSupplementary: line.otherTaxableSupplementary,
+            basicSalaryMwe: line.basicSalaryMwe,
+            holidayPayMwe: line.holidayPayMwe,
+            overtimePayMwe: line.overtimePayMwe,
+            nightShiftDifferentialMwe: line.nightShiftDifferentialMwe,
+            hazardPayMwe: line.hazardPayMwe,
+            thirteenthMonthAndOtherBenefits: line.thirteenthMonthAndOtherBenefits,
+            deMinimisBenefits: line.deMinimisBenefits,
+            nonTaxableRetirementSeparation: line.nonTaxableRetirementSeparation,
+            otherExempt: line.otherExempt,
             sss: line.sssEmployeeShare,
             philhealth: line.philHealthEmployeeShare,
             pagibig: line.pagIbigEmployeeShare,
+            unionDues: line.unionDues,
+            withheld: line.reportedTaxWithheld ?? line.computedTaxWithheld,
+            computed: line.computedTaxWithheld,
           },
         }));
 

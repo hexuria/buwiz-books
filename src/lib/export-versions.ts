@@ -4,7 +4,7 @@
  */
 
 /** Current export format version. Bump when adding new entities or changing field shapes. */
-export const EXPORT_VERSION = 3;
+export const EXPORT_VERSION = 4;
 
 /**
  * All entity types supported by the versioned export format.

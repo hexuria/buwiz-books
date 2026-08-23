@@ -185,6 +185,11 @@ describe("computeUncollectedDeduction — the EOPT deferral", () => {
   });
 });
 
+// Deliberate expectation change (audit P13): buildVatReturn now emits FORM
+// strings — centavo-rounded toPesoString values — because the 2550Q's fields
+// are pesos-and-centavos, not the internal 8-decimal representation. And a
+// negative payable is split: input-VAT excess carries over; unused
+// credits/payments are reported separately, never converted to input VAT.
 describe("buildVatReturn", () => {
   const base = {
     quarter: 1 as const,
@@ -195,33 +200,44 @@ describe("buildVatReturn", () => {
 
   it("computes VAT payable as output less input", () => {
     const ret = buildVatReturn(base);
-    expect(ret.vatPayable).toBe("70000");
-    expect(ret.carryoverToNextQuarter).toBe("0");
+    expect(ret.vatPayable).toBe("70000.00");
+    expect(ret.carryoverToNextQuarter).toBe("0.00");
+    expect(ret.unusedTaxCredits).toBe("0.00");
   });
 
   it("carries excess input VAT forward instead of refunding it", () => {
     // Excess input VAT is never refunded on the return itself.
     const ret = buildVatReturn({ ...base, creditableInputVat: "200000" });
-    expect(ret.vatPayable).toBe("0");
-    expect(ret.carryoverToNextQuarter).toBe("80000");
+    expect(ret.vatPayable).toBe("0.00");
+    expect(ret.carryoverToNextQuarter).toBe("80000.00");
   });
 
   it("applies a prior quarter's carryover", () => {
     const ret = buildVatReturn({ ...base, inputVatCarryover: "20000" });
-    expect(ret.totalInputVat).toBe("70000");
-    expect(ret.vatPayable).toBe("50000");
+    expect(ret.totalInputVat).toBe("70000.00");
+    expect(ret.vatPayable).toBe("50000.00");
   });
 
   it("reduces output VAT by the EOPT deduction", () => {
     const ret = buildVatReturn({ ...base, uncollectedDeduction: "20000" });
-    expect(ret.netOutputVat).toBe("100000");
-    expect(ret.vatPayable).toBe("50000");
+    expect(ret.netOutputVat).toBe("100000.00");
+    expect(ret.vatPayable).toBe("50000.00");
   });
 
   it("adds back recovered uncollected VAT", () => {
     // The other half of the deferral: collected later, taxed then.
     const ret = buildVatReturn({ ...base, recoveredUncollected: "15000" });
-    expect(ret.netOutputVat).toBe("135000");
+    expect(ret.netOutputVat).toBe("135000.00");
+  });
+
+  it("splits a negative payable: input-VAT excess carries over, unused credits do not", () => {
+    // 120k output, 50k input, 100k credits: liability after input is 70k,
+    // credits cover it with 30k left over. That 30k is NOT input VAT and
+    // must not inflate next quarter's carryover.
+    const ret = buildVatReturn({ ...base, taxCreditsPayments: "100000" });
+    expect(ret.vatPayable).toBe("0.00");
+    expect(ret.carryoverToNextQuarter).toBe("0.00");
+    expect(ret.unusedTaxCredits).toBe("30000.00");
   });
 
   it("blocks a deduction larger than output VAT", () => {

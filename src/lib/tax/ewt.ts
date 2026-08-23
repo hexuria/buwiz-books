@@ -93,6 +93,12 @@ export interface EwtAssessmentInput {
   hasSwornDeclaration?: boolean;
   /** Whether the supplier is VAT-registered — some ATCs differ. */
   payeeIsVatRegistered?: boolean;
+  /**
+   * Corporate professional fees only: gross income for the current year
+   * exceeds ₱720,000, which moves the rate from 10% (WC010) to 15% (WC011).
+   * The corporate analog of the individual sworn-declaration split.
+   */
+  grossIncomeOver720k?: boolean;
 }
 
 /**
@@ -111,12 +117,13 @@ export function assessEwt(input: EwtAssessmentInput): EwtAssessment {
     // A sworn declaration of gross receipts ≤ ₱3M lowers the professional-fee
     // rate. It applies to the individual code only; the corporate rate is not
     // affected by the individual threshold.
-    const effectiveAtc =
-      paymentType === "professional_fees" &&
-      input.payeeType === "individual" &&
-      !input.hasSwornDeclaration
-        ? "WI011"
-        : atc;
+    let effectiveAtc = atc;
+    if (paymentType === "professional_fees" && input.payeeType === "individual") {
+      if (!input.hasSwornDeclaration) effectiveAtc = "WI011";
+    } else if (paymentType === "professional_fees" && input.payeeType === "corporate") {
+      // RR 11-2018: 10% while gross income ≤ ₱720k, 15% above — WC011.
+      if (input.grossIncomeOver720k) effectiveAtc = "WC011";
+    }
     const rateBps = ATC_EXPECTED_RATE_BPS[effectiveAtc] ?? null;
     return {
       required: true,

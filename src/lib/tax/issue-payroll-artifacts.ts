@@ -11,6 +11,7 @@ import { partyTaxProfiles } from "@/db/schema/party-tax";
 import { payrollLines, payrollRuns, previousEmployer2316 } from "@/db/schema/payroll";
 import { orgTaxProfiles } from "@/db/schema/tax-reference";
 import { preflightAlphalist } from "@/lib/tax/alphalist-preflight";
+import { BENEFITS_CEILING_PESOS } from "@/lib/tax/benefits";
 import { encodeDat } from "@/lib/tax/dat-encoder";
 import { ALPHALIST_1604C_HEADER, ALPHALIST_1604C_SCHEDULE_1_DETAIL } from "@/lib/tax/dat-layouts";
 import { annualize } from "@/lib/tax/annualization";
@@ -18,12 +19,12 @@ import { buildForm2316, type Form2316 } from "@/lib/tax/form-2316";
 import { taxWithholdingTables } from "@/db/schema/tax-reference";
 import type { Bracket } from "@/lib/tax/withholding";
 import { form2316PdfBuffer } from "@/lib/tax/form-2316-pdf";
-import { addAll, fromScaled, toScaled } from "@/lib/tax/money";
+import { addAll, fromScaled, toScaled, type ScaledMoney } from "@/lib/tax/money";
 
 export interface IssuedPayrollArtifacts {
   runId: string;
   certificates: Array<{ employeePartyId: string; form: Form2316; pdfBase64: string }>;
-  alphalist: { fileName: string; content: string; blockingIssues: string[] };
+  alphalist: { fileName: string; content: string; blockingIssues: string[]; warnings: string[] };
 }
 
 function money(value: string | null | undefined): string {
@@ -165,6 +166,21 @@ function form2316Input(
   };
 }
 
+/**
+ * Alphalist nationality: the party tax profile's value when set, otherwise
+ * the statutory-common default. Defaulting is REPORTED (warning below) —
+ * a silent FILIPINO on a foreign national misstates the alphalist.
+ */
+function nationalityFor(profile: { nationality?: string | null }): string {
+  const value = profile.nationality?.trim().toUpperCase();
+  return value && value.length > 0 ? value : "FILIPINO";
+}
+
+function wasNationalityDefaulted(profile: { nationality?: string | null }): boolean {
+  const value = profile.nationality?.trim();
+  return !value;
+}
+
 export async function issuePayrollArtifacts(
   db: DbExecutor,
   organizationId: string,
@@ -230,6 +246,7 @@ export async function issuePayrollArtifacts(
   const certificates: IssuedPayrollArtifacts["certificates"] = [];
   const detailRecords: Array<Record<string, string>> = [];
   const preflightRows = [];
+  const defaultedNationalities: string[] = [];
 
   for (const [index, line] of yearTotals.entries()) {
     const [profile] = await db
@@ -329,7 +346,25 @@ export async function issuePayrollArtifacts(
       registeredName: null,
       amount: taxWithheld,
     });
+    if (wasNationalityDefaulted(profile)) {
+      defaultedNationalities.push(
+        [profile.lastName, profile.firstName].filter(Boolean).join(", ") || line.employeePartyId,
+      );
+    }
 
+    // ANNUAL 90k split for the 1604-C/2316 columns: the artifact reports the
+    // year, so the pool is the year's total 13th month + other benefits —
+    // non-taxable up to the ceiling, the rest taxable (same policy the
+    // withholding engine now applies per run, see payroll-run-service).
+    const thirteenth = (() => {
+      const pool = toScaled(line.thirteenthMonthAndOtherBenefits ?? "0");
+      const ceiling = toScaled(BENEFITS_CEILING_PESOS);
+      const nonTaxable = pool < ceiling ? pool : ceiling;
+      return {
+        nonTaxable: fromScaled(nonTaxable),
+        taxableExcess: fromScaled((pool - nonTaxable) as ScaledMoney),
+      };
+    })();
     const presentNonTax = form.totalNonTaxable;
     const presentTaxable = form.totalTaxableFromPresentEmployer;
     detailRecords.push({
@@ -358,13 +393,13 @@ export async function issuePayrollArtifacts(
       employmentTo: profile.dateSeparated ?? run.periodEnd,
       presNontaxGrossCompIncome: presentNonTax,
       presNontaxBasicSmw: money(line.basicSalaryMwe),
-      presNontax13thMonth: money(line.thirteenthMonthAndOtherBenefits),
+      presNontax13thMonth: thirteenth.nonTaxable,
       presNontaxDeMinimis: money(line.deMinimisBenefits),
       presNontaxSssEtc: contributions,
       presNontaxSalaries: "0",
       presTotalNontaxCompIncome: presentNonTax,
       presTaxableBasicSalary: money(line.basicSalary),
-      presTaxable13thMonth: "0",
+      presTaxable13thMonth: thirteenth.taxableExcess,
       presTaxableSalaries: presentTaxable,
       presTotalTaxable: presentTaxable,
       grossCompIncome: fromScaled(addAll(toScaled(presentNonTax), toScaled(presentTaxable))),
@@ -375,7 +410,7 @@ export async function issuePayrollArtifacts(
       amtWthldDec: "0",
       overWthld: form.refundOrDeficiency.startsWith("-") ? "0" : form.refundOrDeficiency,
       actualAmtWthld: form.totalTaxWithheld,
-      nationality: "FILIPINO",
+      nationality: nationalityFor(profile),
       employmentStatus: profile.dateSeparated ? "S" : "RE",
       reasonSeparation: "",
       subsFiling: profile.substitutedFilingEligible ? "Y" : "N",
@@ -395,6 +430,17 @@ export async function issuePayrollArtifacts(
   const blockingIssues = [
     ...certificates.flatMap((c) => c.form.blockingIssues),
     ...findings.filter((f) => f.severity === "fatal").map((f) => `${f.code}: ${f.message}`),
+  ];
+  // Non-fatal review items used to be silently dropped here. Nationality
+  // defaulting joins them: FILIPINO is assumed only when the party tax
+  // profile does not say otherwise, and the filer deserves to see for whom.
+  const warnings = [
+    ...findings.filter((f) => f.severity === "warning").map((f) => `${f.code}: ${f.message}`),
+    ...(defaultedNationalities.length > 0
+      ? [
+          `NATIONALITY_DEFAULTED: ${defaultedNationalities.length} employee(s) have no nationality on their party tax profile and were reported as FILIPINO: ${defaultedNationalities.join("; ")}`,
+        ]
+      : []),
   ];
 
   // The 1604-C layout mandates one Header, N Details, ONE CONTROL record per
@@ -422,6 +468,7 @@ export async function issuePayrollArtifacts(
       fileName,
       content: header.content + details.content,
       blockingIssues,
+      warnings,
     },
   };
 }

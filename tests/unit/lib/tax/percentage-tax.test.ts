@@ -198,13 +198,16 @@ describe("eightPercentBreachOutcome", () => {
   });
 });
 
+// Deliberate expectation change (audit P13): the 2551Q builder emits
+// centavo-rounded form strings, and credits beyond the liability surface as
+// excessCredits instead of vanishing into a "0" stillDue.
 describe("buildPercentageTaxReturn", () => {
   const base = { quarter: 1 as const, year: 2026, grossReceipts: "1000000" };
 
   it("computes tax at the period's rate", () => {
     const ret = buildPercentageTaxReturn(base);
     expect(ret.rateBps).toBe(300);
-    expect(ret.taxDue).toBe("30000");
+    expect(ret.taxDue).toBe("30000.00");
   });
 
   it("is due 25 days after the quarter closes", () => {
@@ -214,7 +217,13 @@ describe("buildPercentageTaxReturn", () => {
 
   it("nets prior payments", () => {
     const ret = buildPercentageTaxReturn({ ...base, taxCreditsPayments: "10000" });
-    expect(ret.stillDue).toBe("20000");
+    expect(ret.stillDue).toBe("20000.00");
+  });
+
+  it("surfaces credits beyond the liability as excessCredits", () => {
+    const ret = buildPercentageTaxReturn({ ...base, taxCreditsPayments: "40000" });
+    expect(ret.stillDue).toBe("0.00");
+    expect(ret.excessCredits).toBe("10000.00");
   });
 
   it("blocks when the 8% option was elected", () => {
