@@ -22,6 +22,10 @@
  *  • kind "record" is RESTORE-ONLY: it refuses when the target org already
  *    has rows for that entity. Merging two orgs' compliance histories is a
  *    correctness hazard (year-states, snapshots), not a UX nicety.
+ *
+ * Forms handoff: see docs/tax/forms-handoff.md. Global `tax_reference_*`
+ * catalogs and `filing_deadline_overrides` are NOT exported (statutory data,
+ * seeded independently). Stripped columns cannot survive a restore.
  */
 import { and, eq, getTableColumns, inArray } from "drizzle-orm";
 import { createInsertSchema } from "drizzle-zod";
@@ -47,8 +51,23 @@ import {
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type AnyTable = any;
 
+/** Wire keys for tenant PH tables intended for a Buwiz Forms handoff. */
+export type PhEntityKey =
+  | "phOrgTaxProfile"
+  | "phOrgTaxBranches"
+  | "phTaxYearElections"
+  | "phTaxRegistrations"
+  | "phPartyTaxProfiles"
+  | "phPreviousEmployer2316"
+  | "phWithholdingPayments"
+  | "phTaxCertificates"
+  | "phPayrollRuns"
+  | "phPayrollLines"
+  | "phPayrollYearState"
+  | "phComputedReturns";
+
 export interface PhEntitySpec {
-  key: string;
+  key: PhEntityKey;
   label: string;
   table: AnyTable;
   kind: "config" | "record";
@@ -63,6 +82,40 @@ export interface PhEntitySpec {
   /** Column used as the row's display name in results. */
   display: string;
 }
+
+/**
+ * Postgres names of the tenant PH tables behind `PH_EXPORT_SPECS`, in the
+ * same order. A new org-scoped tax/payroll table belongs here (and in the
+ * specs) or in `PH_GLOBAL_TABLES_NOT_EXPORTED` — never in neither.
+ */
+export const PH_TENANT_TABLE_NAMES = [
+  "org_tax_profiles",
+  "org_tax_branches",
+  "org_tax_year_elections",
+  "org_tax_registrations",
+  "party_tax_profiles",
+  "payroll_previous_employer_2316",
+  "tax_withholding_payments",
+  "tax_certificates",
+  "payroll_runs",
+  "payroll_lines",
+  "payroll_employee_year_state",
+  "tax_computed_returns",
+] as const;
+
+/**
+ * Global statutory catalogs. Not tenant data; Forms seeds its own copy.
+ * A per-org copy is the drift bug docs/tax/IMPLEMENTATION-PLAN.md B11 describes.
+ */
+export const PH_GLOBAL_TABLES_NOT_EXPORTED = [
+  "tax_reference_datasets",
+  "tax_withholding_tables",
+  "tax_de_minimis_ceilings",
+  "filing_deadline_overrides",
+] as const;
+
+/** Columns stripped from every PH entity — ids never cross databases. */
+export const PH_ALWAYS_STRIP = ["id", "organizationId", "createdAt", "updatedAt"] as const;
 
 export const PH_EXPORT_SPECS: PhEntitySpec[] = [
   {
@@ -182,19 +235,22 @@ export const PH_EXPORT_SPECS: PhEntitySpec[] = [
   },
 ];
 
-export const PH_ENTITY_KEYS = PH_EXPORT_SPECS.map((spec) => spec.key);
+export const PH_ENTITY_KEYS: readonly PhEntityKey[] = PH_EXPORT_SPECS.map((spec) => spec.key);
 
 export function phSpecFor(entityType: string): PhEntitySpec | undefined {
   return PH_EXPORT_SPECS.find((spec) => spec.key === entityType);
 }
 
-const ALWAYS_STRIP = ["id", "organizationId", "createdAt", "updatedAt"];
 const RUN_TRIPLE = ["runTaxableYear", "runPayrollPeriod", "runPeriodIndex"] as const;
 
 /** Row validator: the table's insert schema minus stripped/ref columns, plus refs. */
 export function phRowSchema(spec: PhEntitySpec): z.ZodTypeAny {
+  const cols = getTableColumns(spec.table);
   const omit: Record<string, true> = {};
-  for (const col of [...ALWAYS_STRIP, ...spec.strip]) omit[col] = true;
+  // org_tax_profiles has no surrogate `id` — omitting a missing key throws in Zod 4.
+  for (const col of [...PH_ALWAYS_STRIP, ...spec.strip]) {
+    if (col in cols) omit[col] = true;
+  }
   if (spec.partyRef) omit[spec.partyRef.column] = true;
   if (spec.runRef) omit[spec.runRef.column] = true;
   let schema: z.ZodObject<z.ZodRawShape> = (
@@ -258,7 +314,7 @@ export async function exportPhEntity(
 
   return rows.map((row) => {
     const out: Record<string, unknown> = { ...row };
-    for (const col of [...ALWAYS_STRIP, ...spec.strip]) delete out[col];
+    for (const col of [...PH_ALWAYS_STRIP, ...spec.strip]) delete out[col];
     if (spec.partyRef) {
       const partyId = row[spec.partyRef.column] as string | null;
       out[spec.partyRef.exportAs] = partyId ? (partyNameById.get(partyId) ?? null) : null;

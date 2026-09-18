@@ -45,6 +45,11 @@ export const EXPORTABLE_ENTITIES = [
 
 export type ExportableEntity = (typeof EXPORTABLE_ENTITIES)[number];
 
+/** The v3 Philippine tax slice — tenant data intended for a Forms handoff. */
+export const PH_EXPORTABLE_ENTITIES = EXPORTABLE_ENTITIES.filter((key) =>
+  key.startsWith("ph"),
+) as readonly Extract<ExportableEntity, `ph${string}`>[];
+
 /** Human-readable labels for UI display */
 export const ENTITY_LABELS: Record<ExportableEntity, string> = {
   categories: "Categories (COA)",

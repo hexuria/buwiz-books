@@ -1,12 +1,12 @@
 /**
  * ExportPanel — Entity selector with cherry-pick drill-down and download
- * Supports all 16 entity types in the v2 versioned export format.
+ * Supports the versioned export format (core books entities + PH tax slice).
  */
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { exportData, listExportableRecords } from "../../routes/api/-export-import";
 import type { EntityType } from "../../routes/api/-export-import";
-import { ENTITY_LABELS } from "../../lib/export-versions";
+import { ENTITY_LABELS, PH_EXPORTABLE_ENTITIES } from "../../lib/export-versions";
 import type { ExportableEntity } from "../../lib/export-versions";
 
 // ============================================================================
@@ -55,7 +55,19 @@ const CHERRY_PICKABLE: EntityType[] = [
   "invoices",
 ];
 
-const ALL_ENTITY_KEYS: EntityType[] = [...CHERRY_PICKABLE, "numberSequences", "orgSettings"];
+const PH_ICON = "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6";
+
+/**
+ * PH tax keys are listed (unchecked by default) so a Forms handoff can be
+ * exported from Settings. They are not cherry-pickable: exportPhEntity
+ * projects the whole org slice and ignores `ids`.
+ */
+const ALL_ENTITY_KEYS: EntityType[] = [
+  ...CHERRY_PICKABLE,
+  "numberSequences",
+  "orgSettings",
+  ...PH_EXPORTABLE_ENTITIES,
+];
 
 // ============================================================================
 // Component
@@ -436,7 +448,7 @@ export function ExportPanel() {
         <div className="border border-[#e2e8f0] dark:border-white/10 rounded-xl overflow-hidden divide-y divide-[#e2e8f0] dark:divide-white/10">
           {ALL_ENTITY_KEYS.map((key) => {
             const label = ENTITY_LABELS[key as ExportableEntity] ?? key;
-            const icon = ENTITY_ICONS[key] ?? "";
+            const icon = ENTITY_ICONS[key] ?? PH_ICON;
             const isCherryPickable = CHERRY_PICKABLE.includes(key);
             const count = entityCounts[key] ?? 0;
             const isChecked = selectedEntities.has(key);

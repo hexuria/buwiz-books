@@ -1,7 +1,8 @@
 /**
  * Export / Import Server Functions (v2 — Versioned)
  * Handles bulk export and import of organization data.
- * Supports 16 entity types with versioned export format.
+ * Supports the core books entities plus the v3 Philippine tax slice
+ * (see src/lib/export-ph.ts and docs/tax/forms-handoff.md).
  */
 import { createServerFn } from "@tanstack/react-start";
 
@@ -37,43 +38,6 @@ import {
 // ============================================================================
 // Types
 // ============================================================================
-
-export type EntityType =
-  | "banks"
-  | "vendors"
-  | "customers"
-  | "employees"
-  | "shareholders"
-  | "lenders"
-  | "government"
-  | "categories"
-  | "departments"
-  | "locations"
-  | "products"
-  | "transactions"
-  | "bills"
-  | "invoices"
-  | "numberSequences"
-  | "orgSettings";
-
-export const ENTITY_TYPES: EntityType[] = [
-  "categories",
-  "departments",
-  "locations",
-  "products",
-  "vendors",
-  "customers",
-  "employees",
-  "shareholders",
-  "lenders",
-  "government",
-  "banks",
-  "transactions",
-  "bills",
-  "invoices",
-  "numberSequences",
-  "orgSettings",
-];
 
 /** Map plural entity key to singular DB enum value for party types */
 const PARTY_TYPE_MAP: Record<string, string> = {
@@ -118,6 +82,10 @@ const ENTITY_ENUM = [
   "phPayrollYearState",
   "phComputedReturns",
 ] as const;
+
+export type EntityType = (typeof ENTITY_ENUM)[number];
+
+export const ENTITY_TYPES: EntityType[] = [...ENTITY_ENUM];
 
 // Every registry key must be present in ENTITY_ENUM (wiring-tested).
 const _PH_KEYS_IN_ENUM: readonly string[] = PH_ENTITY_KEYS;

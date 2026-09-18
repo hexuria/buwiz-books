@@ -9,7 +9,8 @@
 //
 // Default: OFF. Set BUWIZ_PH_TAX_FILING=1 to temporarily restore the dormant
 // module (extraction / data-rescue only). Country = "PH" no longer enables
-// filing on its own.
+// filing on its own. Tenant export specs and the Forms handoff are documented
+// in docs/tax/forms-handoff.md.
 //
 // Deferred on purpose (do not do in this peel):
 //   - dropping tax_* / payroll_* tables and numbered migrations
