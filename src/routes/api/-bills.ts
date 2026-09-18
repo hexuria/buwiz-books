@@ -40,6 +40,8 @@ import {
 import { assertRolePermission } from "../../lib/auth-middleware";
 import { journalsClearedByFinalizedReconciliation } from "../../lib/reconciliation-claimed-lines";
 import { recordManualBillPayment } from "../../lib/manual-bill-payment";
+import { isPhTaxFilingEnabled } from "../../lib/tax/product-flag";
+import { PhTaxFilingUnavailableError } from "../../lib/tax/module-state";
 import {
   withMutationPermissionOrgContext,
   withPermissionOrgContext,
@@ -741,6 +743,11 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           // rather than on the wrapper so non-payment transitions keep needing
           // only update.
           assertRolePermission(role, "bill", "pay");
+          if (ewtWithheld != null && ewtWithheld.trim() !== "" && Number(ewtWithheld) !== 0) {
+            if (!isPhTaxFilingEnabled()) {
+              throw new PhTaxFilingUnavailableError();
+            }
+          }
           return recordManualBillPayment(db, {
             organizationId: orgId,
             userId,

@@ -5,14 +5,23 @@ const SHOT_DIR = process.env.SCREENSHOT_DIR ?? "test-results/screenshots";
 const RECON_ID = "5b6077b6-3ae3-437d-95ab-7281455d8494";
 
 /**
- * Program 2 P12 — the D6 PH country gate, visually verified in all three
- * module states at phone / tablet / desktop. States are staged directly in
- * the test database (country + one payroll run) and fully restored after.
+ * Books product peel: Philippine BIR/tax filing is not a Books workflow.
+ * Country = PH must not restore nav, pages, or filing copy.
  */
 const VIEWPORTS = [
   { name: "mobile", width: 375, height: 812 },
   { name: "tablet", width: 768, height: 1024 },
   { name: "desktop", width: 1440, height: 900 },
+] as const;
+
+const FILING_NAV = [
+  "Payroll",
+  "2307s",
+  "Tax compute",
+  "EWT",
+  "Tax parties",
+  "Tax settings",
+  "Deadlines",
 ] as const;
 
 test.describe.configure({ mode: "serial" });
@@ -49,71 +58,66 @@ async function assertNoOverflow(page: import("@playwright/test").Page, label: st
   expect(overflow, `${label}: body scrolls horizontally by ${overflow}px`).toBeLessThanOrEqual(1);
 }
 
-test.describe("PH country gate screenshots", () => {
+test.describe("PH tax filing is not a Books workflow", () => {
   test.use({ storageState: "tests/e2e/.auth/user.json" });
 
   for (const viewport of VIEWPORTS) {
-    test(`OFF state at ${viewport.name}: tax page shows the enable prompt`, async ({ page }) => {
+    test(`tax page names Buwiz Forms at ${viewport.name}`, async ({ page }) => {
       await setCountry(null);
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.goto("/tax/settings");
       await expect(
-        page.getByRole("heading", { name: /Philippine tax & payroll is not enabled/i }),
+        page.getByRole("heading", { name: /BIR tax filing is not part of Books/i }),
       ).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByRole("link", { name: /Set organization country/i })).toBeVisible();
-      await page.screenshot({ path: `${SHOT_DIR}/p12-off-${viewport.name}.png`, fullPage: true });
-      await assertNoOverflow(page, `off-${viewport.name}`);
+      await expect(page.getByText(/Buwiz Forms/i).first()).toBeVisible();
+      await expect(page.getByRole("link", { name: /Set organization country/i })).toHaveCount(0);
+      await page.screenshot({
+        path: `${SHOT_DIR}/ph-tax-peel-forms-${viewport.name}.png`,
+        fullPage: true,
+      });
+      await assertNoOverflow(page, `forms-${viewport.name}`);
     });
   }
 
-  for (const viewport of VIEWPORTS) {
-    test(`ACTIVE state at ${viewport.name}: country select + live tax page`, async ({ page }) => {
-      await setCountry("PH");
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  test("country PH does not unlock filing pages or nav", async ({ page }) => {
+    await setCountry("PH");
+    await page.setViewportSize({ width: 1440, height: 900 });
 
-      await page.goto(`/organization/${ORG}/settings`);
-      const select = page.locator("#org-country");
-      await expect(select).toBeVisible({ timeout: 30_000 });
-      await select.scrollIntoViewIfNeeded();
-      await expect(select).toHaveValue("PH");
-      await page.screenshot({
-        path: `${SHOT_DIR}/p12-country-select-${viewport.name}.png`,
-        fullPage: true,
-      });
-      await assertNoOverflow(page, `country-select-${viewport.name}`);
+    await page.goto(`/organization/${ORG}/settings`);
+    const select = page.locator("#org-country");
+    await expect(select).toBeVisible({ timeout: 30_000 });
+    await select.scrollIntoViewIfNeeded();
+    await expect(select).toHaveValue("PH");
+    await expect(page.getByText(/Tax filing is not part of Books/i)).toBeVisible();
+    await expect(page.getByText(/enables payroll, withholding, and BIR filing/i)).toHaveCount(0);
 
-      await page.goto("/tax/settings");
-      await expect(
-        page.getByRole("heading", { name: /Philippine tax & payroll is not enabled/i }),
-      ).toBeHidden();
-      await page.screenshot({
-        path: `${SHOT_DIR}/p12-active-${viewport.name}.png`,
-        fullPage: true,
-      });
-      await assertNoOverflow(page, `active-${viewport.name}`);
-    });
-  }
+    await page.goto("/tax/settings");
+    await expect(
+      page.getByRole("heading", { name: /BIR tax filing is not part of Books/i }),
+    ).toBeVisible({ timeout: 30_000 });
 
-  for (const viewport of VIEWPORTS) {
-    test(`ARCHIVED state at ${viewport.name}: read-only banner`, async ({ page }) => {
-      if (!stagedRunId) {
-        const [run] = await sql`
-          INSERT INTO payroll_runs (organization_id, taxable_year, payroll_period, period_start, period_end, period_index)
-          VALUES (${ORG}, 2026, 'monthly', '2026-07-01', '2026-07-31', 7)
-          RETURNING id
-        `;
-        stagedRunId = run.id;
-      }
-      await setCountry("US");
-      await page.setViewportSize({ width: viewport.width, height: viewport.height });
-      await page.goto("/payroll");
-      await expect(page.getByText(/Archived\./)).toBeVisible({ timeout: 30_000 });
-      await expect(page.getByText(/read-only/i).first()).toBeVisible();
-      await page.screenshot({
-        path: `${SHOT_DIR}/p12-archived-${viewport.name}.png`,
-        fullPage: true,
-      });
-      await assertNoOverflow(page, `archived-${viewport.name}`);
-    });
-  }
+    await page.goto("/profile");
+    await page.waitForLoadState("networkidle");
+    for (const label of FILING_NAV) {
+      await expect(page.getByRole("link", { name: label, exact: true })).toHaveCount(0);
+    }
+  });
+
+  test("stored PH records do not surface an archived filing workspace", async ({ page }) => {
+    if (!stagedRunId) {
+      const [run] = await sql`
+        INSERT INTO payroll_runs (organization_id, taxable_year, payroll_period, period_start, period_end, period_index)
+        VALUES (${ORG}, 2026, 'monthly', '2026-07-01', '2026-07-31', 7)
+        RETURNING id
+      `;
+      stagedRunId = run.id;
+    }
+    await setCountry("US");
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/payroll");
+    await expect(
+      page.getByRole("heading", { name: /BIR tax filing is not part of Books/i }),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByText(/Archived\./)).toHaveCount(0);
+  });
 });

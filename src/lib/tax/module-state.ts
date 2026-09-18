@@ -5,15 +5,14 @@
 // three-way state instead of a boolean so that switching country never
 // destroys or hides history:
 //
-//   active   — organization country is "PH": full read/write.
-//   archived — country is NOT "PH" but PH records exist: read-only. Every
-//              mutation refuses; reads and exports keep working so history
-//              stays auditable and exportable.
+//   active   — organization country is "PH": full read/write IF the Books
+//              product flag BUWIZ_PH_TAX_FILING is on (default off — filing
+//              lives in Buwiz Forms).
+//   archived — country is NOT "PH" but PH records exist: read-only.
 //   off      — country is not "PH" and no PH records exist: module hidden.
 //
 // There is deliberately NO delete path here. Switching back to "PH" restores
-// the module exactly as it was (lossless), and the switch itself is written
-// to the activity log by the settings mutation.
+// derived state (lossless). Writes in Books still require the product flag.
 // ============================================================================
 import { createHash } from "node:crypto";
 import { count, eq } from "drizzle-orm";
@@ -25,6 +24,7 @@ import { taxCertificates } from "../../db/schema/tax-certificates";
 import { orgTaxProfiles } from "../../db/schema/tax-reference";
 import { taxComputedReturns, taxWithholdingPayments } from "../../db/schema/tax-stage-remainder";
 
+import { isPhTaxFilingEnabled } from "./product-flag";
 import type { PhTaxModuleState, PhTaxModuleStatus, PhTaxRecordCounts } from "./module-state-types";
 
 export type { PhTaxModuleState, PhTaxModuleStatus, PhTaxRecordCounts } from "./module-state-types";
@@ -72,6 +72,7 @@ export async function phTaxModuleStatus(db: DbExecutor, orgId: string): Promise<
 
   return {
     state: derivePhTaxModuleState({ country, totalRecords }),
+    filingEnabled: isPhTaxFilingEnabled(),
     country,
     records,
     totalRecords,
@@ -80,22 +81,40 @@ export async function phTaxModuleStatus(db: DbExecutor, orgId: string): Promise<
 
 export class PhTaxModuleInactiveError extends Error {
   readonly state: PhTaxModuleState;
-  constructor(state: PhTaxModuleState) {
+  constructor(state: PhTaxModuleState, message?: string) {
     super(
-      state === "archived"
-        ? "The Philippine tax module is archived (organization country is no longer PH). Records stay readable and exportable, but writes are disabled — set the organization country back to Philippines to resume."
-        : "The Philippine tax module is not enabled. Set the organization country to Philippines in settings to use payroll and tax filing.",
+      message ??
+        (state === "archived"
+          ? "The Philippine tax module is archived (organization country is no longer PH). Records stay readable and exportable, but writes are disabled — set the organization country back to Philippines to resume."
+          : "The Philippine tax module is not enabled. Set the organization country to Philippines in settings to use payroll and tax filing."),
     );
     this.name = "PhTaxModuleInactiveError";
     this.state = state;
   }
 }
 
+export class PhTaxFilingUnavailableError extends PhTaxModuleInactiveError {
+  constructor() {
+    super(
+      "off",
+      "Philippine BIR/tax filing is not part of Buwiz Books. It belongs in Buwiz Forms.",
+    );
+    this.name = "PhTaxFilingUnavailableError";
+  }
+}
+
 /**
  * Mutation gate: every payroll/tax WRITE calls this first. Reads and exports
- * deliberately do not — archived history must stay visible and exportable.
+ * deliberately do not — archived history must stay visible and exportable
+ * for a later move to Buwiz Forms.
+ *
+ * The product flag is checked first: country = PH no longer opens writes
+ * in Books unless an operator has explicitly restored the dormant module.
  */
 export async function assertPhTaxWritable(db: DbExecutor, orgId: string): Promise<void> {
+  if (!isPhTaxFilingEnabled()) {
+    throw new PhTaxFilingUnavailableError();
+  }
   const status = await phTaxModuleStatus(db, orgId);
   if (status.state !== "active") {
     throw new PhTaxModuleInactiveError(status.state);

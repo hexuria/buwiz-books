@@ -1,35 +1,63 @@
 // ============================================================================
-// Route-level PH tax module gate (audit D6).
+// Route-level PH tax module gate (audit D6 + Books product peel).
 //
 // Wraps every payroll/tax page body:
-//   off      → the page renders an empty state pointing at organization
-//              settings (server mutations refuse anyway; this is the honest
-//              front door).
-//   archived → the page renders READ-ONLY under a banner. Server mutations
-//              refuse with the same message, so the banner is a courtesy,
-//              not the enforcement.
+//   product flag off → BIR filing is not a Books workflow (Buwiz Forms).
+//   off      → empty state (only if the dormant module has been restored).
+//   archived → the page renders READ-ONLY under a banner.
 //   active   → children unchanged.
 // ============================================================================
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { keys } from "../lib/query-keys";
 import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
+import { effectivePhTaxUiState } from "../lib/tax/nav-gate";
 import { getTaxModuleState } from "../routes/api/-tax-module-state";
 import { useActiveOrganization } from "../hooks/useActiveOrganization";
+import { usePhTaxFilingEnabled } from "../hooks/usePhTaxFilingEnabled";
+
+function FormsEmptyState() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full px-6 py-16 text-center">
+      <div className="max-w-md space-y-3">
+        <h2 className="text-lg font-semibold text-[#1e293b] dark:text-white">
+          BIR tax filing is not part of Books
+        </h2>
+        <p className="text-sm text-[#64748b] dark:text-white/50">
+          Philippine BIR forms, alphalists, withholding remittance, and payroll filing live in Buwiz
+          Forms. Books keeps the general ledger, parties, bills, invoices, bank reconciliation, and
+          documents.
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export function PhTaxGate({ children }: { children: React.ReactNode }) {
+  const { enabled: filingEnabled, isPending: flagPending } = usePhTaxFilingEnabled();
   const { data: status, isPending } = useQuery({
     queryKey: keys.tax.moduleState(),
     queryFn: () => (getTaxModuleState as () => Promise<PhTaxModuleStatus>)(),
     staleTime: 60_000,
+    enabled: filingEnabled,
   });
   const { data: activeOrg } = useActiveOrganization();
+
+  if (flagPending) {
+    return <div className="p-8 text-sm text-[#64748b] dark:text-white/50">Loading…</div>;
+  }
+
+  if (!filingEnabled) {
+    return <FormsEmptyState />;
+  }
 
   if (isPending || !status) {
     return <div className="p-8 text-sm text-[#64748b] dark:text-white/50">Loading…</div>;
   }
 
-  if (status.state === "off") {
+  const uiState = effectivePhTaxUiState(status);
+
+  if (uiState === "off") {
     return (
       <div className="flex flex-col items-center justify-center h-full px-6 py-16 text-center">
         <div className="max-w-md space-y-3">
@@ -55,7 +83,7 @@ export function PhTaxGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (status.state === "archived") {
+  if (uiState === "archived") {
     return (
       <div className="flex flex-col h-full">
         <div className="px-4 sm:px-8 py-3 bg-[#fffbeb] dark:bg-amber-900/10 border-b border-[#fde68a] dark:border-amber-900/30">

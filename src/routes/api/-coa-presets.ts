@@ -9,7 +9,7 @@ import { z } from "zod";
 import { assertRolePermission } from "../../lib/auth-middleware";
 import { executeCoaPlan, lockCoaForOrg } from "../../lib/coa/execute-plan";
 import { planCoaPreset, isNoopPlan } from "../../lib/coa/plan-preset";
-import { getPreset, listPresets, presetForIndustry } from "../../lib/coa/presets";
+import { getPreset, listSelectableCoaPresets, presetForIndustry } from "../../lib/coa/presets";
 import { loadCoaSnapshot } from "../../lib/coa/snapshot";
 import { flattenPresetAccounts } from "../../lib/coa/preset-types";
 import { parseOrgMetadata } from "../../lib/org-metadata";
@@ -87,7 +87,7 @@ export const listCoaPresets = createServerFn({ method: "GET" }).handler(async ()
       appliedPresetVersion: metadata.coaPresetVersion ?? null,
       recommendedPresetId: recommended.id,
       industry: metadata.industry ?? null,
-      presets: listPresets().map((preset) => ({
+      presets: listSelectableCoaPresets().map((preset) => ({
         id: preset.id,
         version: preset.version,
         label: preset.label,

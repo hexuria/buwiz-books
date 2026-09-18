@@ -16,6 +16,9 @@
 type Params = Record<string, unknown> | undefined;
 
 export const keys = {
+  appConfig: {
+    all: () => ["app-config"] as const,
+  },
   parties: {
     all: () => ["parties"] as const,
     list: (type?: string, params?: Params) => ["parties", type ?? null, params ?? null] as const,

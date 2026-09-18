@@ -557,13 +557,15 @@ describe("tax reference catalog wiring", () => {
       expect(tree).toContain("'/tax/parties'");
     });
 
-    it("points the sidebar at the new tax screens", () => {
+    it("points the sidebar at the tax screens but fail-closes them behind the product flag", () => {
       const sidebar = read("src/components/AppSidebar.tsx");
       expect(sidebar).toContain('href: "/tax/compute"');
       expect(sidebar).toContain('href: "/tax/settings"');
       expect(sidebar).toContain('href: "/tax/deadlines"');
       expect(sidebar).toContain('href: "/tax/ewt"');
       expect(sidebar).toContain('href: "/tax/parties"');
+      expect(sidebar).toContain("effectivePhTaxUiState");
+      expect(sidebar).toContain("usePhTaxFilingEnabled");
     });
 
     it("uses the live engine signatures on /tax/compute", () => {

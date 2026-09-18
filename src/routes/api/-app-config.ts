@@ -10,14 +10,17 @@ import { eq } from "drizzle-orm";
 import { db } from "../../db";
 import * as authSchema from "../../db/schema/auth";
 import { auth } from "../../lib/auth";
+import { isPhTaxFilingEnabled } from "../../lib/tax/product-flag";
 
 /**
  * Returns public app configuration flags.
  * - inviteOnly: whether the app is in invite-only registration mode
+ * - phTaxFilingEnabled: dormant PH BIR module; default OFF (Buwiz Forms)
  */
 async function getAppConfigImpl() {
   return {
     inviteOnly: process.env.INVITE_ONLY === "true",
+    phTaxFilingEnabled: isPhTaxFilingEnabled(),
   };
 }
 

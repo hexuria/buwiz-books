@@ -17,6 +17,7 @@ import { withOrgContext } from "@/db";
 import { taxReferenceDatasets } from "@/db/schema/tax-reference";
 import { createLogger } from "@/lib/logger";
 import { buildStalenessReport, type StalenessInput } from "@/lib/tax/reference-data-staleness";
+import { isPhTaxFilingEnabled } from "@/lib/tax/product-flag";
 import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
@@ -26,6 +27,19 @@ export async function processTaxReferenceStalenessJob(
   job: ProcessingJob,
   context: JobContext,
 ): Promise<JobHandlerResult> {
+  if (!isPhTaxFilingEnabled()) {
+    const completed = await withOrgContext(job.organizationId, "system", "admin", (tx) =>
+      completeProcessingJob(tx, job.id, context.workerId),
+    );
+    if (!completed) {
+      return { processed: false, reason: "lease_lost", jobId: job.id };
+    }
+    logger.info("Skipped BIR tax-reference staleness sweep (filing is not part of Books)", {
+      jobId: job.id,
+    });
+    return { processed: true, jobId: job.id, skipped: true, reason: "ph_tax_filing_disabled" };
+  }
+
   // The datasets table is global and org-less; reading it under the job's
   // org context is harmless and keeps this handler free of the module-level
   // connection like every sibling.
