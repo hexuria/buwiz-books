@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { form2307OcrOutputSchema } from "@/lib/ai/schemas/form-2307-ocr";
 import { form2307OcrPrompt } from "@/lib/ai/prompts/form-2307-ocr";
 import { AI_TASK_CATEGORY } from "@/lib/ai/types";
-import { DEFAULT_CHAINS } from "@/lib/ai/chains";
+import { DEFAULT_CHAINS, DOCUMENT_TASKS, enforceOcrPolicy } from "@/lib/ai/chains";
 import { zodToGeminiSchema } from "@/lib/ai/zod-to-gemini-schema";
 
 /**
@@ -155,6 +155,16 @@ describe("form2307OcrPrompt", () => {
 describe("registry wiring", () => {
   it("is classified as an OCR task for model selection", () => {
     expect(AI_TASK_CATEGORY.form_2307_ocr).toBe("ocr");
+  });
+
+  it("is in DOCUMENT_TASKS so enforceOcrPolicy clamps org overrides to Gemini", () => {
+    expect(DOCUMENT_TASKS.has("form_2307_ocr")).toBe(true);
+    expect(
+      enforceOcrPolicy("form_2307_ocr", [
+        { provider: "openai", model: "gpt-4o" },
+        { provider: "gemini", model: "gemini-ocr" },
+      ]),
+    ).toEqual([{ provider: "gemini", model: "gemini-ocr" }]);
   });
 
   it("has a fallback chain that escalates", () => {

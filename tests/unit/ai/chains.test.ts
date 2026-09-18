@@ -10,7 +10,7 @@ import {
   enforceOcrPolicy,
   OcrEgressPolicyError,
 } from "../../../src/lib/ai/chains";
-import type { AiTaskName } from "../../../src/lib/ai/types";
+import { AI_TASK_CATEGORY, type AiTaskName } from "../../../src/lib/ai/types";
 
 describe("default chains", () => {
   it("every task has at least one hop", () => {
@@ -33,6 +33,17 @@ describe("default chains", () => {
     }
   });
 
+  it("DOCUMENT_TASKS is exactly the ocr-category tasks (no OCR policy holes)", () => {
+    // form_2307_ocr lived in DEFAULT_CHAINS as Gemini-only but was missing
+    // from this set, so enforceOcrPolicy left an org override pointing it
+    // at OpenAI. Category === ocr means document bytes leave the tenant.
+    const ocrTasks = (Object.entries(AI_TASK_CATEGORY) as [AiTaskName, string][])
+      .filter(([, category]) => category === "ocr")
+      .map(([task]) => task)
+      .sort();
+    expect([...DOCUMENT_TASKS].sort()).toEqual(ocrTasks);
+  });
+
   it("text tasks are allowed to escalate to a redactable provider", () => {
     expect(DEFAULT_CHAINS.match_assist.some((h) => h.provider === "anthropic")).toBe(true);
     expect(DEFAULT_CHAINS.transaction_parse.some((h) => h.provider === "anthropic")).toBe(true);
@@ -50,6 +61,23 @@ describe("enforceOcrPolicy", () => {
     ]);
   });
 
+  it("strips a non-Gemini override on form_2307_ocr (document-bytes task)", () => {
+    const tampered = [
+      { provider: "gemini" as const, model: "g" },
+      { provider: "openai" as const, model: "gpt" },
+      { provider: "openai_compatible" as const, model: "local" },
+    ];
+    expect(enforceOcrPolicy("form_2307_ocr", tampered)).toEqual([
+      { provider: "gemini", model: "g" },
+    ]);
+  });
+
+  it("rejects a wholly non-Gemini form_2307_ocr chain as empty (save path falls back)", () => {
+    expect(enforceOcrPolicy("form_2307_ocr", [{ provider: "anthropic", model: "claude" }])).toEqual(
+      [],
+    );
+  });
+
   it("leaves text-task chains untouched", () => {
     const chain = [
       { provider: "gemini" as const, model: "g" },
@@ -62,6 +90,12 @@ describe("enforceOcrPolicy", () => {
 describe("assertOcrPolicy", () => {
   it("throws when a document task is pointed at another provider", () => {
     expect(() => assertOcrPolicy("bill_ocr", [{ provider: "anthropic", model: "claude" }])).toThrow(
+      OcrEgressPolicyError,
+    );
+  });
+
+  it("throws when form_2307_ocr is pointed at another provider", () => {
+    expect(() => assertOcrPolicy("form_2307_ocr", [{ provider: "openai", model: "gpt" }])).toThrow(
       OcrEgressPolicyError,
     );
   });

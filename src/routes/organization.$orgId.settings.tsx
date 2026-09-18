@@ -1512,6 +1512,7 @@ const AI_TASK_TITLES: Record<string, string> = {
   receipt_ocr: "Receipt OCR",
   bill_ocr: "Bill OCR",
   statement_ocr: "Statement OCR",
+  form_2307_ocr: "Form 2307 OCR",
   bbox_scan: "Document region scan",
   email_extraction: "Email attachment extraction",
   date_parse: "Date parsing",
