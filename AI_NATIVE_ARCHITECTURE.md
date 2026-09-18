@@ -406,6 +406,8 @@ No new stores: pgvector for embeddings, `processing_jobs` for queueing, `ai_less
 
 Verified: lint + typecheck clean; **828 unit / 196 integration / 17 component / 30 eval tests** passing; formatting clean. Nothing committed.
 
+**P1 hardening does not add a gateway.** `openai` and `openai_compatible` (with `baseUrl`), `providerAllowlist`, and per-task `taskChains` already exist on `organization_ai_credentials` / `organization_ai_settings` — org BYOK through the compatible adapter is the OpenAI path. This phase does not add a platform OpenAI key, a LiteLLM / OpenRouter / Jev proxy, or a rewrite of `DEFAULT_CHAINS` away from Gemini-first. OCR tasks (including `form_2307_ocr`) stay Gemini-only via `DOCUMENT_TASKS` + `enforceOcrPolicy`.
+
 **Not wired to UI yet:** `startFieldScan` (the bbox job exists; the client still uses the per-page loop) and the reflection/curation schedulers (jobs + script exist; no cron entry). Both are noted as follow-ups rather than blockers.
 
 ---
@@ -466,6 +468,7 @@ Effort assumes 1–2 engineers. Each phase is independently shippable. **Honest 
 - **No runtime self-modification** — prompts improve via offline optimizer → git PR → eval gate → review; never in production (§8).
 - **No general-purpose assistant / open chat endpoint** — typed finance tasks only (§2).
 - **No LLM auto-linking of ledger entries, ever** — the 84 < 85 cap is a code invariant, not a config value (§2, §7).
+- **No new AI gateway in P1** — `openai` / `openai_compatible`+`baseUrl` / `providerAllowlist` / `taskChains` already exist. A platform OpenAI key or LiteLLM/OpenRouter/Jev proxy is deferred; see the P1 note under Implementation status.
 - **No fine-tuning, no third-party eval SaaS in the critical path** — per SELF_IMPROVING non-goals; finance documents stay inside the trust boundary.
 - **No cross-org data sharing without explicit opt-in** — anonymization is necessary but not sufficient for golden-set promotion (§8).
 - **No Rust/second stack** — `research/buwiz_agent.md`'s concepts (evidence vault, obligation calendar, LLM-proposes/rules-dispose) are harvested into this TS design; its stack is not.

@@ -212,6 +212,10 @@ describeDb("org AI credentials + settings", () => {
           { provider: "gemini", model: "gemini-3.1-flash-image-preview" },
           { provider: "openai", model: "gpt-5" },
         ],
+        form_2307_ocr: [
+          { provider: "openai", model: "gpt-4o" },
+          { provider: "openai_compatible", model: "local-vlm" },
+        ],
         // Text tasks may legitimately escalate off Gemini.
         transaction_parse: [
           { provider: "gemini", model: "gemini-3-flash-preview" },
@@ -234,6 +238,11 @@ describeDb("org AI credentials + settings", () => {
     // Mixed ⇒ the non-Gemini hop is stripped at rest.
     expect(chains.receipt_ocr.every((h) => h.provider === "gemini")).toBe(true);
     expect(chains.receipt_ocr).toHaveLength(1);
+
+    // form_2307_ocr is a document-bytes task: a wholly non-Gemini override
+    // falls back to the Gemini default rather than persisting empty/widened.
+    expect(chains.form_2307_ocr).toEqual(DEFAULT_CHAINS.form_2307_ocr);
+    expect(chains.form_2307_ocr.every((h) => h.provider === "gemini")).toBe(true);
 
     // Text task keeps its escalation hop.
     expect(chains.transaction_parse.map((h) => h.provider)).toEqual(["gemini", "anthropic"]);

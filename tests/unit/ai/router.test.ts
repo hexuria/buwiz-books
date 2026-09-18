@@ -69,6 +69,30 @@ describe("resolveChainPolicy", () => {
     );
   });
 
+  it("never routes form_2307_ocr away from Gemini", async () => {
+    const { hops, filtered } = await resolveChainPolicy({
+      task: "form_2307_ocr",
+      settings: {
+        ...baseSettings,
+        providerAllowlist: ["gemini", "openai", "openai_compatible"],
+        taskChains: {
+          form_2307_ocr: [
+            { provider: "openai", model: "gpt-4o" },
+            { provider: "openai_compatible", model: "local-vlm" },
+            { provider: "gemini", model: "gemini-ocr" },
+          ],
+        },
+      },
+      hasCredentialsFor: () => true,
+    });
+
+    expect(hops).toEqual([{ provider: "gemini", model: "gemini-ocr" }]);
+    expect(filtered.map((entry) => entry.reason)).toEqual([
+      "ocr_policy_gemini_only",
+      "ocr_policy_gemini_only",
+    ]);
+  });
+
   it("honors an organization chain override for a text task", async () => {
     const { hops } = await resolveChainPolicy({
       task: "match_assist",

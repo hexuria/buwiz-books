@@ -26,11 +26,16 @@ export interface ChainEntry {
   params?: { temperature?: number; maxOutputTokens?: number; thinkingBudget?: number };
 }
 
-/** Tasks that send document bytes to the model. */
+/**
+ * Tasks that send document bytes to the model. OCR-category tasks belong
+ * here — `enforceOcrPolicy` uses the set as the Gemini-only clamp, so a
+ * missing entry (historically `form_2307_ocr`) is an egress hole.
+ */
 export const DOCUMENT_TASKS: ReadonlySet<AiTaskName> = new Set<AiTaskName>([
   "receipt_ocr",
   "bill_ocr",
   "statement_ocr",
+  "form_2307_ocr",
   "bbox_scan",
   "email_extraction",
 ]);
