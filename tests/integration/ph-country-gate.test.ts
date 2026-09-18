@@ -22,7 +22,9 @@ import {
   phTaxModuleStatus,
   switchOrganizationCountry,
   PhTaxModuleInactiveError,
+  PhTaxFilingUnavailableError,
 } from "../../src/lib/tax/module-state";
+import { overridePhTaxFilingEnabledForTests } from "../../src/lib/tax/product-flag";
 
 const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
@@ -33,6 +35,7 @@ describeDb("PH country gate (D6)", () => {
   const USER = "user-ph-gate";
 
   beforeAll(async () => {
+    overridePhTaxFilingEnabledForTests(true);
     ({ db, sql } = await createTestDb());
     await db.insert(organization).values({
       id: ORG,
@@ -42,6 +45,7 @@ describeDb("PH country gate (D6)", () => {
   });
 
   afterAll(async () => {
+    overridePhTaxFilingEnabledForTests(undefined);
     await sql.end();
   });
 
@@ -134,5 +138,35 @@ describeDb("PH country gate (D6)", () => {
         .where(eq(activityLogs.organizationId, ORG))
     ).length;
     expect(after).toBe(before);
+  });
+});
+
+describeDb("PH filing product flag (Books peel)", () => {
+  let db: any;
+  let sql: postgres.Sql;
+  const ORG = `ph-flag-${randomUUID()}`;
+  const USER = "user-ph-flag";
+
+  beforeAll(async () => {
+    overridePhTaxFilingEnabledForTests(false);
+    ({ db, sql } = await createTestDb());
+    await db.insert(organization).values({
+      id: ORG,
+      name: "PH Flag Org",
+      slug: `phf-${randomUUID().slice(0, 8)}`,
+    });
+  });
+
+  afterAll(async () => {
+    overridePhTaxFilingEnabledForTests(undefined);
+    await sql.end();
+  });
+
+  it("refuses writes even when country is PH", async () => {
+    const result = await switchOrganizationCountry(db, { orgId: ORG, userId: USER, country: "PH" });
+    expect(result.after.state).toBe("active");
+    expect(result.after.filingEnabled).toBe(false);
+    await expect(assertPhTaxWritable(db, ORG)).rejects.toThrow(PhTaxFilingUnavailableError);
+    await expect(assertPhTaxWritable(db, ORG)).rejects.toThrow(/Buwiz Forms/);
   });
 });

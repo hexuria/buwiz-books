@@ -28,11 +28,7 @@ import {
   getOrgAiSettingsForUi,
   updateOrgAiSettings,
 } from "./api/-org-settings";
-import {
-  getTaxModuleState,
-  getAccountingCurrency,
-  updateOrganizationCountry,
-} from "./api/-tax-module-state";
+import { getTaxModuleState, updateOrganizationCountry } from "./api/-tax-module-state";
 import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
 import type {
   OrgSettings,
@@ -409,10 +405,6 @@ function CountrySection({ queryClient }: { queryClient: any }) {
     queryKey: keys.tax.moduleState(),
     queryFn: () => (getTaxModuleState as () => Promise<PhTaxModuleStatus>)(),
   });
-  const { data: currency } = useQuery({
-    queryKey: ["org-accounting-currency"],
-    queryFn: () => (getAccountingCurrency as () => Promise<{ baseCurrency: string }>)(),
-  });
 
   const mutation = useMutation({
     mutationFn: (country: string | null) =>
@@ -435,7 +427,9 @@ function CountrySection({ queryClient }: { queryClient: any }) {
     const next = nextRaw === "" ? null : nextRaw;
     if (next === (status?.country ?? null)) return;
 
-    // Switching AWAY from PH with records: pre-flight summary, no deletes.
+    // Stored PH tax/payroll rows are not deleted on a country change. Filing
+    // is not a Books workflow; this confirm is only so operators know history
+    // remains in the database for a later export to Buwiz Forms.
     if (status?.country === "PH" && next !== "PH" && (status?.totalRecords ?? 0) > 0) {
       const r = status.records;
       const summary = [
@@ -450,15 +444,7 @@ function CountrySection({ queryClient }: { queryClient: any }) {
       const ok = window.confirm(
         `Change country away from the Philippines?
 
-This organization has ${summary}. Nothing is deleted: the PH tax module becomes read-only (archived), stays exportable, and switching back restores it exactly as it is. New payroll/tax writes will be refused while archived.`,
-      );
-      if (!ok) return;
-    }
-
-    // Activating PH with a non-PHP book currency: warn, don't block.
-    if (next === "PH" && currency && currency.baseCurrency !== "PHP") {
-      const ok = window.confirm(
-        `This organization keeps its books in ${currency.baseCurrency}, not PHP. Philippine payroll and BIR forms are peso-denominated — enabling the module is allowed, but amounts will not convert automatically. Continue?`,
+This organization has ${summary} stored. Nothing is deleted. BIR filing is not part of Books; those rows stay in the database for a later export to Buwiz Forms.`,
       );
       if (!ok) return;
     }
@@ -489,13 +475,11 @@ This organization has ${summary}. Nothing is deleted: the PH tax module becomes 
         ))}
       </select>
       <p className="mt-1.5 text-[11px] text-[#94a3b8] dark:text-white/40">
-        Setting the country to Philippines enables payroll, withholding, and BIR filing. Switching
-        away archives those records read-only — nothing is ever deleted, and switching back restores
-        them.
-        {status?.state === "archived" && (
-          <span className="block mt-0.5 text-[#92400e] dark:text-amber-300 font-medium">
-            PH tax records are currently archived ({status.totalRecords} record
-            {status.totalRecords === 1 ? "" : "s"}).
+        Used for locale, currency conventions, and reporting. Tax filing is not part of Books.
+        {status && status.totalRecords > 0 && (
+          <span className="block mt-0.5 text-[#64748b] dark:text-white/50">
+            {status.totalRecords} stored PH tax/payroll row
+            {status.totalRecords === 1 ? "" : "s"} remain in the database for export to Buwiz Forms.
           </span>
         )}
       </p>

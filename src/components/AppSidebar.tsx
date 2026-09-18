@@ -21,9 +21,10 @@ import { useIsCompactNav } from "../hooks/useBreakpoint";
 import { useScrollLock } from "../hooks/useOverlayBehavior";
 import { useQuery } from "@tanstack/react-query";
 import { keys } from "../lib/query-keys";
-import { applyPhTaxGate } from "../lib/tax/nav-gate";
+import { applyPhTaxGate, effectivePhTaxUiState } from "../lib/tax/nav-gate";
 import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
 import { getTaxModuleState } from "../routes/api/-tax-module-state";
+import { usePhTaxFilingEnabled } from "../hooks/usePhTaxFilingEnabled";
 
 // ─── Nav Item Config ─────────────────────────────────────────────────────────
 
@@ -727,15 +728,16 @@ export default function AppSidebar({ collapsed, onToggleCollapse, children }: Ap
   const { data: session } = useSession();
   const { data: safeActiveOrg } = useActiveOrganization();
 
-  // D6 country gate: Payroll + Tax entries follow the PH module state —
-  // hidden when off, badged when archived. While the state is loading the
-  // nav stays as-is (no flash of appearing/disappearing sections).
+  // PH BIR/tax nav is fail-closed: hidden while loading and whenever the
+  // Books product flag is off (default). Country = PH does not restore it.
+  const { enabled: phTaxFilingEnabled } = usePhTaxFilingEnabled();
   const { data: phTaxStatus } = useQuery({
     queryKey: keys.tax.moduleState(),
     queryFn: () => (getTaxModuleState as () => Promise<PhTaxModuleStatus>)(),
     staleTime: 60_000,
+    enabled: phTaxFilingEnabled,
   });
-  const navItems = applyPhTaxGate(NAV_ITEMS, phTaxStatus?.state);
+  const navItems = applyPhTaxGate(NAV_ITEMS, effectivePhTaxUiState(phTaxStatus));
   const activeOrg = safeActiveOrg
     ? { id: safeActiveOrg.id, name: safeActiveOrg.name, slug: safeActiveOrg.slug ?? "" }
     : null;

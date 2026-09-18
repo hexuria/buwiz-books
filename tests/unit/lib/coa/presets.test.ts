@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { ACCOUNT_TYPES } from "@/db/schema/account-constants";
-import { COA_PRESETS, listPresets, presetForIndustry, getPreset } from "@/lib/coa/presets";
+import {
+  COA_PRESETS,
+  getPreset,
+  listPresets,
+  listSelectableCoaPresets,
+  presetForIndustry,
+} from "@/lib/coa/presets";
 import { allMappingKeys, mappingRowFor } from "@/lib/coa/mapping-registry";
 import { flattenPresetAccounts } from "@/lib/coa/preset-types";
 import { validatePreset } from "@/lib/coa/validate-preset";
@@ -109,6 +115,12 @@ describe("preset catalog", () => {
     expect(presetForIndustry("retail").id).toBe("retail_ecommerce");
     expect(presetForIndustry("not_a_real_industry").id).toBe("general_small_business");
     expect(presetForIndustry(null).id).toBe("general_small_business");
+  });
+
+  it("does not recommend the BIR chart while tax filing is off in Books", () => {
+    expect(presetForIndustry("philippines_smb").id).toBe("general_small_business");
+    expect(listSelectableCoaPresets().map((p) => p.id)).not.toContain("philippines_smb");
+    expect(listPresets().map((p) => p.id)).toContain("philippines_smb");
   });
 
   it("getPreset returns null for an unknown id", () => {

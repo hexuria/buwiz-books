@@ -14,6 +14,8 @@ import { requireMappedAccountId } from "@/lib/coa/resolve-mapped-account";
 
 import { requirePhAccount } from "@/lib/tax/ph-account-resolver";
 import { splitBillPaymentWithEwt } from "@/lib/tax/bill-payment-ewt";
+import { isPhTaxFilingEnabled } from "@/lib/tax/product-flag";
+import { PhTaxFilingUnavailableError } from "@/lib/tax/module-state";
 import {
   beginAccountingOperation,
   completeAccountingOperation,
@@ -118,6 +120,9 @@ async function createBillPaymentJournal(
   if (!header) throw new Error("Bill payment journal could not be posted.");
 
   const split = splitBillPaymentWithEwt(input.paymentAmount, input.ewtWithheld);
+  if (split.withheld && !isPhTaxFilingEnabled()) {
+    throw new PhTaxFilingUnavailableError();
+  }
   const values = [
     {
       journalHeaderId: header.id,

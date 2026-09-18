@@ -44,4 +44,25 @@ describe("PH country gate wiring", () => {
       expect(source.includes("<PhTaxGate>")).toBe(true);
     });
   }
+
+  it("assertPhTaxWritable refuses writes when the Books product flag is off", () => {
+    const source = readFileSync("src/lib/tax/module-state.ts", "utf8");
+    expect(source).toContain("isPhTaxFilingEnabled()");
+    expect(source).toContain("PhTaxFilingUnavailableError");
+    expect(source).toContain("throw new PhTaxFilingUnavailableError()");
+  });
+
+  it("PhTaxGate tells operators filing lives in Buwiz Forms", () => {
+    const source = readFileSync("src/components/PhTaxGate.tsx", "utf8");
+    expect(source).toContain("BIR tax filing is not part of Books");
+    expect(source).toContain("Buwiz Forms");
+  });
+
+  it("bill payments reject EWT withheld while filing is off", () => {
+    const bills = readFileSync("src/routes/api/-bills.ts", "utf8");
+    expect(bills).toContain("PhTaxFilingUnavailableError");
+    expect(bills).toContain("isPhTaxFilingEnabled()");
+    const poster = readFileSync("src/lib/manual-bill-payment.ts", "utf8");
+    expect(poster).toContain("PhTaxFilingUnavailableError");
+  });
 });
