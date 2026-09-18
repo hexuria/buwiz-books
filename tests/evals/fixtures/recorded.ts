@@ -297,4 +297,46 @@ export const RECORDED_CASES: RecordedCase[] = [
       coverageAtLeast(1, "assignments"),
     ],
   },
+  {
+    name: "CSV bank export classifies as statement",
+    task: "ingest_triage",
+    recordedResponse: JSON.stringify({
+      docKind: "statement",
+      confidence: 0.97,
+      reasoning: "CSV bank-export layout with Date, Description, Amount columns",
+    }),
+    expected: { docKind: "statement" },
+    fields: [{ path: "docKind", grader: exact, critical: true }],
+  },
+  {
+    name: "receipt filename classifies as receipt",
+    task: "ingest_triage",
+    // Models still wrap JSON in fences; the parser must cope.
+    recordedResponse:
+      '```json\n{"docKind":"receipt","confidence":0.91,"reasoning":"POS-style filename and itemized purchase preview"}\n```',
+    expected: { docKind: "receipt" },
+    fields: [{ path: "docKind", grader: exact, critical: true }],
+  },
+  {
+    name: "invoice PDF classifies as invoice",
+    task: "classify_document",
+    recordedResponse: JSON.stringify({
+      documentType: "invoice",
+      confidence: 0.94,
+      reasoning: "INVOICE header and amount due",
+    }),
+    expected: { documentType: "invoice" },
+    fields: [{ path: "documentType", grader: exact, critical: true }],
+  },
+  {
+    name: "tax form preview classifies as tax_form",
+    task: "classify_document",
+    recordedResponse: JSON.stringify({
+      documentType: "tax_form",
+      confidence: 0.88,
+      reasoning: "Form 2307 Certificate of Creditable Tax Withheld at Source",
+    }),
+    expected: { documentType: "tax_form" },
+    fields: [{ path: "documentType", grader: exact, critical: true }],
+  },
 ];
