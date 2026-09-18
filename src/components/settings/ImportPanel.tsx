@@ -5,6 +5,7 @@ import { useState, useRef, useCallback } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { validateImport, executeImport } from "../../routes/api/-export-import";
 import type { EntityType } from "../../routes/api/-export-import";
+import { ENTITY_LABELS, PH_EXPORTABLE_ENTITIES } from "../../lib/export-versions";
 
 // ============================================================================
 // Constants
@@ -22,6 +23,10 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
   { value: "departments", label: "Departments" },
   { value: "locations", label: "Locations" },
   { value: "products", label: "Products & Services" },
+  ...PH_EXPORTABLE_ENTITIES.map((value) => ({
+    value,
+    label: ENTITY_LABELS[value],
+  })),
 ];
 
 type ImportStep = "select" | "validate" | "importing" | "done";

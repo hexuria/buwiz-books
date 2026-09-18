@@ -47,6 +47,8 @@ test.describe("Settings Export & Import", () => {
         "Bills (A/P)",
         "Invoices (A/R)",
         "Number Sequences",
+        "PH Tax Profile",
+        "PH Computed Returns (as-filed)",
       ];
 
       for (const label of expectedLabels) {
@@ -177,6 +179,8 @@ test.describe("Settings Export & Import", () => {
         "Departments",
         "Locations",
         "Products & Services",
+        "PH Tax Profile",
+        "PH Computed Returns (as-filed)",
       ];
 
       for (const opt of expectedOptions) {
