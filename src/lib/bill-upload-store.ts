@@ -14,6 +14,12 @@
  */
 
 import { useSyncExternalStore } from "react";
+import {
+  billOcrReviewIssues,
+  findVendorByName,
+  isBillOcrNeedsReview,
+  requireBillVendorName,
+} from "./bill-ocr-result";
 import { keys } from "./query-keys";
 import { createLogger } from "./logger";
 
@@ -205,11 +211,13 @@ export async function startBillUpload(
       },
     });
 
-    if ("status" in aiResult) {
+    if (isBillOcrNeedsReview(aiResult)) {
       // Schema validation rejected the extraction — no vendor/bill is created.
-      // The existing error path surfaces the message on the upload job card.
+      // Discriminate on status === "needs_review", not `"status" in`: TanStack
+      // error payloads also have a numeric status and no issues array.
+      const issues = billOcrReviewIssues(aiResult);
       throw new Error(
-        `AI could not reliably read this bill (${aiResult.issues.slice(0, 3).join("; ")}${aiResult.issues.length > 3 ? "; …" : ""}). Create the bill manually or try re-uploading a clearer copy.`,
+        `AI could not reliably read this bill (${issues.slice(0, 3).join("; ")}${issues.length > 3 ? "; …" : ""}). Create the bill manually or try re-uploading a clearer copy.`,
       );
     }
 
@@ -372,21 +380,19 @@ export function dismissBillUpload(jobId: string) {
 async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promise<string> {
   const aiResult = job.parsed!;
   const accounts = job.accounts ?? [];
-  const vendors = job.vendors ?? [];
   const boundingBoxes = job.boundingBoxes ?? [];
+  const vendorName = requireBillVendorName(aiResult);
 
   // Create vendor if new
   let vendorId: string | undefined;
-  const existingVendor = vendors.find(
-    (v: any) => v.name.toLowerCase() === aiResult.vendor.name.toLowerCase(),
-  );
+  const existingVendor = findVendorByName(job.vendors, vendorName);
 
   if (existingVendor) {
     vendorId = existingVendor.id;
-  } else if (aiResult.vendor.name) {
+  } else {
     const newVendor = await (createParty as (opts: { data: unknown }) => Promise<any>)({
       data: {
-        name: aiResult.vendor.name,
+        name: vendorName,
         partyType: "vendor",
         email: aiResult.vendor.email || undefined,
         phone: aiResult.vendor.phone || undefined,
@@ -433,7 +439,7 @@ async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promis
       a.accountType === "cost_of_revenue" ||
       a.accountType === "other_expense",
   );
-  const lineItems = aiResult.lineItems.map((item) => {
+  const lineItems = (aiResult.lineItems ?? []).map((item) => {
     let accountId = defaultAccountId;
     if (item.suggestedCategoryNumber) {
       const match = expenseAccounts.find(

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { getTableColumns, getTableName } from "drizzle-orm";
@@ -298,10 +298,14 @@ describe("PH export registry", () => {
     const example = read(".env.example");
     expect(example).toMatch(/# BUWIZ_PH_TAX_FILING=1/);
     expect(example).not.toMatch(/^BUWIZ_PH_TAX_FILING=/m);
-    const testEnv = read(".env.test");
-    expect(testEnv).not.toMatch(/^BUWIZ_PH_TAX_FILING=/m);
+    // `.env.test` is gitignored; hermetic CI never has it. The committed
+    // template is the default. When a local copy exists, assert that too.
     const testExample = read(".env.test.example");
     expect(testExample).not.toMatch(/^BUWIZ_PH_TAX_FILING=/m);
+    const testEnvPath = join(REPO_ROOT, ".env.test");
+    if (existsSync(testEnvPath)) {
+      expect(readFileSync(testEnvPath, "utf8")).not.toMatch(/^BUWIZ_PH_TAX_FILING=/m);
+    }
   });
 
   it("documents the Forms handoff, excluded catalogs, and peel non-goals", () => {

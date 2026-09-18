@@ -9,7 +9,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { and, eq, sql } from "drizzle-orm";
 import { documents } from "../../db/schema/documents";
 import { processingJobs } from "../../db/schema/inbox";
-import { billOcrContextHash } from "../../lib/bill-ocr-cache";
+import { billOcrContextHash, readValidCachedBillOcr } from "../../lib/bill-ocr-cache";
 import { GeminiRateLimitError } from "../../lib/gemini-client";
 import { aiComplete } from "../../lib/ai/facade";
 import { createProposal } from "../../lib/ai/proposals";
@@ -157,13 +157,20 @@ export const parseBillDocument = createServerFn({ method: "POST" }).handler(
             throw new Error("Document not found");
           }
           const cached = cachedDocument.metadata?.billOcr;
-          if (cached?.contextHash === categoryContextHash) {
+          const validCached = readValidCachedBillOcr(cached, categoryContextHash);
+          if (validCached) {
             // Cache hit: return the cached parse WITHOUT creating a prefill
             // proposal. Proposals are created only on fresh parses — a cache
             // hit means an earlier parse of this exact document+context
             // already recorded one, and re-creating it here would pile up
             // duplicate pending proposals for the same extraction.
-            return cached.result as unknown as ParsedBillData;
+            return validCached as unknown as ParsedBillData;
+          }
+          if (cached?.contextHash === categoryContextHash) {
+            logger.warn("Ignoring invalid cached bill OCR; re-parsing", {
+              orgId,
+              documentId,
+            });
           }
         }
 
