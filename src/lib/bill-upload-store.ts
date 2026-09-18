@@ -14,6 +14,7 @@
  */
 
 import { useSyncExternalStore } from "react";
+import { billOcrReviewIssues, isBillOcrNeedsReview } from "./bill-ocr-result";
 import { keys } from "./query-keys";
 import { createLogger } from "./logger";
 
@@ -205,11 +206,13 @@ export async function startBillUpload(
       },
     });
 
-    if ("status" in aiResult) {
+    if (isBillOcrNeedsReview(aiResult)) {
       // Schema validation rejected the extraction — no vendor/bill is created.
-      // The existing error path surfaces the message on the upload job card.
+      // Discriminate on status === "needs_review", not `"status" in`: TanStack
+      // error payloads also have a numeric status and no issues array.
+      const issues = billOcrReviewIssues(aiResult);
       throw new Error(
-        `AI could not reliably read this bill (${aiResult.issues.slice(0, 3).join("; ")}${aiResult.issues.length > 3 ? "; …" : ""}). Create the bill manually or try re-uploading a clearer copy.`,
+        `AI could not reliably read this bill (${issues.slice(0, 3).join("; ")}${issues.length > 3 ? "; …" : ""}). Create the bill manually or try re-uploading a clearer copy.`,
       );
     }
 
