@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun --bun vite dev --port 3000",
+    "dev:mock": "AI_MODE=mock bun run dev",
     "dev:test": "E2E_BYPASS_R2=true BYPASS_RATE_LIMITS=true BETTER_AUTH_URL=http://localhost:${E2E_PORT:-3001} bun --env-file=.env.test --bun vite dev --port ${E2E_PORT:-3001}",
     "build": "bun --bun vite build",
     "preview": "bun --bun vite preview",

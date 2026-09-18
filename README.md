@@ -27,8 +27,12 @@ The app will be available at http://localhost:3000
 
 ```bash
 bun dev              # Start dev server on port 3000
+bun run dev:mock     # Same, with AI_MODE=mock (canned AI, no provider HTTP)
 bun preview          # Preview production build locally
 ```
+
+AI features normally call live providers. `AI_MODE=mock` returns schema-valid
+canned JSON in-process (including OCR). See [docs/ai-mock.md](./docs/ai-mock.md).
 
 ### Database
 
