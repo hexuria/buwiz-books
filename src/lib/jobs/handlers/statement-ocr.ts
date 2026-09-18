@@ -53,7 +53,7 @@ import { completeProcessingJob, extendProcessingJobLease } from "@/lib/inbox/pro
 import { createLogger } from "@/lib/logger";
 import { probePdf, renderPdfPagesForOcr } from "@/lib/pdf-unlock";
 import { resolveCandidateAccountIds } from "@/lib/resolve-candidate-accounts";
-import { parseStatementCsv } from "@/lib/statement-csv";
+import { isCsvStatementUpload, parseStatementCsv } from "@/lib/statement-csv";
 import { validateStatement, type ValidationResult } from "@/lib/statement-validator";
 import { downloadFromR2, isR2Configured } from "@/lib/storage";
 import type { ParsedStatementData } from "@/routes/api/-ai-statement-ocr";
@@ -227,15 +227,6 @@ async function loadPipelineContext(
   };
 }
 
-function isCsvStatement(context: PipelineContext): boolean {
-  const mime = (context.mimeType ?? "").toLowerCase();
-  if (mime === "text/csv" || mime === "application/csv" || mime === "text/comma-separated-values") {
-    return true;
-  }
-  if (context.fileType === "csv") return true;
-  return (context.originalFilename ?? "").toLowerCase().endsWith(".csv");
-}
-
 async function downloadStatement(context: PipelineContext): Promise<Buffer> {
   if (!context.r2Key) throw new Error("Statement document has no storage object key.");
   if (!isR2Configured()) throw new Error("Document storage is not configured.");
@@ -371,7 +362,7 @@ export async function processStatementOcrJob(
     run,
     "triage",
     async () => {
-      if (!isCsvStatement(context)) {
+      if (!isCsvStatementUpload(context)) {
         return { value: { source: "ocr", blocked: false }, output: { source: "ocr" } };
       }
       const buffer = await downloadStatement(context);

@@ -10,6 +10,29 @@
 // pairs. Anything ambiguous becomes an issue instead of a guess.
 // ============================================================================
 
+/** MIME types that identify a CSV statement (vision/OCR must not run). */
+const CSV_STATEMENT_MIME_TYPES = new Set([
+  "text/csv",
+  "application/csv",
+  "text/comma-separated-values",
+]);
+
+/**
+ * Whether this upload is a CSV (or CSV-disguised) statement and must skip
+ * vision OCR. Parameter charset (`text/csv; charset=utf-8`) still counts —
+ * the type token is what the pipeline keys on, not the raw header string.
+ */
+export function isCsvStatementUpload(input: {
+  mimeType?: string | null;
+  fileType?: string | null;
+  originalFilename?: string | null;
+}): boolean {
+  const mime = (input.mimeType ?? "").toLowerCase().split(";")[0].trim();
+  if (CSV_STATEMENT_MIME_TYPES.has(mime)) return true;
+  if ((input.fileType ?? "").toLowerCase() === "csv") return true;
+  return (input.originalFilename ?? "").toLowerCase().endsWith(".csv");
+}
+
 export interface CsvStatementLine {
   date: string; // YYYY-MM-DD
   description: string;
