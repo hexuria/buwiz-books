@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { billOcrReviewIssues, isBillOcrNeedsReview } from "../../../src/lib/bill-ocr-result";
+import {
+  billOcrReviewIssues,
+  findVendorByName,
+  isBillOcrNeedsReview,
+  requireBillVendorName,
+} from "../../../src/lib/bill-ocr-result";
 
 describe("isBillOcrNeedsReview", () => {
   it("accepts the server needs_review discriminant with issues", () => {
@@ -43,5 +48,43 @@ describe("billOcrReviewIssues", () => {
     expect(billOcrReviewIssues({ status: "needs_review", issues: "boom" })).toEqual([
       "unknown validation issue",
     ]);
+  });
+});
+
+describe("requireBillVendorName", () => {
+  const message =
+    "Bill OCR result is missing a vendor name. Re-upload the document or create the bill manually.";
+
+  it("returns the vendor name when present", () => {
+    expect(requireBillVendorName({ vendor: { name: "AWS" } })).toBe("AWS");
+  });
+
+  it("throws a clear Error instead of TypeError when vendor is missing", () => {
+    expect(() => requireBillVendorName({} as never)).toThrowError(message);
+    expect(() => requireBillVendorName({ vendor: undefined })).toThrowError(message);
+    expect(() => requireBillVendorName(null)).toThrowError(message);
+    expect(() => requireBillVendorName(undefined)).toThrowError(message);
+  });
+
+  it("throws when vendor.name is blank", () => {
+    expect(() => requireBillVendorName({ vendor: { name: "" } })).toThrowError(message);
+    expect(() => requireBillVendorName({ vendor: { name: "   " } })).toThrowError(message);
+  });
+});
+
+describe("findVendorByName", () => {
+  it("matches a vendor case-insensitively", () => {
+    const vendors = [
+      { id: "1", name: "Acme GmbH" },
+      { id: "2", name: "AWS" },
+    ];
+    expect(findVendorByName(vendors, "aws")?.id).toBe("2");
+  });
+
+  it("skips undefined and nameless entries instead of throwing", () => {
+    const vendors = [undefined, { id: "1", name: undefined }, { id: "2", name: "AWS" }, null];
+    expect(findVendorByName(vendors, "AWS")?.id).toBe("2");
+    expect(findVendorByName(null, "AWS")).toBeUndefined();
+    expect(findVendorByName(undefined, "AWS")).toBeUndefined();
   });
 });

@@ -25,3 +25,25 @@ export function isBillOcrNeedsReview(value: unknown): value is BillOcrNeedsRevie
 export function billOcrReviewIssues(result: BillOcrNeedsReview): string[] {
   return Array.isArray(result.issues) ? result.issues.map(String) : ["unknown validation issue"];
 }
+
+const MISSING_VENDOR_MESSAGE =
+  "Bill OCR result is missing a vendor name. Re-upload the document or create the bill manually.";
+
+/** Throws a clear Error instead of TypeError when vendor.name is absent. */
+export function requireBillVendorName(
+  parsed: { vendor?: { name?: string } | null } | null | undefined,
+): string {
+  const name = parsed?.vendor?.name;
+  if (typeof name !== "string" || name.trim() === "") {
+    throw new Error(MISSING_VENDOR_MESSAGE);
+  }
+  return name;
+}
+
+export function findVendorByName<T extends { name?: string | null }>(
+  vendors: Array<T | null | undefined> | null | undefined,
+  name: string,
+): T | undefined {
+  const needle = name.toLowerCase();
+  return (vendors ?? []).find((vendor): vendor is T => vendor?.name?.toLowerCase() === needle);
+}

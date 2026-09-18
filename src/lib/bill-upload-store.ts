@@ -14,7 +14,12 @@
  */
 
 import { useSyncExternalStore } from "react";
-import { billOcrReviewIssues, isBillOcrNeedsReview } from "./bill-ocr-result";
+import {
+  billOcrReviewIssues,
+  findVendorByName,
+  isBillOcrNeedsReview,
+  requireBillVendorName,
+} from "./bill-ocr-result";
 import { keys } from "./query-keys";
 import { createLogger } from "./logger";
 
@@ -375,21 +380,19 @@ export function dismissBillUpload(jobId: string) {
 async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promise<string> {
   const aiResult = job.parsed!;
   const accounts = job.accounts ?? [];
-  const vendors = job.vendors ?? [];
   const boundingBoxes = job.boundingBoxes ?? [];
+  const vendorName = requireBillVendorName(aiResult);
 
   // Create vendor if new
   let vendorId: string | undefined;
-  const existingVendor = vendors.find(
-    (v: any) => v.name.toLowerCase() === aiResult.vendor.name.toLowerCase(),
-  );
+  const existingVendor = findVendorByName(job.vendors, vendorName);
 
   if (existingVendor) {
     vendorId = existingVendor.id;
-  } else if (aiResult.vendor.name) {
+  } else {
     const newVendor = await (createParty as (opts: { data: unknown }) => Promise<any>)({
       data: {
-        name: aiResult.vendor.name,
+        name: vendorName,
         partyType: "vendor",
         email: aiResult.vendor.email || undefined,
         phone: aiResult.vendor.phone || undefined,
@@ -436,7 +439,7 @@ async function createVendorAndBill(job: BillUploadJob, queryClient: any): Promis
       a.accountType === "cost_of_revenue" ||
       a.accountType === "other_expense",
   );
-  const lineItems = aiResult.lineItems.map((item) => {
+  const lineItems = (aiResult.lineItems ?? []).map((item) => {
     let accountId = defaultAccountId;
     if (item.suggestedCategoryNumber) {
       const match = expenseAccounts.find(
