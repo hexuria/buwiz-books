@@ -26,6 +26,21 @@ describe("resolveChainPolicy", () => {
     expect(filtered.some((entry) => entry.provider === "anthropic")).toBe(true);
   });
 
+  it("keeps both Gemini hops for ingest_triage and classify_document", async () => {
+    for (const task of ["ingest_triage", "classify_document"] as const) {
+      const { hops, filtered } = await resolveChainPolicy({
+        task,
+        settings: baseSettings,
+        hasCredentialsFor: geminiOnly,
+      });
+      expect(hops).toEqual([
+        { provider: "gemini", model: "gemini-3.1-flash-lite-preview" },
+        { provider: "gemini", model: "gemini-3-flash-preview" },
+      ]);
+      expect(filtered).toEqual([]);
+    }
+  });
+
   it("keeps an allowlisted and credentialed provider", async () => {
     const { hops } = await resolveChainPolicy({
       task: "transaction_parse",

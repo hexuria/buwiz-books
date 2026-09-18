@@ -48,6 +48,52 @@ describe("default chains", () => {
     expect(DEFAULT_CHAINS.match_assist.some((h) => h.provider === "anthropic")).toBe(true);
     expect(DEFAULT_CHAINS.transaction_parse.some((h) => h.provider === "anthropic")).toBe(true);
   });
+
+  it("ingest_triage and classify_document start on Flash Lite and escalate on Gemini", () => {
+    const cheapThenFlash = [
+      { provider: "gemini", model: "gemini-3.1-flash-lite-preview" },
+      { provider: "gemini", model: "gemini-3-flash-preview" },
+    ];
+    expect(DEFAULT_CHAINS.ingest_triage).toEqual(cheapThenFlash);
+    expect(DEFAULT_CHAINS.classify_document).toEqual(cheapThenFlash);
+    expect(DEFAULT_CHAINS.ingest_triage.every((h) => h.provider === "gemini")).toBe(true);
+    expect(DEFAULT_CHAINS.classify_document.every((h) => h.provider === "gemini")).toBe(true);
+  });
+
+  it("other text tasks still start on gemini-3-flash-preview", () => {
+    const otherTextTasks: AiTaskName[] = [
+      "date_parse",
+      "transaction_parse",
+      "txn_prefill",
+      "reflection",
+      "match_assist",
+      "coa_draft",
+      "category_mapping_suggest",
+    ];
+    for (const task of otherTextTasks) {
+      expect(DEFAULT_CHAINS[task][0], `${task} first hop`).toEqual({
+        provider: "gemini",
+        model: "gemini-3-flash-preview",
+      });
+    }
+  });
+
+  it("document/OCR default chains stay on the image models (untouched)", () => {
+    const ocrThenPro = [
+      { provider: "gemini", model: "gemini-3.1-flash-image-preview" },
+      { provider: "gemini", model: "gemini-3-pro-image-preview" },
+    ];
+    expect(DEFAULT_CHAINS.receipt_ocr).toEqual(ocrThenPro);
+    expect(DEFAULT_CHAINS.bill_ocr).toEqual(ocrThenPro);
+    expect(DEFAULT_CHAINS.statement_ocr).toEqual(ocrThenPro);
+    expect(DEFAULT_CHAINS.form_2307_ocr).toEqual(ocrThenPro);
+    expect(DEFAULT_CHAINS.bbox_scan).toEqual([
+      { provider: "gemini", model: "gemini-3.1-flash-image-preview" },
+    ]);
+    expect(DEFAULT_CHAINS.email_extraction).toEqual([
+      { provider: "gemini", model: "gemini-3.1-flash-image-preview" },
+    ]);
+  });
 });
 
 describe("enforceOcrPolicy", () => {

@@ -43,6 +43,8 @@ export const DOCUMENT_TASKS: ReadonlySet<AiTaskName> = new Set<AiTaskName>([
 const GEMINI_OCR = "gemini-3.1-flash-image-preview";
 const GEMINI_OCR_PRO = "gemini-3-pro-image-preview";
 const GEMINI_TEXT = "gemini-3-flash-preview";
+/** Already listed in `AI_MODEL_OPTIONS.textAnalysis` — cheapest Gemini text hop. */
+const GEMINI_TEXT_LITE = "gemini-3.1-flash-lite-preview";
 const CLAUDE_TEXT = "claude-haiku-4-5";
 const CLAUDE_REASONING = "claude-sonnet-5";
 
@@ -76,8 +78,16 @@ export const DEFAULT_CHAINS: Record<AiTaskName, ChainEntry[]> = {
 
   // ── Text tasks: Gemini first, may escalate to redactable providers ─────
   date_parse: [{ provider: "gemini", model: GEMINI_TEXT }],
-  classify_document: [{ provider: "gemini", model: GEMINI_TEXT }],
-  ingest_triage: [{ provider: "gemini", model: GEMINI_TEXT }],
+  // Cheap classification: Flash Lite first, Gemini Flash on schema/provider
+  // failure. Stays on Gemini — no new egress, gateway still deferred.
+  classify_document: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
+  ingest_triage: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
   transaction_parse: [
     { provider: "gemini", model: GEMINI_TEXT },
     { provider: "anthropic", model: CLAUDE_TEXT },
