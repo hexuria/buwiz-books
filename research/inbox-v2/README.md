@@ -31,24 +31,24 @@ routine fires (webhook | schedule | integration later)
 
 ## What already exists on `v2` (keep, do not rewrite)
 
-| Piece | Where |
-| --- | --- |
-| Event, job queue (retries, dedupe), source records, candidates + lines, inbox items, findings, decisions, workflow events | `src/db/schema/inbox.ts` |
-| Connection, source, sync-run tables with `next_sync_at` and `sync_cursor` | same file. **No application code reads them yet.** |
-| Only real ingest webhook: inbound email via Resend | `server/routes/api/inbound-email/resend.post.ts` |
-| Worker drain triggered externally | `server/routes/api/internal/worker.post.ts`, `inbox-worker.post.ts`, `server/plugins/job-drain.ts` |
-| Model chain router, Gemini first; `ingest_triage` and `classify_document` default to Gemini Flash Lite | `src/lib/ai/chains.ts` |
-| OCR tasks are Gemini-only (redaction cannot clean document bytes) | `src/lib/ai/chains.ts` header |
-| Earned autonomy: 200 reviewed at >= 98% to unlock, auto-demote < 95% over last 50, admin-only promotion | `src/lib/ai/autonomy.ts` |
-| Hard wall: `match`, `split`, `coa_accounts`, `create_party`, `date_fix`, `categorize` are never model-applied | `STRUCTURAL_MANUAL_KINDS` in `src/lib/ai/autonomy.ts` |
-| Corrections -> reflection job -> proposed lessons, admin approves, max 10 lessons / 2000 chars injected as data | `ai_run_feedback`, `src/lib/jobs/handlers/reflection.ts`, `src/lib/ai/lessons.ts` |
-| Corrections -> eval cases; recorded (no network) evals with code graders, money compared in cents | `scripts/build-eval-dataset.ts`, `tests/evals/` |
-| Vendor aliases (descriptor -> party), used only by match-assist today | `vendor_aliases`, `src/lib/match-assist/aliases.ts` |
-| Rule catalog: 13 book + 2 system rules; rules carry `formula_version`; seeder is `DO NOTHING` | `src/lib/inbox/review-rule-catalog.ts`, `src/lib/inbox/rules.ts` |
-| Every chart preset has Uncategorized accounts; `default_expense` maps to `uncategorized_expense` | `src/lib/coa/presets/base.ts`, `base-mappings.ts` |
-| `uncategorized` book rule is blocking | `src/lib/inbox/rules.ts` |
-| Entity resolver is match-only, exact `ilike` on name; unmatched -> `create_party` proposal | `src/routes/api/-ai-entity-resolver.ts` |
-| Existing editors | `bills_.create.tsx`, `bills_.$billId.tsx`, `transactions_.new.tsx` (Journal / Pay in / Pay out / Transfer tabs), `transactions_.$transactionId.tsx`, invoice draft routes |
+| Piece                                                                                                                     | Where                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Event, job queue (retries, dedupe), source records, candidates + lines, inbox items, findings, decisions, workflow events | `src/db/schema/inbox.ts`                                                                                                                                                  |
+| Connection, source, sync-run tables with `next_sync_at` and `sync_cursor`                                                 | same file. **No application code reads them yet.**                                                                                                                        |
+| Only real ingest webhook: inbound email via Resend                                                                        | `server/routes/api/inbound-email/resend.post.ts`                                                                                                                          |
+| Worker drain triggered externally                                                                                         | `server/routes/api/internal/worker.post.ts`, `inbox-worker.post.ts`, `server/plugins/job-drain.ts`                                                                        |
+| Model chain router, Gemini first; `ingest_triage` and `classify_document` default to Gemini Flash Lite                    | `src/lib/ai/chains.ts`                                                                                                                                                    |
+| OCR tasks are Gemini-only (redaction cannot clean document bytes)                                                         | `src/lib/ai/chains.ts` header                                                                                                                                             |
+| Earned autonomy: 200 reviewed at >= 98% to unlock, auto-demote < 95% over last 50, admin-only promotion                   | `src/lib/ai/autonomy.ts`                                                                                                                                                  |
+| Hard wall: `match`, `split`, `coa_accounts`, `create_party`, `date_fix`, `categorize` are never model-applied             | `STRUCTURAL_MANUAL_KINDS` in `src/lib/ai/autonomy.ts`                                                                                                                     |
+| Corrections -> reflection job -> proposed lessons, admin approves, max 10 lessons / 2000 chars injected as data           | `ai_run_feedback`, `src/lib/jobs/handlers/reflection.ts`, `src/lib/ai/lessons.ts`                                                                                         |
+| Corrections -> eval cases; recorded (no network) evals with code graders, money compared in cents                         | `scripts/build-eval-dataset.ts`, `tests/evals/`                                                                                                                           |
+| Vendor aliases (descriptor -> party), used only by match-assist today                                                     | `vendor_aliases`, `src/lib/match-assist/aliases.ts`                                                                                                                       |
+| Rule catalog: 13 book + 2 system rules; rules carry `formula_version`; seeder is `DO NOTHING`                             | `src/lib/inbox/review-rule-catalog.ts`, `src/lib/inbox/rules.ts`                                                                                                          |
+| Every chart preset has Uncategorized accounts; `default_expense` maps to `uncategorized_expense`                          | `src/lib/coa/presets/base.ts`, `base-mappings.ts`                                                                                                                         |
+| `uncategorized` book rule is blocking                                                                                     | `src/lib/inbox/rules.ts`                                                                                                                                                  |
+| Entity resolver is match-only, exact `ilike` on name; unmatched -> `create_party` proposal                                | `src/routes/api/-ai-entity-resolver.ts`                                                                                                                                   |
+| Existing editors                                                                                                          | `bills_.create.tsx`, `bills_.$billId.tsx`, `transactions_.new.tsx` (Journal / Pay in / Pay out / Transfer tabs), `transactions_.$transactionId.tsx`, invoice draft routes |
 
 ### Problems found while grounding
 
@@ -140,10 +140,10 @@ A model cannot guarantee 100%. A saved rule can.
 
 Three layers, only the first is a guarantee:
 
-| Layer | Effect |
-| --- | --- |
-| Memory | Same paper, same answer, 100% |
-| Lesson | Helps near-miss papers, not guaranteed |
+| Layer     | Effect                                                      |
+| --------- | ----------------------------------------------------------- |
+| Memory    | Same paper, same answer, 100%                               |
+| Lesson    | Helps near-miss papers, not guaranteed                      |
 | Test lock | No change to Jev, prompts, or rules can silently undo a fix |
 
 ### 5. Rule packs (rules that can grow)
@@ -192,14 +192,14 @@ Practice pile = `ai_eval_cases` (org-scoped; cross-org only with consent, as tod
   Remembered / Jev + confidence, Approve, Reject, "Remember this?", duplicate warning when
   present).
 
-| Classified as | Opens in | Approve does |
-| --- | --- | --- |
-| Vendor bill | Bills editor (document viewer + line items) | Saves a real bill (fixes problem 1) |
-| Paid expense | `transactions_.new`, Pay out tab | Saves payment |
-| Money received | `transactions_.new`, Pay in tab | Saves receipt |
-| Transfer | `transactions_.new`, Transfer tab | Saves transfer |
-| Anything else | `transactions_.new`, Journal tab | Saves journal |
-| Sales invoice | Invoice draft editor | Saves invoice |
+| Classified as  | Opens in                                    | Approve does                        |
+| -------------- | ------------------------------------------- | ----------------------------------- |
+| Vendor bill    | Bills editor (document viewer + line items) | Saves a real bill (fixes problem 1) |
+| Paid expense   | `transactions_.new`, Pay out tab            | Saves payment                       |
+| Money received | `transactions_.new`, Pay in tab             | Saves receipt                       |
+| Transfer       | `transactions_.new`, Transfer tab           | Saves transfer                      |
+| Anything else  | `transactions_.new`, Journal tab            | Saves journal                       |
+| Sales invoice  | Invoice draft editor                        | Saves invoice                       |
 
 - Link the saved entry back to its sources via `ledger_source_links`.
 - Saved entries show a small "by Jev" / "remembered" tag in Bills and Transactions.

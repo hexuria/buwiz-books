@@ -1,637 +1,1818 @@
 <title>The Buwiz Mailroom</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap"
+/>
 <style>
-:root{
-  --bg:#F6F8F7; --paper:#FFFFFF; --ink:#13202B; --ink2:#4A5A66; --line:#D8E0DD;
-  --accent:#0E7C6B; --accent-soft:#DDF1EC;
-  --jev:#B45309; --jev-soft:#FCEBD5;
-  --you:#1D4ED8; --you-soft:#DCE6FB;
-  --bad:#B42318; --bad-soft:#FBE3E0;
-  --ok:#15803D; --ok-soft:#DCF3E3;
-  --mute:#EEF2F0;
-  --display:"Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
-  --body:"Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
-  --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
-}
-@media (prefers-color-scheme: dark){
-  :root:not([data-theme="light"]){
-    color-scheme:dark;
-    --bg:#0E1519; --paper:#152027; --ink:#E6EEEB; --ink2:#9DB0AB; --line:#2A3A40;
-    --accent:#4FD1B5; --accent-soft:#12332D;
-    --jev:#F5A94A; --jev-soft:#3A2710;
-    --you:#8DB0FF; --you-soft:#1B2847;
-    --bad:#FF8A7A; --bad-soft:#3D1A16;
-    --ok:#6EE7A0; --ok-soft:#133222;
-    --mute:#1B282E;
+  :root {
+    --bg: #f6f8f7;
+    --paper: #ffffff;
+    --ink: #13202b;
+    --ink2: #4a5a66;
+    --line: #d8e0dd;
+    --accent: #0e7c6b;
+    --accent-soft: #ddf1ec;
+    --jev: #b45309;
+    --jev-soft: #fcebd5;
+    --you: #1d4ed8;
+    --you-soft: #dce6fb;
+    --bad: #b42318;
+    --bad-soft: #fbe3e0;
+    --ok: #15803d;
+    --ok-soft: #dcf3e3;
+    --mute: #eef2f0;
+    --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --body: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   }
-}
-:root[data-theme="dark"]{
-  color-scheme:dark;
-  --bg:#0E1519; --paper:#152027; --ink:#E6EEEB; --ink2:#9DB0AB; --line:#2A3A40;
-  --accent:#4FD1B5; --accent-soft:#12332D;
-  --jev:#F5A94A; --jev-soft:#3A2710;
-  --you:#8DB0FF; --you-soft:#1B2847;
-  --bad:#FF8A7A; --bad-soft:#3D1A16;
-  --ok:#6EE7A0; --ok-soft:#133222;
-  --mute:#1B282E;
-}
-*{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.55;padding-inline:20px;padding-block:0 80px}
-.wrap{max-width:1040px;margin:0 auto}
-h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.1}
-h1{font-size:clamp(40px,7vw,76px);font-weight:800;letter-spacing:-.02em}
-h2{font-size:clamp(28px,4vw,40px);font-weight:700;letter-spacing:-.01em}
-h3{font-size:20px;font-weight:700}
-p{margin:0;max-width:62ch}
-.eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink2)}
-.lead{font-size:21px;color:var(--ink2)}
-section{padding-block:56px;border-top:1px solid var(--line);display:grid;gap:24px}
-header.hero{padding-block:56px 40px;display:grid;gap:20px}
-.mono{font-family:var(--mono);font-size:.86em}
-code{font-family:var(--mono);font-size:.84em;background:var(--mute);padding:1px 5px;border-radius:4px}
-.muted{color:var(--ink2)}
-.small{font-size:14px}
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0e1519;
+      --paper: #152027;
+      --ink: #e6eeeb;
+      --ink2: #9db0ab;
+      --line: #2a3a40;
+      --accent: #4fd1b5;
+      --accent-soft: #12332d;
+      --jev: #f5a94a;
+      --jev-soft: #3a2710;
+      --you: #8db0ff;
+      --you-soft: #1b2847;
+      --bad: #ff8a7a;
+      --bad-soft: #3d1a16;
+      --ok: #6ee7a0;
+      --ok-soft: #133222;
+      --mute: #1b282e;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0e1519;
+    --paper: #152027;
+    --ink: #e6eeeb;
+    --ink2: #9db0ab;
+    --line: #2a3a40;
+    --accent: #4fd1b5;
+    --accent-soft: #12332d;
+    --jev: #f5a94a;
+    --jev-soft: #3a2710;
+    --you: #8db0ff;
+    --you-soft: #1b2847;
+    --bad: #ff8a7a;
+    --bad-soft: #3d1a16;
+    --ok: #6ee7a0;
+    --ok-soft: #133222;
+    --mute: #1b282e;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.55;
+    padding-inline: 20px;
+    padding-block: 0 80px;
+  }
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--display);
+    text-wrap: balance;
+    margin: 0;
+    line-height: 1.1;
+  }
+  h1 {
+    font-size: clamp(40px, 7vw, 76px);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+  h2 {
+    font-size: clamp(28px, 4vw, 40px);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  p {
+    margin: 0;
+    max-width: 62ch;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink2);
+  }
+  .lead {
+    font-size: 21px;
+    color: var(--ink2);
+  }
+  section {
+    padding-block: 56px;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: 24px;
+  }
+  header.hero {
+    padding-block: 56px 40px;
+    display: grid;
+    gap: 20px;
+  }
+  .mono {
+    font-family: var(--mono);
+    font-size: 0.86em;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.84em;
+    background: var(--mute);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .muted {
+    color: var(--ink2);
+  }
+  .small {
+    font-size: 14px;
+  }
 
-/* big flow */
-.flow{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap}
-.step{flex:1 1 150px;background:var(--paper);border:2px solid var(--line);border-radius:14px;padding:18px 16px;display:grid;gap:6px;align-content:start;min-width:0}
-.step .pic{font-size:40px;line-height:1}
-.step b{font-family:var(--display);font-size:20px}
-.step span{color:var(--ink2);font-size:15px}
-.arrow{align-self:center;font-family:var(--display);font-size:28px;color:var(--ink2);flex:0 0 auto}
-.step.jev{border-color:var(--jev);background:var(--jev-soft)}
-.step.you{border-color:var(--you);background:var(--you-soft)}
-.step.book{border-color:var(--accent);background:var(--accent-soft)}
-@media (max-width:640px){.flow{flex-direction:column}.arrow{transform:rotate(90deg);align-self:center}}
+  /* big flow */
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .step {
+    flex: 1 1 150px;
+    background: var(--paper);
+    border: 2px solid var(--line);
+    border-radius: 14px;
+    padding: 18px 16px;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+    min-width: 0;
+  }
+  .step .pic {
+    font-size: 40px;
+    line-height: 1;
+  }
+  .step b {
+    font-family: var(--display);
+    font-size: 20px;
+  }
+  .step span {
+    color: var(--ink2);
+    font-size: 15px;
+  }
+  .arrow {
+    align-self: center;
+    font-family: var(--display);
+    font-size: 28px;
+    color: var(--ink2);
+    flex: 0 0 auto;
+  }
+  .step.jev {
+    border-color: var(--jev);
+    background: var(--jev-soft);
+  }
+  .step.you {
+    border-color: var(--you);
+    background: var(--you-soft);
+  }
+  .step.book {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  @media (max-width: 640px) {
+    .flow {
+      flex-direction: column;
+    }
+    .arrow {
+      transform: rotate(90deg);
+      align-self: center;
+    }
+  }
 
-.two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-@media (max-width:760px){.two{grid-template-columns:1fr}}
-.panel{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:20px;display:grid;gap:12px;align-content:start;min-width:0}
-.panel.bad{border-color:var(--bad)}
-.panel.good{border-color:var(--ok)}
-.tag{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;padding:3px 8px;border-radius:99px;font-weight:600}
-.tag.bad{background:var(--bad-soft);color:var(--bad)}
-.tag.ok{background:var(--ok-soft);color:var(--ok)}
-.tag.jev{background:var(--jev-soft);color:var(--jev)}
-.tag.you{background:var(--you-soft);color:var(--you)}
-.tag.acc{background:var(--accent-soft);color:var(--accent)}
-ul.plain{list-style:none;padding:0;margin:0;display:grid;gap:8px}
-ul.plain li{display:flex;gap:10px;align-items:baseline}
-ul.plain li::before{content:"";flex:0 0 8px;height:8px;border-radius:50%;background:var(--ink2);transform:translateY(-2px)}
-.panel.bad ul.plain li::before{background:var(--bad)}
-.panel.good ul.plain li::before{background:var(--ok)}
+  .two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  @media (max-width: 760px) {
+    .two {
+      grid-template-columns: 1fr;
+    }
+  }
+  .panel {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 20px;
+    display: grid;
+    gap: 12px;
+    align-content: start;
+    min-width: 0;
+  }
+  .panel.bad {
+    border-color: var(--bad);
+  }
+  .panel.good {
+    border-color: var(--ok);
+  }
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 99px;
+    font-weight: 600;
+  }
+  .tag.bad {
+    background: var(--bad-soft);
+    color: var(--bad);
+  }
+  .tag.ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+  }
+  .tag.jev {
+    background: var(--jev-soft);
+    color: var(--jev);
+  }
+  .tag.you {
+    background: var(--you-soft);
+    color: var(--you);
+  }
+  .tag.acc {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  ul.plain {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 8px;
+  }
+  ul.plain li {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+  }
+  ul.plain li::before {
+    content: "";
+    flex: 0 0 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ink2);
+    transform: translateY(-2px);
+  }
+  .panel.bad ul.plain li::before {
+    background: var(--bad);
+  }
+  .panel.good ul.plain li::before {
+    background: var(--ok);
+  }
 
-/* routine recipe card */
-.recipe{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border:2px solid var(--ink);border-radius:16px;overflow:hidden;background:var(--paper)}
-.recipe > div{padding:20px;display:grid;gap:10px;align-content:start;border-right:2px dashed var(--line)}
-.recipe > div:last-child{border-right:0}
-.recipe .big{font-family:var(--display);font-size:24px;font-weight:800}
-.chipcol{display:grid;gap:8px}
-.chip{display:flex;gap:10px;align-items:center;padding:10px 12px;border-radius:10px;background:var(--mute);font-size:15px}
-.chip .ico{font-size:20px}
-.chip.later{opacity:.6;border:1px dashed var(--line);background:transparent}
-@media (max-width:760px){.recipe{grid-template-columns:1fr}.recipe > div{border-right:0;border-bottom:2px dashed var(--line)}.recipe > div:last-child{border-bottom:0}}
+  /* routine recipe card */
+  .recipe {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0;
+    border: 2px solid var(--ink);
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--paper);
+  }
+  .recipe > div {
+    padding: 20px;
+    display: grid;
+    gap: 10px;
+    align-content: start;
+    border-right: 2px dashed var(--line);
+  }
+  .recipe > div:last-child {
+    border-right: 0;
+  }
+  .recipe .big {
+    font-family: var(--display);
+    font-size: 24px;
+    font-weight: 800;
+  }
+  .chipcol {
+    display: grid;
+    gap: 8px;
+  }
+  .chip {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: var(--mute);
+    font-size: 15px;
+  }
+  .chip .ico {
+    font-size: 20px;
+  }
+  .chip.later {
+    opacity: 0.6;
+    border: 1px dashed var(--line);
+    background: transparent;
+  }
+  @media (max-width: 760px) {
+    .recipe {
+      grid-template-columns: 1fr;
+    }
+    .recipe > div {
+      border-right: 0;
+      border-bottom: 2px dashed var(--line);
+    }
+    .recipe > div:last-child {
+      border-bottom: 0;
+    }
+  }
 
-/* slider demo */
-.demo{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:20px;display:grid;gap:16px}
-.slider-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-.slider-row input{flex:1 1 220px;accent-color:var(--jev)}
-.slider-row output{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--jev);min-width:3.5ch}
-.lanes{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-@media (max-width:640px){.lanes{grid-template-columns:1fr}}
-.lane{border-radius:12px;padding:14px;display:grid;gap:8px;align-content:start;min-height:120px}
-.lane.sure{background:var(--ok-soft)}
-.lane.unsure{background:var(--jev-soft)}
-.lane h3{font-size:16px}
-.card{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:8px 12px;display:flex;justify-content:space-between;gap:10px;font-size:15px;transition:transform .2s}
-.card .c{font-family:var(--mono);font-size:13px;color:var(--ink2);white-space:nowrap}
-@media (prefers-reduced-motion:reduce){.card{transition:none}}
+  /* slider demo */
+  .demo {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 20px;
+    display: grid;
+    gap: 16px;
+  }
+  .slider-row {
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .slider-row input {
+    flex: 1 1 220px;
+    accent-color: var(--jev);
+  }
+  .slider-row output {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--jev);
+    min-width: 3.5ch;
+  }
+  .lanes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 640px) {
+    .lanes {
+      grid-template-columns: 1fr;
+    }
+  }
+  .lane {
+    border-radius: 12px;
+    padding: 14px;
+    display: grid;
+    gap: 8px;
+    align-content: start;
+    min-height: 120px;
+  }
+  .lane.sure {
+    background: var(--ok-soft);
+  }
+  .lane.unsure {
+    background: var(--jev-soft);
+  }
+  .lane h3 {
+    font-size: 16px;
+  }
+  .card {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 15px;
+    transition: transform 0.2s;
+  }
+  .card .c {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--ink2);
+    white-space: nowrap;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .card {
+      transition: none;
+    }
+  }
 
-/* rules */
-.rulebook{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-@media (max-width:760px){.rulebook{grid-template-columns:1fr 1fr}}
-.rstep{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:16px;display:grid;gap:6px;align-content:start}
-.rstep .n{font-family:var(--mono);font-size:12px;color:var(--ink2)}
-.rstep b{font-family:var(--display);font-size:19px}
-.rstep span{font-size:15px;color:var(--ink2)}
+  /* rules */
+  .rulebook {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 760px) {
+    .rulebook {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .rstep {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px;
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+  .rstep .n {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink2);
+  }
+  .rstep b {
+    font-family: var(--display);
+    font-size: 19px;
+  }
+  .rstep span {
+    font-size: 15px;
+    color: var(--ink2);
+  }
 
-/* scorecard */
-.tabs{display:flex;gap:6px;flex-wrap:wrap}
-.tabs button{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--paper);color:var(--ink);padding:8px 14px;border-radius:99px;cursor:pointer}
-.tabs button[aria-selected="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.tabs button:focus-visible,.copy:focus-visible,.folder:focus-visible,.row:focus-visible{outline:3px solid var(--you);outline-offset:2px}
-.score{overflow-x:auto}
-table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums;min-width:520px}
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);font-size:15px}
-th{font-family:var(--mono);font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);font-weight:600}
-td.num{font-family:var(--mono);text-align:right}
-th.num{text-align:right}
-.bar{height:8px;border-radius:4px;background:var(--mute);position:relative;min-width:90px}
-.bar i{position:absolute;inset:0 auto 0 0;border-radius:4px;background:var(--accent)}
-.bar.bad i{background:var(--bad)}
-.verdict{font-family:var(--display);font-size:18px;font-weight:700}
+  /* scorecard */
+  .tabs {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .tabs button {
+    font: inherit;
+    font-size: 14px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+    padding: 8px 14px;
+    border-radius: 99px;
+    cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+  }
+  .tabs button:focus-visible,
+  .copy:focus-visible,
+  .folder:focus-visible,
+  .row:focus-visible {
+    outline: 3px solid var(--you);
+    outline-offset: 2px;
+  }
+  .score {
+    overflow-x: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-variant-numeric: tabular-nums;
+    min-width: 520px;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--line);
+    font-size: 15px;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink2);
+    font-weight: 600;
+  }
+  td.num {
+    font-family: var(--mono);
+    text-align: right;
+  }
+  th.num {
+    text-align: right;
+  }
+  .bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--mute);
+    position: relative;
+    min-width: 90px;
+  }
+  .bar i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 4px;
+    background: var(--accent);
+  }
+  .bar.bad i {
+    background: var(--bad);
+  }
+  .verdict {
+    font-family: var(--display);
+    font-size: 18px;
+    font-weight: 700;
+  }
 
-/* mock inbox */
-.mock{border:2px solid var(--ink);border-radius:16px;overflow:hidden;background:var(--paper);display:grid;grid-template-columns:170px 1fr 1.3fr;min-height:420px}
-@media (max-width:860px){.mock{grid-template-columns:1fr}.mock .rail{flex-direction:row;flex-wrap:wrap}.mock .list{border-right:0;border-bottom:1px solid var(--line)}}
-.rail{background:var(--mute);padding:14px;display:flex;flex-direction:column;gap:6px}
-.folder{font:inherit;text-align:left;border:0;background:transparent;color:var(--ink);padding:10px 12px;border-radius:10px;cursor:pointer;display:flex;justify-content:space-between;gap:8px;font-size:15px}
-.folder[aria-pressed="true"]{background:var(--paper);font-weight:700;box-shadow:0 1px 0 var(--line)}
-.folder .count{font-family:var(--mono);font-size:13px}
-.rail .foot{margin-top:auto;font-size:13px;color:var(--ink2);padding:10px 12px}
-.list{border-right:1px solid var(--line);display:flex;flex-direction:column}
-.row{font:inherit;color:inherit;text-align:left;background:transparent;border:0;border-bottom:1px solid var(--line);padding:12px 14px;display:grid;grid-template-columns:1fr auto;gap:2px 10px;cursor:pointer}
-.row[aria-current="true"]{background:var(--you-soft)}
-.row .who{font-weight:700}
-.row.done .who{font-weight:400;color:var(--ink2)}
-.row .amt{font-family:var(--mono);font-size:14px;text-align:right}
-.row .why{font-size:13px;color:var(--ink2);grid-column:1/2}
-.row .fix{grid-column:2/3;justify-self:end}
-.read{padding:18px;display:grid;gap:14px;align-content:start;min-width:0}
-.read .head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:start;border-bottom:1px solid var(--line);padding-bottom:14px}
-.read .head h3{font-size:22px}
-.btns{display:flex;gap:8px}
-.btn{font:inherit;font-size:14px;padding:8px 16px;border-radius:10px;border:1px solid var(--line);background:var(--paper);color:var(--ink)}
-.btn.primary{background:var(--accent);color:var(--paper);border-color:var(--accent);font-weight:700}
-.btn[disabled]{opacity:.45}
-.jevline{display:flex;gap:10px;align-items:center;background:var(--jev-soft);color:var(--ink);padding:10px 12px;border-radius:10px;font-size:14px;flex-wrap:wrap}
-.lines{width:100%;min-width:0;font-size:14px}
-.lines td{font-size:14px;padding:8px 6px}
-.fixbox{background:var(--bad-soft);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--ink)}
-.fixbox b{color:var(--bad)}
-.attach{display:flex;gap:8px;flex-wrap:wrap}
-.attach span{font-family:var(--mono);font-size:12px;border:1px solid var(--line);padding:4px 8px;border-radius:6px}
-details{font-size:14px;color:var(--ink2)}
-summary{cursor:pointer}
+  /* mock inbox */
+  .mock {
+    border: 2px solid var(--ink);
+    border-radius: 16px;
+    overflow: hidden;
+    background: var(--paper);
+    display: grid;
+    grid-template-columns: 170px 1fr 1.3fr;
+    min-height: 420px;
+  }
+  @media (max-width: 860px) {
+    .mock {
+      grid-template-columns: 1fr;
+    }
+    .mock .rail {
+      flex-direction: row;
+      flex-wrap: wrap;
+    }
+    .mock .list {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+    }
+  }
+  .rail {
+    background: var(--mute);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .folder {
+    font: inherit;
+    text-align: left;
+    border: 0;
+    background: transparent;
+    color: var(--ink);
+    padding: 10px 12px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 15px;
+  }
+  .folder[aria-pressed="true"] {
+    background: var(--paper);
+    font-weight: 700;
+    box-shadow: 0 1px 0 var(--line);
+  }
+  .folder .count {
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .rail .foot {
+    margin-top: auto;
+    font-size: 13px;
+    color: var(--ink2);
+    padding: 10px 12px;
+  }
+  .list {
+    border-right: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+  }
+  .row {
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    background: transparent;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 10px;
+    cursor: pointer;
+  }
+  .row[aria-current="true"] {
+    background: var(--you-soft);
+  }
+  .row .who {
+    font-weight: 700;
+  }
+  .row.done .who {
+    font-weight: 400;
+    color: var(--ink2);
+  }
+  .row .amt {
+    font-family: var(--mono);
+    font-size: 14px;
+    text-align: right;
+  }
+  .row .why {
+    font-size: 13px;
+    color: var(--ink2);
+    grid-column: 1/2;
+  }
+  .row .fix {
+    grid-column: 2/3;
+    justify-self: end;
+  }
+  .read {
+    padding: 18px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    min-width: 0;
+  }
+  .read .head {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: start;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+  }
+  .read .head h3 {
+    font-size: 22px;
+  }
+  .btns {
+    display: flex;
+    gap: 8px;
+  }
+  .btn {
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--paper);
+    color: var(--ink);
+  }
+  .btn.primary {
+    background: var(--accent);
+    color: var(--paper);
+    border-color: var(--accent);
+    font-weight: 700;
+  }
+  .btn[disabled] {
+    opacity: 0.45;
+  }
+  .jevline {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: var(--jev-soft);
+    color: var(--ink);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    flex-wrap: wrap;
+  }
+  .lines {
+    width: 100%;
+    min-width: 0;
+    font-size: 14px;
+  }
+  .lines td {
+    font-size: 14px;
+    padding: 8px 6px;
+  }
+  .fixbox {
+    background: var(--bad-soft);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: var(--ink);
+  }
+  .fixbox b {
+    color: var(--bad);
+  }
+  .attach {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .attach span {
+    font-family: var(--mono);
+    font-size: 12px;
+    border: 1px solid var(--line);
+    padding: 4px 8px;
+    border-radius: 6px;
+  }
+  details {
+    font-size: 14px;
+    color: var(--ink2);
+  }
+  summary {
+    cursor: pointer;
+  }
 
-/* review table */
-.rev{display:grid;gap:10px}
-.revrow{display:grid;grid-template-columns:120px 1fr;gap:14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px;align-items:start}
-@media (max-width:600px){.revrow{grid-template-columns:1fr}}
-.revrow p{font-size:15.5px}
-.revrow .src{font-size:13px;color:var(--ink2);margin-top:4px}
+  /* review table */
+  .rev {
+    display: grid;
+    gap: 10px;
+  }
+  .revrow {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+    align-items: start;
+  }
+  @media (max-width: 600px) {
+    .revrow {
+      grid-template-columns: 1fr;
+    }
+  }
+  .revrow p {
+    font-size: 15.5px;
+  }
+  .revrow .src {
+    font-size: 13px;
+    color: var(--ink2);
+    margin-top: 4px;
+  }
 
-/* build order */
-ol.build{list-style:none;padding:0;margin:0;display:grid;gap:10px;counter-reset:b}
-ol.build li{counter-increment:b;display:grid;grid-template-columns:44px 1fr;gap:14px;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-ol.build li::before{content:counter(b);font-family:var(--display);font-weight:800;font-size:26px;color:var(--accent);line-height:1}
-ol.build li div{display:grid;gap:4px}
-ol.build .done-when{font-size:14px;color:var(--ink2)}
+  /* build order */
+  ol.build {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: grid;
+    gap: 10px;
+    counter-reset: b;
+  }
+  ol.build li {
+    counter-increment: b;
+    display: grid;
+    grid-template-columns: 44px 1fr;
+    gap: 14px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  ol.build li::before {
+    content: counter(b);
+    font-family: var(--display);
+    font-weight: 800;
+    font-size: 26px;
+    color: var(--accent);
+    line-height: 1;
+  }
+  ol.build li div {
+    display: grid;
+    gap: 4px;
+  }
+  ol.build .done-when {
+    font-size: 14px;
+    color: var(--ink2);
+  }
 
-pre.brief{background:var(--ink);color:var(--bg);border-radius:14px;padding:20px;overflow-x:auto;font-family:var(--mono);font-size:13px;line-height:1.6;margin:0;white-space:pre}
-.copy{font:inherit;font-size:14px;justify-self:start;padding:8px 16px;border-radius:10px;border:1px solid var(--ink);background:var(--paper);color:var(--ink);cursor:pointer}
-.facts{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-@media (max-width:760px){.facts{grid-template-columns:1fr 1fr}}
-.fact{background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:4px}
-.fact b{font-family:var(--display);font-size:30px;font-variant-numeric:tabular-nums}
-.fact span{font-size:14px;color:var(--ink2)}
-.note{border-left:4px solid var(--jev);padding:8px 14px;background:var(--jev-soft);border-radius:0 10px 10px 0;font-size:15px;max-width:none}
+  pre.brief {
+    background: var(--ink);
+    color: var(--bg);
+    border-radius: 14px;
+    padding: 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0;
+    white-space: pre;
+  }
+  .copy {
+    font: inherit;
+    font-size: 14px;
+    justify-self: start;
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--ink);
+    background: var(--paper);
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 760px) {
+    .facts {
+      grid-template-columns: 1fr 1fr;
+    }
+  }
+  .fact {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px;
+    display: grid;
+    gap: 4px;
+  }
+  .fact b {
+    font-family: var(--display);
+    font-size: 30px;
+    font-variant-numeric: tabular-nums;
+  }
+  .fact span {
+    font-size: 14px;
+    color: var(--ink2);
+  }
+  .note {
+    border-left: 4px solid var(--jev);
+    padding: 8px 14px;
+    background: var(--jev-soft);
+    border-radius: 0 10px 10px 0;
+    font-size: 15px;
+    max-width: none;
+  }
 
-/* memory */
-.frames{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
-@media (max-width:860px){.frames{grid-template-columns:1fr}}
-.frame{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:10px;align-content:start}
-.frame .n{font-family:var(--mono);font-size:12px;color:var(--ink2)}
-.scope{display:grid;gap:6px}
-.scope label{display:flex;gap:8px;align-items:flex-start;font-size:15px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
-.scope input{margin-top:4px;accent-color:var(--accent)}
-.blast{font-size:14px;background:var(--mute);border-radius:10px;padding:10px 12px}
-.memline{display:flex;gap:10px;align-items:center;background:var(--accent-soft);padding:10px 12px;border-radius:10px;font-size:14px;flex-wrap:wrap}
-.layers{display:grid;gap:10px}
-.layer{display:grid;grid-template-columns:150px 1fr 150px;gap:14px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
-.layer b{font-family:var(--display);font-size:19px}
-.layer .g{font-family:var(--mono);font-size:13px;text-align:right}
-@media (max-width:640px){.layer{grid-template-columns:1fr}.layer .g{text-align:left}}
+  /* memory */
+  .frames {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+  @media (max-width: 860px) {
+    .frames {
+      grid-template-columns: 1fr;
+    }
+  }
+  .frame {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 16px;
+    display: grid;
+    gap: 10px;
+    align-content: start;
+  }
+  .frame .n {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--ink2);
+  }
+  .scope {
+    display: grid;
+    gap: 6px;
+  }
+  .scope label {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 15px;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .scope input {
+    margin-top: 4px;
+    accent-color: var(--accent);
+  }
+  .blast {
+    font-size: 14px;
+    background: var(--mute);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .memline {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    background: var(--accent-soft);
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    flex-wrap: wrap;
+  }
+  .layers {
+    display: grid;
+    gap: 10px;
+  }
+  .layer {
+    display: grid;
+    grid-template-columns: 150px 1fr 150px;
+    gap: 14px;
+    align-items: center;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .layer b {
+    font-family: var(--display);
+    font-size: 19px;
+  }
+  .layer .g {
+    font-family: var(--mono);
+    font-size: 13px;
+    text-align: right;
+  }
+  @media (max-width: 640px) {
+    .layer {
+      grid-template-columns: 1fr;
+    }
+    .layer .g {
+      text-align: left;
+    }
+  }
 </style>
 
 <div class="wrap">
-
-<header class="hero">
-  <span class="eyebrow">Buwiz Books · new Inbox · plain-words picture</span>
-  <h1>The Inbox is a mail slot for money papers.</h1>
-  <p class="lead">The books already work without it. The Inbox only saves typing. Papers fall in. A fast sorter named Jev reads each one. A rulebook checks the sorting. Once Jev has earned it, Jev presses Approve on the easy ones. You handle the rest. The books get written.</p>
-  <div class="flow" aria-label="The whole idea in five boxes">
-    <div class="step"><div class="pic">📬</div><b>Papers arrive</b><span>email, upload, a timer, an app</span></div>
-    <div class="arrow">→</div>
-    <div class="step jev"><div class="pic">⚡</div><b>Jev sorts</b><span>"this is a bill from Meralco"</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><div class="pic">📏</div><b>Rules check</b><span>"account missing" / "maybe a duplicate"</span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><div class="pic">👆</div><b>Jev or you approve</b><span>only the hard ones reach your Inbox</span></div>
-    <div class="arrow">→</div>
-    <div class="step book"><div class="pic">📗</div><b>Books</b><span>journal posted</span></div>
-  </div>
-</header>
-
-<section id="today">
-  <span class="eyebrow">1 · What exists today on the v2 branch</span>
-  <h2>Good plumbing. A busy front desk.</h2>
-  <p>I read the code on <code>v2</code>. The pipes underneath are solid. The screen on top is the problem, and so is the second screen next to it.</p>
-  <div class="facts">
-    <div class="fact"><b>1,866</b><span>lines in the Inbox page</span></div>
-    <div class="fact"><b>1,429</b><span>lines in the Review Agents page</span></div>
-    <div class="fact"><b>8</b><span>states an item can be in</span></div>
-    <div class="fact"><b>15</b><span>rules in the catalog (13 book + 2 system)</span></div>
-  </div>
-  <div class="two">
-    <div class="panel good">
-      <span class="tag ok">Keep. Already built.</span>
-      <ul class="plain">
-        <li>A queue of work jobs with retries and no double-runs.</li>
-        <li>Source papers, draft entries, draft lines, findings, decisions, history. All saved.</li>
-        <li>A "which model first" chain. Gemini Flash Lite already sorts uploads.</li>
-        <li>A test bench that replays saved model answers with no network.</li>
-        <li>A path from your corrections into new test cases.</li>
-        <li>Guard walls: a model can never auto-link or auto-categorize by itself.</li>
-      </ul>
-    </div>
-    <div class="panel bad">
-      <span class="tag bad">Change</span>
-      <ul class="plain">
-        <li>Six filters that overlap. "Open" contains "Ready" contains "Needs info".</li>
-        <li>Email setup lives inside the Inbox rail.</li>
-        <li>The detail pane is eight stacked sections of equal weight.</li>
-        <li>Rules are tuned on a separate page you have to leave for.</li>
-        <li>The only real webhook today is inbound email (Resend).</li>
-        <li>Tables for app connections and timed syncs exist, but nothing uses them yet.</li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section id="routines">
-  <span class="eyebrow">2 · How papers get in</span>
-  <h2>A routine is a recipe card with three boxes.</h2>
-  <p>Every way in becomes the same shape. <b>When</b> it runs, <b>what</b> it grabs, and <b>which rules</b> check it. Email, a daily bank pull, and a future Shopify hook all look alike.</p>
-  <div class="recipe">
-    <div>
-      <span class="tag you">1 · When</span>
-      <div class="big">Trigger</div>
-      <div class="chipcol">
-        <div class="chip"><span class="ico">🔔</span>Webhook: something pokes us</div>
-        <div class="chip"><span class="ico">⏰</span>Schedule: every day at 6am</div>
-        <div class="chip later"><span class="ico">🔌</span>App connection (later)</div>
+  <header class="hero">
+    <span class="eyebrow">Buwiz Books · new Inbox · plain-words picture</span>
+    <h1>The Inbox is a mail slot for money papers.</h1>
+    <p class="lead">
+      The books already work without it. The Inbox only saves typing. Papers fall in. A fast sorter
+      named Jev reads each one. A rulebook checks the sorting. Once Jev has earned it, Jev presses
+      Approve on the easy ones. You handle the rest. The books get written.
+    </p>
+    <div class="flow" aria-label="The whole idea in five boxes">
+      <div class="step">
+        <div class="pic">📬</div>
+        <b>Papers arrive</b><span>email, upload, a timer, an app</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step jev">
+        <div class="pic">⚡</div>
+        <b>Jev sorts</b><span>"this is a bill from Meralco"</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <div class="pic">📏</div>
+        <b>Rules check</b><span>"account missing" / "maybe a duplicate"</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step you">
+        <div class="pic">👆</div>
+        <b>Jev or you approve</b><span>only the hard ones reach your Inbox</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step book">
+        <div class="pic">📗</div>
+        <b>Books</b><span>journal posted</span>
       </div>
     </div>
-    <div>
-      <span class="tag jev">2 · What</span>
-      <div class="big">Grab + read</div>
-      <div class="chipcol">
-        <div class="chip"><span class="ico">📥</span>Save the raw paper first</div>
-        <div class="chip"><span class="ico">👁️</span>Read the text (OCR)</div>
-        <div class="chip"><span class="ico">⚡</span>Jev: what kind? who? how much?</div>
+  </header>
+
+  <section id="today">
+    <span class="eyebrow">1 · What exists today on the v2 branch</span>
+    <h2>Good plumbing. A busy front desk.</h2>
+    <p>
+      I read the code on <code>v2</code>. The pipes underneath are solid. The screen on top is the
+      problem, and so is the second screen next to it.
+    </p>
+    <div class="facts">
+      <div class="fact"><b>1,866</b><span>lines in the Inbox page</span></div>
+      <div class="fact"><b>1,429</b><span>lines in the Review Agents page</span></div>
+      <div class="fact"><b>8</b><span>states an item can be in</span></div>
+      <div class="fact"><b>15</b><span>rules in the catalog (13 book + 2 system)</span></div>
+    </div>
+    <div class="two">
+      <div class="panel good">
+        <span class="tag ok">Keep. Already built.</span>
+        <ul class="plain">
+          <li>A queue of work jobs with retries and no double-runs.</li>
+          <li>
+            Source papers, draft entries, draft lines, findings, decisions, history. All saved.
+          </li>
+          <li>A "which model first" chain. Gemini Flash Lite already sorts uploads.</li>
+          <li>A test bench that replays saved model answers with no network.</li>
+          <li>A path from your corrections into new test cases.</li>
+          <li>Guard walls: a model can never auto-link or auto-categorize by itself.</li>
+        </ul>
+      </div>
+      <div class="panel bad">
+        <span class="tag bad">Change</span>
+        <ul class="plain">
+          <li>Six filters that overlap. "Open" contains "Ready" contains "Needs info".</li>
+          <li>Email setup lives inside the Inbox rail.</li>
+          <li>The detail pane is eight stacked sections of equal weight.</li>
+          <li>Rules are tuned on a separate page you have to leave for.</li>
+          <li>The only real webhook today is inbound email (Resend).</li>
+          <li>Tables for app connections and timed syncs exist, but nothing uses them yet.</li>
+        </ul>
       </div>
     </div>
-    <div>
-      <span class="tag acc">3 · Check</span>
-      <div class="big">Rule pack</div>
-      <div class="chipcol">
-        <div class="chip"><span class="ico">📏</span>Rule pack v3, pinned</div>
-        <div class="chip"><span class="ico">🚦</span>Stop = "Needs fix"</div>
-        <div class="chip"><span class="ico">💬</span>Warn = small note</div>
+  </section>
+
+  <section id="routines">
+    <span class="eyebrow">2 · How papers get in</span>
+    <h2>A routine is a recipe card with three boxes.</h2>
+    <p>
+      Every way in becomes the same shape. <b>When</b> it runs, <b>what</b> it grabs, and
+      <b>which rules</b> check it. Email, a daily bank pull, and a future Shopify hook all look
+      alike.
+    </p>
+    <div class="recipe">
+      <div>
+        <span class="tag you">1 · When</span>
+        <div class="big">Trigger</div>
+        <div class="chipcol">
+          <div class="chip"><span class="ico">🔔</span>Webhook: something pokes us</div>
+          <div class="chip"><span class="ico">⏰</span>Schedule: every day at 6am</div>
+          <div class="chip later"><span class="ico">🔌</span>App connection (later)</div>
+        </div>
+      </div>
+      <div>
+        <span class="tag jev">2 · What</span>
+        <div class="big">Grab + read</div>
+        <div class="chipcol">
+          <div class="chip"><span class="ico">📥</span>Save the raw paper first</div>
+          <div class="chip"><span class="ico">👁️</span>Read the text (OCR)</div>
+          <div class="chip"><span class="ico">⚡</span>Jev: what kind? who? how much?</div>
+        </div>
+      </div>
+      <div>
+        <span class="tag acc">3 · Check</span>
+        <div class="big">Rule pack</div>
+        <div class="chipcol">
+          <div class="chip"><span class="ico">📏</span>Rule pack v3, pinned</div>
+          <div class="chip"><span class="ico">🚦</span>Stop = "Needs fix"</div>
+          <div class="chip"><span class="ico">💬</span>Warn = small note</div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="flow" aria-label="Where a routine lands in existing tables">
-    <div class="step"><b>🔔 or ⏰</b><span>fires</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>Event</b><span class="mono">ingestion_events</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>Job</b><span class="mono">processing_jobs</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>Paper</b><span class="mono">source_records</span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><b>Inbox row</b><span class="mono">inbox_items</span></div>
-  </div>
-  <p class="muted small">Every box in that row already exists. The one new thing is a small <b>routines</b> table that holds the recipe card and points each run at a rule pack version. The unused connection and sync-run tables can carry the schedule and the "where did I stop" bookmark.</p>
-</section>
+    <div class="flow" aria-label="Where a routine lands in existing tables">
+      <div class="step"><b>🔔 or ⏰</b><span>fires</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Event</b><span class="mono">ingestion_events</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Job</b><span class="mono">processing_jobs</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Paper</b><span class="mono">source_records</span></div>
+      <div class="arrow">→</div>
+      <div class="step you"><b>Inbox row</b><span class="mono">inbox_items</span></div>
+    </div>
+    <p class="muted small">
+      Every box in that row already exists. The one new thing is a small <b>routines</b> table that
+      holds the recipe card and points each run at a rule pack version. The unused connection and
+      sync-run tables can carry the schedule and the "where did I stop" bookmark.
+    </p>
+  </section>
 
-<section id="jev">
-  <span class="eyebrow">3 · The sorter</span>
-  <h2>Jev is the fast brain. It says how sure it is.</h2>
-  <p>Jev answers quickly and cheaply. When it is sure, the row shows up already filled in. When it is not sure, a bigger model tries, and if that is still unsure, you pick. Being sure is not enough to approve. That is the next section.</p>
-  <div class="demo">
-    <div class="slider-row">
-      <label for="thr"><b>"Sure enough" line</b></label>
-      <input id="thr" type="range" min="50" max="99" value="85">
-      <output id="thrOut" for="thr">0.85</output>
-    </div>
-    <div class="lanes">
-      <div class="lane sure"><h3>Jev is sure → row arrives filled in</h3><div id="laneSure" class="chipcol"></div></div>
-      <div class="lane unsure"><h3>Jev is unsure → bigger model, then you</h3><div id="laneUnsure" class="chipcol"></div></div>
-    </div>
-    <p class="muted small">Example papers and made-up confidence numbers. Drag the line and watch where they go.</p>
-  </div>
-  <p class="note">Two things the code already decides for Jev. First, document reading (OCR) is locked to Gemini, because redaction cannot clean raw document bytes. So Jev should sort the <b>text after OCR</b>, not the PDF itself, unless you choose to change that rule. Second, the code today says "categorize" can never be applied by a model alone. Letting Jev approve means changing that rule on purpose. The next section shows how to do it safely.</p>
-  <p class="muted small">I could not check Jev's actual API. This design only assumes it takes text and returns a label plus a 0 to 1 confidence. Adding it means a fourth provider next to Gemini, OpenAI, and Anthropic, then putting it first in the sorting chain.</p>
-</section>
-
-<section id="setup">
-  <span class="eyebrow">4 · Before Jev can sort</span>
-  <h2>Jev picks from your lists. It never makes up a category.</h2>
-  <p>Sorting means "which of <b>your</b> categories" and "which of <b>your</b> vendors". So the lists come first. When Jev cannot find a fit, the paper still lands, and it lands where you will see it.</p>
-
-  <h3>Categories</h3>
-  <div class="flow" aria-label="Category decision">
-    <div class="step bad" style="border-color:var(--bad);background:var(--bad-soft)"><b>🚫 No chart yet?</b><span>You cannot turn on a routine. The screen says "Set up your chart of accounts first."</span></div>
-    <div class="arrow">→</div>
-    <div class="step jev"><b>⚡ Jev picks</b><span>only from your existing leaf categories, sent as a closed list</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>🤷 No good fit?</b><span>line goes to <b>Uncategorized Expenses</b></span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><b>🔴 Needs a fix</b><span>you choose, or create a new category</span></div>
-  </div>
-  <div class="two">
-    <div class="panel good">
-      <span class="tag ok">Why a fallback, not an error</span>
-      <ul class="plain">
-        <li>The paper is saved and waiting. Nothing is lost because a category is missing.</li>
-        <li>Uncategorized is always a stop-level fix, so Jev can never approve it.</li>
-        <li>This already works. Every chart preset has Uncategorized accounts, and the "uncategorized" rule already blocks approval.</li>
-      </ul>
-    </div>
-    <div class="panel">
-      <span class="tag jev">Jev may suggest, not create</span>
-      <ul class="plain">
-        <li>If many papers land in Uncategorized, Jev can say "you may want a category called <i>Software subscriptions</i>".</li>
-        <li>You create it with the normal account screen. Creating accounts stays a human job in the code today.</li>
-        <li>Then "Remember this?" ties that vendor to the new category.</li>
-      </ul>
-    </div>
-  </div>
-
-  <h3>Vendors and customers</h3>
-  <p>Jev is a good fit here. Today the check is an exact name match, with no model at all. "MERALCO INC" and "Manila Electric Company" count as strangers. Jev can tell they are the same company for much less than the big model costs.</p>
-  <div class="flow" aria-label="Entity decision">
-    <div class="step book"><b>📌 Known for sure?</b><span>same TIN, same email, or a saved memory: use it</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>🔎 Find look-alikes</b><span>database finds the 5 closest names (cheap text search)</span></div>
-    <div class="arrow">→</div>
-    <div class="step jev"><b>⚡ Jev decides</b><span>"one of these 5" or "new"</span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><b>➕ New vendor draft</b><span>name, type, TIN, email filled in, created when you approve</span></div>
-  </div>
-  <div class="two">
-    <div class="panel">
-      <h3>What you see for a new vendor</h3>
-      <div class="jevline"><span class="tag jev">Jev</span><span>New vendor: <b>Manila Water Co.</b> · TIN 000-123-456-000</span><span class="mono">sure it is new: 0.91</span></div>
-      <p class="small muted">One Approve saves the vendor and the bill together. The name is then remembered, so the next bill from them matches without asking Jev.</p>
-    </div>
-    <div class="panel">
-      <h3>Why new vendors still reach you</h3>
-      <ul class="plain">
-        <li>Creating a vendor or customer is on the "always a human" list in the code today.</li>
-        <li>Jev's approval rights are earned per vendor. A brand new vendor has no track record yet.</li>
-        <li>So the first bill from anyone new is always yours, and that one Approve covers both.</li>
-      </ul>
-    </div>
-  </div>
-  <p class="muted small">Small thing found while checking: a comment in <code>src/lib/entity-creation.ts</code> says creating a party can run unattended. That was true before, but "create party" is now on the always-human list. The comment is out of date.</p>
-</section>
-
-<section id="approve">
-  <span class="eyebrow">5 · When Jev presses Approve</span>
-  <h2>Jev earns the button, one kind of paper at a time.</h2>
-  <p>Think of a new bookkeeper. First they watch. Then they suggest. Then they may approve small, boring bills from vendors they know. They lose that job the moment they start making mistakes.</p>
-  <div class="rulebook">
-    <div class="rstep"><span class="n">level 0</span><b>👀 Watch</b><span>Jev writes down "I would approve this". You decide. We count how often you agreed.</span></div>
-    <div class="rstep"><span class="n">level 1</span><b>💡 Suggest</b><span>Rows show "Jev would approve". You still press the button.</span></div>
-    <div class="rstep"><span class="n">level 2</span><b>✅ Approve easy ones</b><span>For one vendor + kind (say, Meralco bills), Jev approves. Unlocked by an admin.</span></div>
-    <div class="rstep"><span class="n">auto</span><b>⬇️ Step down</b><span>If you start undoing Jev, it drops back to Suggest by itself.</span></div>
-  </div>
-  <div class="two">
-    <div class="panel good">
-      <span class="tag ok">Jev may approve only when all are true</span>
-      <ul class="plain">
-        <li>This vendor + kind has earned level 2 for this org.</li>
-        <li>Jev is above the "sure enough" line for this paper.</li>
-        <li>No stop-level finding is open.</li>
-        <li>Amount is under the org's limit.</li>
-        <li>Lines balance to the cent.</li>
-      </ul>
-    </div>
-    <div class="panel bad">
-      <span class="tag bad">Always goes to you</span>
-      <ul class="plain">
-        <li>A new vendor or customer Jev has never seen.</li>
-        <li>A possible duplicate.</li>
-        <li>A date in a closed period, or a different period than usual.</li>
-        <li>Anything that failed to read.</li>
-        <li>Bank matching and splits. These walls stay.</li>
-      </ul>
-    </div>
-  </div>
-  <div class="flow" aria-label="What happens after Jev approves">
-    <div class="step jev"><b>⚡ Jev approves</b><span>journal posts</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>🏷️ Labeled</b><span>"by Jev" tag on the entry in the books</span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><b>🎲 Spot check</b><span>1 in 10 comes back to your Inbox</span></div>
-    <div class="arrow">→</div>
-    <div class="step book"><b>↩️ Undo = reversal</b><span>never a delete</span></div>
-  </div>
-  <p class="note">The spot check matters. Today, a human approval is also the "right answer" that trains the test pile. If Jev approves everything, that signal stops. The random sample keeps it flowing and feeds the step-down check.</p>
-  <p class="muted small">Most of this ladder already exists in <code>src/lib/ai/autonomy.ts</code>. It asks for 200 reviewed suggestions at 98% agreement before unlocking. It steps down automatically below 95% over the last 50. An admin must flip it on, and no background job can. What is new is a lane per vendor + kind, and inbox approval joining the allowed list.</p>
-</section>
-
-<section id="memory">
-  <span class="eyebrow">6 · When you fix something, it sticks</span>
-  <h2>Fix it once. The same paper gets the same answer every time after.</h2>
-  <p>A model cannot promise 100%. A written-down rule can. So your fix does not only "teach" Jev. It becomes a small <b>memory</b> the harness checks <b>before</b> asking Jev. If the memory matches, Jev is not guessing. The answer is looked up.</p>
-  <div class="frames">
-    <div class="frame">
-      <span class="n">1 · Jev guesses</span>
-      <b>Grab · ₱386.00</b>
-      <div class="jevline"><span class="tag jev">Jev</span><span>Account: <b>6200 Travel</b></span><span class="mono">sure: 0.78</span></div>
-      <p class="small muted">You change it to <b>6250 Meals</b>. It was a GrabFood order.</p>
-    </div>
-    <div class="frame">
-      <span class="n">2 · "Remember this for next time?"</span>
-      <div class="scope" role="radiogroup" aria-label="How wide should this memory apply">
-        <label><input type="radio" name="scope" id="s0" value="0">Only this exact file</label>
-        <label><input type="radio" name="scope" id="s1" value="1" checked>Grab receipts that say "GrabFood"</label>
-        <label><input type="radio" name="scope" id="s2" value="2">Every Grab receipt</label>
+  <section id="jev">
+    <span class="eyebrow">3 · The sorter</span>
+    <h2>Jev is the fast brain. It says how sure it is.</h2>
+    <p>
+      Jev answers quickly and cheaply. When it is sure, the row shows up already filled in. When it
+      is not sure, a bigger model tries, and if that is still unsure, you pick. Being sure is not
+      enough to approve. That is the next section.
+    </p>
+    <div class="demo">
+      <div class="slider-row">
+        <label for="thr"><b>"Sure enough" line</b></label>
+        <input id="thr" type="range" min="50" max="99" value="85" />
+        <output id="thrOut" for="thr">0.85</output>
       </div>
-      <div class="blast" id="blast"></div>
+      <div class="lanes">
+        <div class="lane sure">
+          <h3>Jev is sure → row arrives filled in</h3>
+          <div id="laneSure" class="chipcol"></div>
+        </div>
+        <div class="lane unsure">
+          <h3>Jev is unsure → bigger model, then you</h3>
+          <div id="laneUnsure" class="chipcol"></div>
+        </div>
+      </div>
+      <p class="muted small">
+        Example papers and made-up confidence numbers. Drag the line and watch where they go.
+      </p>
     </div>
-    <div class="frame">
-      <span class="n">3 · Next GrabFood receipt</span>
-      <b>Grab · ₱512.00</b>
-      <div class="memline"><span class="tag acc">Remembered</span><span>Account: <b>6250 Meals</b></span><span class="mono">your fix, Sep 27</span></div>
-      <p class="small muted">Same kind of paper, same answer. Jev ran only in the background to compare.</p>
+    <p class="note">
+      Two things the code already decides for Jev. First, document reading (OCR) is locked to
+      Gemini, because redaction cannot clean raw document bytes. So Jev should sort the
+      <b>text after OCR</b>, not the PDF itself, unless you choose to change that rule. Second, the
+      code today says "categorize" can never be applied by a model alone. Letting Jev approve means
+      changing that rule on purpose. The next section shows how to do it safely.
+    </p>
+    <p class="muted small">
+      I could not check Jev's actual API. This design only assumes it takes text and returns a label
+      plus a 0 to 1 confidence. Adding it means a fourth provider next to Gemini, OpenAI, and
+      Anthropic, then putting it first in the sorting chain.
+    </p>
+  </section>
+
+  <section id="setup">
+    <span class="eyebrow">4 · Before Jev can sort</span>
+    <h2>Jev picks from your lists. It never makes up a category.</h2>
+    <p>
+      Sorting means "which of <b>your</b> categories" and "which of <b>your</b> vendors". So the
+      lists come first. When Jev cannot find a fit, the paper still lands, and it lands where you
+      will see it.
+    </p>
+
+    <h3>Categories</h3>
+    <div class="flow" aria-label="Category decision">
+      <div class="step bad" style="border-color: var(--bad); background: var(--bad-soft)">
+        <b>🚫 No chart yet?</b
+        ><span
+          >You cannot turn on a routine. The screen says "Set up your chart of accounts
+          first."</span
+        >
+      </div>
+      <div class="arrow">→</div>
+      <div class="step jev">
+        <b>⚡ Jev picks</b
+        ><span>only from your existing leaf categories, sent as a closed list</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <b>🤷 No good fit?</b><span>line goes to <b>Uncategorized Expenses</b></span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step you">
+        <b>🔴 Needs a fix</b><span>you choose, or create a new category</span>
+      </div>
     </div>
-  </div>
-
-  <h3>Three layers. Only the first one is a promise.</h3>
-  <div class="layers">
-    <div class="layer"><b>📌 Memory</b><span>"When the paper looks like <i>this</i>, the answer is <i>that</i>." Checked first. Exact match. The same input always gives the same output.</span><span class="g tag ok">100%, same paper</span></div>
-    <div class="layer"><b>💡 Lesson</b><span>A short note to Jev, like "GrabFood means meals". Helps with papers that are close but not matching a memory.</span><span class="g tag jev">better, not certain</span></div>
-    <div class="layer"><b>🔒 Test lock</b><span>Your fix is saved as a test case with the right answer. Any change to Jev, prompts, or rules that breaks it fails before it ships.</span><span class="g tag you">never silently undone</span></div>
-  </div>
-
-  <div class="flow" aria-label="Order of checks for a new paper">
-    <div class="step"><b>📄 New paper</b><span>OCR text</span></div>
-    <div class="arrow">→</div>
-    <div class="step book"><b>📌 Memory match?</b><span>yes: use it, done</span></div>
-    <div class="arrow">→</div>
-    <div class="step jev"><b>⚡ Jev + lessons</b><span>no match: guess</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>📏 Rule pack</b><span>checks either answer</span></div>
-    <div class="arrow">→</div>
-    <div class="step you"><b>👆 Approve</b><span>Jev or you</span></div>
-  </div>
-
-  <div class="two">
-    <div class="panel">
-      <h3>What "the same paper" means</h3>
-      <ul class="plain">
-        <li><b>Same file.</b> Identical bytes. The safest match.</li>
-        <li><b>Same sender + vendor ID.</b> For example the vendor's email address plus TIN.</li>
-        <li><b>Same vendor name</b>, after cleanup. "MERALCO INC" and "Meralco" count as one.</li>
-        <li><b>Same words on a line</b>, like "GrabFood". This only picks the account.</li>
-      </ul>
-      <p class="small muted">You pick how wide when you save. The box shows how many past papers it would have changed, so a too-wide memory is obvious before it exists.</p>
+    <div class="two">
+      <div class="panel good">
+        <span class="tag ok">Why a fallback, not an error</span>
+        <ul class="plain">
+          <li>The paper is saved and waiting. Nothing is lost because a category is missing.</li>
+          <li>Uncategorized is always a stop-level fix, so Jev can never approve it.</li>
+          <li>
+            This already works. Every chart preset has Uncategorized accounts, and the
+            "uncategorized" rule already blocks approval.
+          </li>
+        </ul>
+      </div>
+      <div class="panel">
+        <span class="tag jev">Jev may suggest, not create</span>
+        <ul class="plain">
+          <li>
+            If many papers land in Uncategorized, Jev can say "you may want a category called
+            <i>Software subscriptions</i>".
+          </li>
+          <li>
+            You create it with the normal account screen. Creating accounts stays a human job in the
+            code today.
+          </li>
+          <li>Then "Remember this?" ties that vendor to the new category.</li>
+        </ul>
+      </div>
     </div>
-    <div class="panel">
-      <h3>Keeping memories honest</h3>
-      <ul class="plain">
-        <li>Two memories disagree: the paper goes to you. Nobody guesses.</li>
-        <li>Each memory shows how often it was used and how often it was undone.</li>
-        <li>Undone twice in a row: it turns itself off and asks you.</li>
-        <li>A memory belongs to one org, and it lives in the rule pack. You can replay it, roll it back, and see who made it.</li>
-      </ul>
+
+    <h3>Vendors and customers</h3>
+    <p>
+      Jev is a good fit here. Today the check is an exact name match, with no model at all. "MERALCO
+      INC" and "Manila Electric Company" count as strangers. Jev can tell they are the same company
+      for much less than the big model costs.
+    </p>
+    <div class="flow" aria-label="Entity decision">
+      <div class="step book">
+        <b>📌 Known for sure?</b><span>same TIN, same email, or a saved memory: use it</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step">
+        <b>🔎 Find look-alikes</b
+        ><span>database finds the 5 closest names (cheap text search)</span>
+      </div>
+      <div class="arrow">→</div>
+      <div class="step jev"><b>⚡ Jev decides</b><span>"one of these 5" or "new"</span></div>
+      <div class="arrow">→</div>
+      <div class="step you">
+        <b>➕ New vendor draft</b
+        ><span>name, type, TIN, email filled in, created when you approve</span>
+      </div>
     </div>
-  </div>
-  <p class="muted small">Parts exist on <code>v2</code>. Your corrections are saved. A reflection job proposes lessons that an admin approves, capped at 10 lessons per task. Vendor aliases already map a cleaned-up name to a vendor, but only bank matching uses them today. Corrections can become test cases. The missing piece is the <b>Memory</b> layer, checked before the model, and the "Remember this?" step.</p>
-</section>
-
-<section id="rules">
-  <span class="eyebrow">7 · Rules that can grow</span>
-  <h2>A rulebook with page numbers. Try a new page in secret first.</h2>
-  <p>If the old scoring works badly with Jev, you do not rip it out. You write a new version of the rule pack and let it run silently next to the old one. You compare. Then you switch.</p>
-  <div class="rulebook">
-    <div class="rstep"><span class="n">step 1</span><b>✏️ Write</b><span>Rule pack v4: lower the "low confidence" line, add a new check.</span></div>
-    <div class="rstep"><span class="n">step 2</span><b>🧪 Replay</b><span>Run v4 on the practice pile of past papers with known right answers.</span></div>
-    <div class="rstep"><span class="n">step 3</span><b>👻 Shadow</b><span>v4 runs on real mail too, but only v3's flags show. v4's are logged.</span></div>
-    <div class="rstep"><span class="n">step 4</span><b>✅ Promote</b><span>If the scorecard wins, flip the routine to v4. Keep v3 to roll back.</span></div>
-  </div>
-  <p class="muted small">Rules already carry a <code>formula_version</code>, and changing one already requires a reviewed migration. A rule pack is that same idea for a whole set of rules at once, pinned per routine.</p>
-</section>
-
-<section id="test">
-  <span class="eyebrow">8 · Testing it</span>
-  <h2>The scorecard tells you if a change helped.</h2>
-  <p>Same practice pile, two setups, three numbers that matter. Pick which pair to compare.</p>
-  <div class="demo">
-    <div class="tabs" role="tablist" aria-label="Choose comparison">
-      <button role="tab" id="t0" aria-selected="true" data-i="0">Old rules + Gemini vs old rules + Jev</button>
-      <button role="tab" id="t1" aria-selected="false" data-i="1">Old rules + Jev vs rule pack v4 + Jev</button>
+    <div class="two">
+      <div class="panel">
+        <h3>What you see for a new vendor</h3>
+        <div class="jevline">
+          <span class="tag jev">Jev</span
+          ><span>New vendor: <b>Manila Water Co.</b> · TIN 000-123-456-000</span
+          ><span class="mono">sure it is new: 0.91</span>
+        </div>
+        <p class="small muted">
+          One Approve saves the vendor and the bill together. The name is then remembered, so the
+          next bill from them matches without asking Jev.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>Why new vendors still reach you</h3>
+        <ul class="plain">
+          <li>Creating a vendor or customer is on the "always a human" list in the code today.</li>
+          <li>
+            Jev's approval rights are earned per vendor. A brand new vendor has no track record yet.
+          </li>
+          <li>
+            So the first bill from anyone new is always yours, and that one Approve covers both.
+          </li>
+        </ul>
+      </div>
     </div>
-    <div class="score"><table id="scoreTable" aria-live="polite"></table></div>
-    <div class="verdict" id="verdict"></div>
-    <p class="muted small">Example numbers to show the shape of the scorecard. None of these were measured.</p>
-  </div>
-  <div class="flow" aria-label="Where test cases come from">
-    <div class="step you"><b>You fix a draft</b><span>changed account, vendor, amount</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>Saved as a correction</b><span class="mono">ai_run_feedback</span></div>
-    <div class="arrow">→</div>
-    <div class="step"><b>Becomes a test case</b><span class="mono">ai_eval_cases</span></div>
-    <div class="arrow">→</div>
-    <div class="step book"><b>Practice pile grows</b><span>every fix makes the test harder to fool</span></div>
-  </div>
-  <p class="muted small">This loop exists today. Graders compare money in cents and dates exactly. The missing pieces are a rule-pack replay and the scorecard screen.</p>
-</section>
+    <p class="muted small">
+      Small thing found while checking: a comment in <code>src/lib/entity-creation.ts</code> says
+      creating a party can run unattended. That was true before, but "create party" is now on the
+      always-human list. The comment is out of date.
+    </p>
+  </section>
 
-<section id="screen">
-  <span class="eyebrow">9 · The screen</span>
-  <h2>The Inbox only holds what needs you. Everything else is already in the books.</h2>
-  <p>There is no Done folder. Once a paper is approved, by you or by Jev, it is a real bill, expense, or journal entry. You find it where you already look: Bills, Transactions, the ledger. The Inbox empties out. Empty is the goal.</p>
-  <div class="mock" id="mock">
-    <nav class="rail" aria-label="Why it needs you">
-      <button class="folder" data-f="all" aria-pressed="true">Needs you <span class="count" id="cAll"></span></button>
-      <button class="folder" data-f="fix" aria-pressed="false">Needs a fix <span class="count" id="cFix"></span></button>
-      <button class="folder" data-f="unsure" aria-pressed="false">Jev unsure <span class="count" id="cUnsure"></span></button>
-      <button class="folder" data-f="check" aria-pressed="false">Spot check <span class="count" id="cCheck"></span></button>
-      <div class="foot">These are filters on one list, not places things go.<br>Your email: <span class="mono">acme@in.buwiz.app</span></div>
-    </nav>
-    <div class="list" id="list" aria-label="Papers that need you"></div>
-    <article class="read" id="read" aria-live="polite"></article>
-  </div>
-  <p class="muted small">Sample papers. Click a row to see the form it opens in. Press Approve and it leaves the Inbox.</p>
-
-  <h3>The reading pane is a form you already have</h3>
-  <p>An inbox item is an unsaved draft of an existing screen, filled in by memory or Jev. Approve is that screen's Save button. The Inbox does not get its own editor, and it does not get its own way of posting.</p>
-  <div class="score"><table>
-    <thead><tr><th>Jev says it is</th><th>Opens in</th><th>Approve does</th></tr></thead>
-    <tbody>
-      <tr><td>Bill from a vendor</td><td>The Bills editor: document on the left, vendor, dates, and line items</td><td>Saves a real bill, so it shows in Bills and in what you owe</td></tr>
-      <tr><td>Receipt or expense already paid</td><td>New transaction, <b>Pay out</b> tab</td><td>Saves the payment entry</td></tr>
-      <tr><td>Money received</td><td>New transaction, <b>Pay in</b> tab</td><td>Saves the receipt entry</td></tr>
-      <tr><td>Move between own accounts</td><td>New transaction, <b>Transfer</b> tab</td><td>Saves the transfer</td></tr>
-      <tr><td>Anything else, like payroll or accruals</td><td>New transaction, <b>Journal</b> tab</td><td>Saves the journal entry</td></tr>
-      <tr><td>Sales invoice we issued</td><td>The invoice draft editor</td><td>Saves the invoice</td></tr>
-    </tbody>
-  </table></div>
-  <div class="two">
-    <div class="panel">
-      <h3>The Inbox adds only a thin strip on top</h3>
-      <ul class="plain">
-        <li>Why it needs you: "Needs a fix", "Jev unsure", "Spot check", or "Failed to read".</li>
-        <li>Where the answer came from: <b>Remembered</b> or <b>Jev</b> with how sure.</li>
-        <li>Approve, Reject, and "Remember this?".</li>
-        <li>A duplicate warning, only when there is one.</li>
-      </ul>
+  <section id="approve">
+    <span class="eyebrow">5 · When Jev presses Approve</span>
+    <h2>Jev earns the button, one kind of paper at a time.</h2>
+    <p>
+      Think of a new bookkeeper. First they watch. Then they suggest. Then they may approve small,
+      boring bills from vendors they know. They lose that job the moment they start making mistakes.
+    </p>
+    <div class="rulebook">
+      <div class="rstep">
+        <span class="n">level 0</span><b>👀 Watch</b
+        ><span
+          >Jev writes down "I would approve this". You decide. We count how often you agreed.</span
+        >
+      </div>
+      <div class="rstep">
+        <span class="n">level 1</span><b>💡 Suggest</b
+        ><span>Rows show "Jev would approve". You still press the button.</span>
+      </div>
+      <div class="rstep">
+        <span class="n">level 2</span><b>✅ Approve easy ones</b
+        ><span
+          >For one vendor + kind (say, Meralco bills), Jev approves. Unlocked by an admin.</span
+        >
+      </div>
+      <div class="rstep">
+        <span class="n">auto</span><b>⬇️ Step down</b
+        ><span>If you start undoing Jev, it drops back to Suggest by itself.</span>
+      </div>
     </div>
-    <div class="panel">
-      <h3>After it leaves the Inbox</h3>
-      <ul class="plain">
-        <li>The entry carries a small "by Jev" or "remembered" tag in Transactions and Bills.</li>
-        <li>Undo lives on the entry itself, as a reversing entry. Undoing a Jev approval still counts against Jev.</li>
-        <li>Rejected papers stay findable under Documents, not in the Inbox.</li>
-      </ul>
+    <div class="two">
+      <div class="panel good">
+        <span class="tag ok">Jev may approve only when all are true</span>
+        <ul class="plain">
+          <li>This vendor + kind has earned level 2 for this org.</li>
+          <li>Jev is above the "sure enough" line for this paper.</li>
+          <li>No stop-level finding is open.</li>
+          <li>Amount is under the org's limit.</li>
+          <li>Lines balance to the cent.</li>
+        </ul>
+      </div>
+      <div class="panel bad">
+        <span class="tag bad">Always goes to you</span>
+        <ul class="plain">
+          <li>A new vendor or customer Jev has never seen.</li>
+          <li>A possible duplicate.</li>
+          <li>A date in a closed period, or a different period than usual.</li>
+          <li>Anything that failed to read.</li>
+          <li>Bank matching and splits. These walls stay.</li>
+        </ul>
+      </div>
     </div>
-  </div>
-  <p class="note">Found while checking this. Today, approving an inbox bill writes a journal entry directly. It fills in a bill record only when one already existed. So a bill that arrives by email is posted, but no bill record is created, which means it is missing from the Bills list. If Approve used the Bills editor's own Save, that gap would close on its own.</p>
-</section>
+    <div class="flow" aria-label="What happens after Jev approves">
+      <div class="step jev"><b>⚡ Jev approves</b><span>journal posts</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>🏷️ Labeled</b><span>"by Jev" tag on the entry in the books</span></div>
+      <div class="arrow">→</div>
+      <div class="step you"><b>🎲 Spot check</b><span>1 in 10 comes back to your Inbox</span></div>
+      <div class="arrow">→</div>
+      <div class="step book"><b>↩️ Undo = reversal</b><span>never a delete</span></div>
+    </div>
+    <p class="note">
+      The spot check matters. Today, a human approval is also the "right answer" that trains the
+      test pile. If Jev approves everything, that signal stops. The random sample keeps it flowing
+      and feeds the step-down check.
+    </p>
+    <p class="muted small">
+      Most of this ladder already exists in <code>src/lib/ai/autonomy.ts</code>. It asks for 200
+      reviewed suggestions at 98% agreement before unlocking. It steps down automatically below 95%
+      over the last 50. An admin must flip it on, and no background job can. What is new is a lane
+      per vendor + kind, and inbox approval joining the allowed list.
+    </p>
+  </section>
 
-<section id="review">
-  <span class="eyebrow">10 · Review of the three pasted plans</span>
-  <h2>Right direction. A few wrong details.</h2>
-  <div class="rev">
-    <div class="revrow"><span class="tag ok">Agree</span><div><p>One queue, one primary action. Hide Review Agents from the sidebar. Move email setup out of the Inbox. Drop the jargon.</p></div></div>
-    <div class="revrow"><span class="tag bad">Drop</span><div><p><b>No Done folder at all.</b> The plans proposed "Needs you | Done". Approved work is already in the ledger, so a Done folder copies Transactions badly. The Inbox is only what needs you.</p></div></div>
-    <div class="revrow"><span class="tag bad">Fix</span><div><p><b>"Failed" must show as needing you.</b> The plan maps failed with approved and rejected. A failed paper is exactly one that needs you. It raises a blocking "source processing failed" finding today.</p><p class="src">src/lib/inbox/types.ts lists failed outside the open states</p></div></div>
-    <div class="revrow"><span class="tag bad">Fix</span><div><p><b>"Behavior unchanged, correctness 5/5" is too generous.</b> Killing the Review Agents page also removes the only screen that turns rules on or off and sets stop versus warn per org. It also removes the scan of already-posted books. Both need a new home before the page goes, or they become database-only.</p><p class="src">review_rule_configs holds enabled and impact per org</p></div></div>
-    <div class="revrow"><span class="tag jev">Rethink</span><div><p><b>Do not spend P1 polishing the old page.</b> You said the pipeline gets replaced. P0 (hide the nav, redirect) is cheap and worth doing now. The new screen should be built once, on the new routine spine, not twice.</p></div></div>
-    <div class="revrow"><span class="tag you">Add</span><div><p><b>Reuse the existing editors, and their Save.</b> The plans redesign the detail pane as a new "compact editor". Bills, Pay in/out, Transfer, Journal, and Invoice editors already exist. The pane should open the matching one prefilled. Approve should call that editor's save, not a separate inbox posting path.</p><p class="src">approveInboxItem in src/lib/inbox/service.ts writes journal_headers directly</p></div></div>
-    <div class="revrow"><span class="tag jev">Decide</span><div><p><b>Jev approving means lifting a wall on purpose.</b> Today "categorize" can never be model-applied, at any accuracy, and inbox approval picks accounts. You have chosen to let Jev approve. Do it through the earned-autonomy ladder in section 4, as a reviewed change with its own tests. Do not do it as a config flag.</p><p class="src">STRUCTURAL_MANUAL_KINDS in src/lib/ai/autonomy.ts</p></div></div>
-    <div class="revrow"><span class="tag you">Add</span><div><p><b>The plans have no way to test rules.</b> Your real goal is "evolve the rules and prove it". That needs the rule pack version, the replay, and the scorecard. None of the three plans mention them.</p></div></div>
-    <div class="revrow"><span class="tag you">Watch</span><div><p><b>Confidence has a trap.</b> The app treats a bare 1 as 1%, not 100%, unless the schema pins the 0 to 1 scale. Pin Jev's output schema to 0 to 1 so a sure answer is not read as a guess.</p><p class="src">normalizeConfidence in src/lib/ai/confidence.ts</p></div></div>
-  </div>
-</section>
+  <section id="memory">
+    <span class="eyebrow">6 · When you fix something, it sticks</span>
+    <h2>Fix it once. The same paper gets the same answer every time after.</h2>
+    <p>
+      A model cannot promise 100%. A written-down rule can. So your fix does not only "teach" Jev.
+      It becomes a small <b>memory</b> the harness checks <b>before</b> asking Jev. If the memory
+      matches, Jev is not guessing. The answer is looked up.
+    </p>
+    <div class="frames">
+      <div class="frame">
+        <span class="n">1 · Jev guesses</span>
+        <b>Grab · ₱386.00</b>
+        <div class="jevline">
+          <span class="tag jev">Jev</span><span>Account: <b>6200 Travel</b></span
+          ><span class="mono">sure: 0.78</span>
+        </div>
+        <p class="small muted">You change it to <b>6250 Meals</b>. It was a GrabFood order.</p>
+      </div>
+      <div class="frame">
+        <span class="n">2 · "Remember this for next time?"</span>
+        <div class="scope" role="radiogroup" aria-label="How wide should this memory apply">
+          <label><input type="radio" name="scope" id="s0" value="0" />Only this exact file</label>
+          <label
+            ><input type="radio" name="scope" id="s1" value="1" checked />Grab receipts that say
+            "GrabFood"</label
+          >
+          <label><input type="radio" name="scope" id="s2" value="2" />Every Grab receipt</label>
+        </div>
+        <div class="blast" id="blast"></div>
+      </div>
+      <div class="frame">
+        <span class="n">3 · Next GrabFood receipt</span>
+        <b>Grab · ₱512.00</b>
+        <div class="memline">
+          <span class="tag acc">Remembered</span><span>Account: <b>6250 Meals</b></span
+          ><span class="mono">your fix, Sep 27</span>
+        </div>
+        <p class="small muted">
+          Same kind of paper, same answer. Jev ran only in the background to compare.
+        </p>
+      </div>
+    </div>
 
-<section id="build">
-  <span class="eyebrow">11 · Build order</span>
-  <h2>Nine steps, each one testable on its own.</h2>
-  <ol class="build">
-    <li><div><b>Hide Review Agents, redirect the old link.</b><span class="done-when">Done when: the sidebar has no Review Agents entry and the old address lands on the Inbox.</span></div></li>
-    <li><div><b>Routines table, and move inbound email into it.</b><span class="done-when">Done when: email arrives through a routine of type webhook, and the old path's tests still pass.</span></div></li>
-    <li><div><b>Add the schedule trigger.</b><span class="done-when">Done when: the existing worker drain starts due routines, saves a bookmark, and running twice makes no duplicate papers.</span></div></li>
-    <li><div><b>Add Jev as a provider, first in the sorting chain.</b><span class="done-when">Done when: saved Jev answers pass the recorded tests, confidence is pinned 0 to 1, and Gemini still catches failures.</span></div></li>
-    <li><div><b>Category and vendor checks with Jev.</b><span class="done-when">Done when: a routine cannot be enabled without a chart, Jev only returns accounts from the org's own list, a missing fit lands in Uncategorized and blocks, and look-alike vendor names are matched by Jev from a short list of candidates.</span></div></li>
-    <li><div><b>Rule packs, replay, and the scorecard.</b><span class="done-when">Done when: one command replays the practice pile under two rule packs and prints the three numbers.</span></div></li>
-    <li><div><b>The new Inbox screen, built from the existing editors.</b><span class="done-when">Done when: the list shows only papers that need someone, each opens the matching existing editor prefilled, Approve saves through that editor's own save (an emailed bill becomes a real bill), failed papers show here, and Approve stays disabled while a stop-level fix is open.</span></div></li>
-    <li><div><b>Memory layer and "Remember this?".</b><span class="done-when">Done when: fixing a paper and saving a memory makes the same paper come back with the same answer, with no model call on the answer path. The fix is also saved as a locked test case that fails if anything changes that answer.</span></div></li>
-    <li><div><b>Jev approval, starting at Watch.</b><span class="done-when">Done when: Jev logs "would approve" on every row, the scorecard shows agreement per vendor + kind, an admin can unlock level 2, and undoing a Jev approval posts a reversal and counts toward step-down.</span></div></li>
-  </ol>
-</section>
+    <h3>Three layers. Only the first one is a promise.</h3>
+    <div class="layers">
+      <div class="layer">
+        <b>📌 Memory</b
+        ><span
+          >"When the paper looks like <i>this</i>, the answer is <i>that</i>." Checked first. Exact
+          match. The same input always gives the same output.</span
+        ><span class="g tag ok">100%, same paper</span>
+      </div>
+      <div class="layer">
+        <b>💡 Lesson</b
+        ><span
+          >A short note to Jev, like "GrabFood means meals". Helps with papers that are close but
+          not matching a memory.</span
+        ><span class="g tag jev">better, not certain</span>
+      </div>
+      <div class="layer">
+        <b>🔒 Test lock</b
+        ><span
+          >Your fix is saved as a test case with the right answer. Any change to Jev, prompts, or
+          rules that breaks it fails before it ships.</span
+        ><span class="g tag you">never silently undone</span>
+      </div>
+    </div>
 
-<section id="brief">
-  <span class="eyebrow">12 · Hand this to an agent</span>
-  <h2>The same plan, in agent words.</h2>
-  <pre class="brief" id="briefText">GOAL
+    <div class="flow" aria-label="Order of checks for a new paper">
+      <div class="step"><b>📄 New paper</b><span>OCR text</span></div>
+      <div class="arrow">→</div>
+      <div class="step book"><b>📌 Memory match?</b><span>yes: use it, done</span></div>
+      <div class="arrow">→</div>
+      <div class="step jev"><b>⚡ Jev + lessons</b><span>no match: guess</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>📏 Rule pack</b><span>checks either answer</span></div>
+      <div class="arrow">→</div>
+      <div class="step you"><b>👆 Approve</b><span>Jev or you</span></div>
+    </div>
+
+    <div class="two">
+      <div class="panel">
+        <h3>What "the same paper" means</h3>
+        <ul class="plain">
+          <li><b>Same file.</b> Identical bytes. The safest match.</li>
+          <li><b>Same sender + vendor ID.</b> For example the vendor's email address plus TIN.</li>
+          <li><b>Same vendor name</b>, after cleanup. "MERALCO INC" and "Meralco" count as one.</li>
+          <li><b>Same words on a line</b>, like "GrabFood". This only picks the account.</li>
+        </ul>
+        <p class="small muted">
+          You pick how wide when you save. The box shows how many past papers it would have changed,
+          so a too-wide memory is obvious before it exists.
+        </p>
+      </div>
+      <div class="panel">
+        <h3>Keeping memories honest</h3>
+        <ul class="plain">
+          <li>Two memories disagree: the paper goes to you. Nobody guesses.</li>
+          <li>Each memory shows how often it was used and how often it was undone.</li>
+          <li>Undone twice in a row: it turns itself off and asks you.</li>
+          <li>
+            A memory belongs to one org, and it lives in the rule pack. You can replay it, roll it
+            back, and see who made it.
+          </li>
+        </ul>
+      </div>
+    </div>
+    <p class="muted small">
+      Parts exist on <code>v2</code>. Your corrections are saved. A reflection job proposes lessons
+      that an admin approves, capped at 10 lessons per task. Vendor aliases already map a cleaned-up
+      name to a vendor, but only bank matching uses them today. Corrections can become test cases.
+      The missing piece is the <b>Memory</b> layer, checked before the model, and the "Remember
+      this?" step.
+    </p>
+  </section>
+
+  <section id="rules">
+    <span class="eyebrow">7 · Rules that can grow</span>
+    <h2>A rulebook with page numbers. Try a new page in secret first.</h2>
+    <p>
+      If the old scoring works badly with Jev, you do not rip it out. You write a new version of the
+      rule pack and let it run silently next to the old one. You compare. Then you switch.
+    </p>
+    <div class="rulebook">
+      <div class="rstep">
+        <span class="n">step 1</span><b>✏️ Write</b
+        ><span>Rule pack v4: lower the "low confidence" line, add a new check.</span>
+      </div>
+      <div class="rstep">
+        <span class="n">step 2</span><b>🧪 Replay</b
+        ><span>Run v4 on the practice pile of past papers with known right answers.</span>
+      </div>
+      <div class="rstep">
+        <span class="n">step 3</span><b>👻 Shadow</b
+        ><span>v4 runs on real mail too, but only v3's flags show. v4's are logged.</span>
+      </div>
+      <div class="rstep">
+        <span class="n">step 4</span><b>✅ Promote</b
+        ><span>If the scorecard wins, flip the routine to v4. Keep v3 to roll back.</span>
+      </div>
+    </div>
+    <p class="muted small">
+      Rules already carry a <code>formula_version</code>, and changing one already requires a
+      reviewed migration. A rule pack is that same idea for a whole set of rules at once, pinned per
+      routine.
+    </p>
+  </section>
+
+  <section id="test">
+    <span class="eyebrow">8 · Testing it</span>
+    <h2>The scorecard tells you if a change helped.</h2>
+    <p>Same practice pile, two setups, three numbers that matter. Pick which pair to compare.</p>
+    <div class="demo">
+      <div class="tabs" role="tablist" aria-label="Choose comparison">
+        <button role="tab" id="t0" aria-selected="true" data-i="0">
+          Old rules + Gemini vs old rules + Jev
+        </button>
+        <button role="tab" id="t1" aria-selected="false" data-i="1">
+          Old rules + Jev vs rule pack v4 + Jev
+        </button>
+      </div>
+      <div class="score"><table id="scoreTable" aria-live="polite"></table></div>
+      <div class="verdict" id="verdict"></div>
+      <p class="muted small">
+        Example numbers to show the shape of the scorecard. None of these were measured.
+      </p>
+    </div>
+    <div class="flow" aria-label="Where test cases come from">
+      <div class="step you"><b>You fix a draft</b><span>changed account, vendor, amount</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Saved as a correction</b><span class="mono">ai_run_feedback</span></div>
+      <div class="arrow">→</div>
+      <div class="step"><b>Becomes a test case</b><span class="mono">ai_eval_cases</span></div>
+      <div class="arrow">→</div>
+      <div class="step book">
+        <b>Practice pile grows</b><span>every fix makes the test harder to fool</span>
+      </div>
+    </div>
+    <p class="muted small">
+      This loop exists today. Graders compare money in cents and dates exactly. The missing pieces
+      are a rule-pack replay and the scorecard screen.
+    </p>
+  </section>
+
+  <section id="screen">
+    <span class="eyebrow">9 · The screen</span>
+    <h2>The Inbox only holds what needs you. Everything else is already in the books.</h2>
+    <p>
+      There is no Done folder. Once a paper is approved, by you or by Jev, it is a real bill,
+      expense, or journal entry. You find it where you already look: Bills, Transactions, the
+      ledger. The Inbox empties out. Empty is the goal.
+    </p>
+    <div class="mock" id="mock">
+      <nav class="rail" aria-label="Why it needs you">
+        <button class="folder" data-f="all" aria-pressed="true">
+          Needs you <span class="count" id="cAll"></span>
+        </button>
+        <button class="folder" data-f="fix" aria-pressed="false">
+          Needs a fix <span class="count" id="cFix"></span>
+        </button>
+        <button class="folder" data-f="unsure" aria-pressed="false">
+          Jev unsure <span class="count" id="cUnsure"></span>
+        </button>
+        <button class="folder" data-f="check" aria-pressed="false">
+          Spot check <span class="count" id="cCheck"></span>
+        </button>
+        <div class="foot">
+          These are filters on one list, not places things go.<br />Your email:
+          <span class="mono">acme@in.buwiz.app</span>
+        </div>
+      </nav>
+      <div class="list" id="list" aria-label="Papers that need you"></div>
+      <article class="read" id="read" aria-live="polite"></article>
+    </div>
+    <p class="muted small">
+      Sample papers. Click a row to see the form it opens in. Press Approve and it leaves the Inbox.
+    </p>
+
+    <h3>The reading pane is a form you already have</h3>
+    <p>
+      An inbox item is an unsaved draft of an existing screen, filled in by memory or Jev. Approve
+      is that screen's Save button. The Inbox does not get its own editor, and it does not get its
+      own way of posting.
+    </p>
+    <div class="score">
+      <table>
+        <thead>
+          <tr>
+            <th>Jev says it is</th>
+            <th>Opens in</th>
+            <th>Approve does</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Bill from a vendor</td>
+            <td>The Bills editor: document on the left, vendor, dates, and line items</td>
+            <td>Saves a real bill, so it shows in Bills and in what you owe</td>
+          </tr>
+          <tr>
+            <td>Receipt or expense already paid</td>
+            <td>New transaction, <b>Pay out</b> tab</td>
+            <td>Saves the payment entry</td>
+          </tr>
+          <tr>
+            <td>Money received</td>
+            <td>New transaction, <b>Pay in</b> tab</td>
+            <td>Saves the receipt entry</td>
+          </tr>
+          <tr>
+            <td>Move between own accounts</td>
+            <td>New transaction, <b>Transfer</b> tab</td>
+            <td>Saves the transfer</td>
+          </tr>
+          <tr>
+            <td>Anything else, like payroll or accruals</td>
+            <td>New transaction, <b>Journal</b> tab</td>
+            <td>Saves the journal entry</td>
+          </tr>
+          <tr>
+            <td>Sales invoice we issued</td>
+            <td>The invoice draft editor</td>
+            <td>Saves the invoice</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="two">
+      <div class="panel">
+        <h3>The Inbox adds only a thin strip on top</h3>
+        <ul class="plain">
+          <li>Why it needs you: "Needs a fix", "Jev unsure", "Spot check", or "Failed to read".</li>
+          <li>Where the answer came from: <b>Remembered</b> or <b>Jev</b> with how sure.</li>
+          <li>Approve, Reject, and "Remember this?".</li>
+          <li>A duplicate warning, only when there is one.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>After it leaves the Inbox</h3>
+        <ul class="plain">
+          <li>The entry carries a small "by Jev" or "remembered" tag in Transactions and Bills.</li>
+          <li>
+            Undo lives on the entry itself, as a reversing entry. Undoing a Jev approval still
+            counts against Jev.
+          </li>
+          <li>Rejected papers stay findable under Documents, not in the Inbox.</li>
+        </ul>
+      </div>
+    </div>
+    <p class="note">
+      Found while checking this. Today, approving an inbox bill writes a journal entry directly. It
+      fills in a bill record only when one already existed. So a bill that arrives by email is
+      posted, but no bill record is created, which means it is missing from the Bills list. If
+      Approve used the Bills editor's own Save, that gap would close on its own.
+    </p>
+  </section>
+
+  <section id="review">
+    <span class="eyebrow">10 · Review of the three pasted plans</span>
+    <h2>Right direction. A few wrong details.</h2>
+    <div class="rev">
+      <div class="revrow">
+        <span class="tag ok">Agree</span>
+        <div>
+          <p>
+            One queue, one primary action. Hide Review Agents from the sidebar. Move email setup out
+            of the Inbox. Drop the jargon.
+          </p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag bad">Drop</span>
+        <div>
+          <p>
+            <b>No Done folder at all.</b> The plans proposed "Needs you | Done". Approved work is
+            already in the ledger, so a Done folder copies Transactions badly. The Inbox is only
+            what needs you.
+          </p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag bad">Fix</span>
+        <div>
+          <p>
+            <b>"Failed" must show as needing you.</b> The plan maps failed with approved and
+            rejected. A failed paper is exactly one that needs you. It raises a blocking "source
+            processing failed" finding today.
+          </p>
+          <p class="src">src/lib/inbox/types.ts lists failed outside the open states</p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag bad">Fix</span>
+        <div>
+          <p>
+            <b>"Behavior unchanged, correctness 5/5" is too generous.</b> Killing the Review Agents
+            page also removes the only screen that turns rules on or off and sets stop versus warn
+            per org. It also removes the scan of already-posted books. Both need a new home before
+            the page goes, or they become database-only.
+          </p>
+          <p class="src">review_rule_configs holds enabled and impact per org</p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag jev">Rethink</span>
+        <div>
+          <p>
+            <b>Do not spend P1 polishing the old page.</b> You said the pipeline gets replaced. P0
+            (hide the nav, redirect) is cheap and worth doing now. The new screen should be built
+            once, on the new routine spine, not twice.
+          </p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag you">Add</span>
+        <div>
+          <p>
+            <b>Reuse the existing editors, and their Save.</b> The plans redesign the detail pane as
+            a new "compact editor". Bills, Pay in/out, Transfer, Journal, and Invoice editors
+            already exist. The pane should open the matching one prefilled. Approve should call that
+            editor's save, not a separate inbox posting path.
+          </p>
+          <p class="src">
+            approveInboxItem in src/lib/inbox/service.ts writes journal_headers directly
+          </p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag jev">Decide</span>
+        <div>
+          <p>
+            <b>Jev approving means lifting a wall on purpose.</b> Today "categorize" can never be
+            model-applied, at any accuracy, and inbox approval picks accounts. You have chosen to
+            let Jev approve. Do it through the earned-autonomy ladder in section 4, as a reviewed
+            change with its own tests. Do not do it as a config flag.
+          </p>
+          <p class="src">STRUCTURAL_MANUAL_KINDS in src/lib/ai/autonomy.ts</p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag you">Add</span>
+        <div>
+          <p>
+            <b>The plans have no way to test rules.</b> Your real goal is "evolve the rules and
+            prove it". That needs the rule pack version, the replay, and the scorecard. None of the
+            three plans mention them.
+          </p>
+        </div>
+      </div>
+      <div class="revrow">
+        <span class="tag you">Watch</span>
+        <div>
+          <p>
+            <b>Confidence has a trap.</b> The app treats a bare 1 as 1%, not 100%, unless the schema
+            pins the 0 to 1 scale. Pin Jev's output schema to 0 to 1 so a sure answer is not read as
+            a guess.
+          </p>
+          <p class="src">normalizeConfidence in src/lib/ai/confidence.ts</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="build">
+    <span class="eyebrow">11 · Build order</span>
+    <h2>Nine steps, each one testable on its own.</h2>
+    <ol class="build">
+      <li>
+        <div>
+          <b>Hide Review Agents, redirect the old link.</b
+          ><span class="done-when"
+            >Done when: the sidebar has no Review Agents entry and the old address lands on the
+            Inbox.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Routines table, and move inbound email into it.</b
+          ><span class="done-when"
+            >Done when: email arrives through a routine of type webhook, and the old path's tests
+            still pass.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Add the schedule trigger.</b
+          ><span class="done-when"
+            >Done when: the existing worker drain starts due routines, saves a bookmark, and running
+            twice makes no duplicate papers.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Add Jev as a provider, first in the sorting chain.</b
+          ><span class="done-when"
+            >Done when: saved Jev answers pass the recorded tests, confidence is pinned 0 to 1, and
+            Gemini still catches failures.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Category and vendor checks with Jev.</b
+          ><span class="done-when"
+            >Done when: a routine cannot be enabled without a chart, Jev only returns accounts from
+            the org's own list, a missing fit lands in Uncategorized and blocks, and look-alike
+            vendor names are matched by Jev from a short list of candidates.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Rule packs, replay, and the scorecard.</b
+          ><span class="done-when"
+            >Done when: one command replays the practice pile under two rule packs and prints the
+            three numbers.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>The new Inbox screen, built from the existing editors.</b
+          ><span class="done-when"
+            >Done when: the list shows only papers that need someone, each opens the matching
+            existing editor prefilled, Approve saves through that editor's own save (an emailed bill
+            becomes a real bill), failed papers show here, and Approve stays disabled while a
+            stop-level fix is open.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Memory layer and "Remember this?".</b
+          ><span class="done-when"
+            >Done when: fixing a paper and saving a memory makes the same paper come back with the
+            same answer, with no model call on the answer path. The fix is also saved as a locked
+            test case that fails if anything changes that answer.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Jev approval, starting at Watch.</b
+          ><span class="done-when"
+            >Done when: Jev logs "would approve" on every row, the scorecard shows agreement per
+            vendor + kind, an admin can unlock level 2, and undoing a Jev approval posts a reversal
+            and counts toward step-down.</span
+          >
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <section id="brief">
+    <span class="eyebrow">12 · Hand this to an agent</span>
+    <h2>The same plan, in agent words.</h2>
+    <pre class="brief" id="briefText">
+GOAL
   Replace the Inbox pipeline with Routines -> Jev triage -> versioned Rule Packs
   -> two-folder Inbox. Jev may approve postings once earned; humans approve the
   rest. Base branch: v2.
@@ -739,150 +1920,427 @@ UI
 RULES FOR THE AGENT
   Every DB access through the org-context wrappers. Money via src/lib/money.ts.
   Query keys from src/lib/query-keys.ts. Read .agent/rules/schema-export-import.md
-  before adding tables. bun check must pass. Ship each step as its own PR.</pre>
-  <button class="copy" id="copyBtn" type="button">Copy the brief</button>
-</section>
-
+  before adding tables. bun check must pass. Ship each step as its own PR.</pre
+    >
+    <button class="copy" id="copyBtn" type="button">Copy the brief</button>
+  </section>
 </div>
 
 <script>
-(function(){
-  // Jev slider
-  const papers=[
-    ["Meralco bill","0.97"],["Bank statement, BPI","0.99"],["Grab receipt","0.93"],["Invoice to client","0.91"],
-    ["Payslip, September","0.88"],["Lease contract","0.62"],["Handwritten receipt","0.55"],["Unknown scanned PDF","0.41"]
-  ];
-  const thr=document.getElementById("thr"),out=document.getElementById("thrOut");
-  const sure=document.getElementById("laneSure"),unsure=document.getElementById("laneUnsure");
-  function lane(){
-    const t=thr.value/100; out.textContent=t.toFixed(2);
-    sure.innerHTML="";unsure.innerHTML="";
-    papers.forEach(([n,c])=>{
-      const d=document.createElement("div");d.className="card";
-      d.innerHTML="<span></span><span class='c'></span>";
-      d.children[0].textContent=n;d.children[1].textContent="Jev "+c;
-      (Number(c)>=t?sure:unsure).appendChild(d);
+  (function () {
+    // Jev slider
+    const papers = [
+      ["Meralco bill", "0.97"],
+      ["Bank statement, BPI", "0.99"],
+      ["Grab receipt", "0.93"],
+      ["Invoice to client", "0.91"],
+      ["Payslip, September", "0.88"],
+      ["Lease contract", "0.62"],
+      ["Handwritten receipt", "0.55"],
+      ["Unknown scanned PDF", "0.41"],
+    ];
+    const thr = document.getElementById("thr"),
+      out = document.getElementById("thrOut");
+    const sure = document.getElementById("laneSure"),
+      unsure = document.getElementById("laneUnsure");
+    function lane() {
+      const t = thr.value / 100;
+      out.textContent = t.toFixed(2);
+      sure.innerHTML = "";
+      unsure.innerHTML = "";
+      papers.forEach(([n, c]) => {
+        const d = document.createElement("div");
+        d.className = "card";
+        d.innerHTML = "<span></span><span class='c'></span>";
+        d.children[0].textContent = n;
+        d.children[1].textContent = "Jev " + c;
+        (Number(c) >= t ? sure : unsure).appendChild(d);
+      });
+      if (!sure.children.length)
+        sure.innerHTML = "<span class='small muted'>Nothing clears the line.</span>";
+      if (!unsure.children.length)
+        unsure.innerHTML = "<span class='small muted'>Jev is sure about everything.</span>";
+    }
+    thr.addEventListener("input", lane);
+    lane();
+
+    // scorecard
+    const sets = [
+      {
+        a: "Old rules + Gemini",
+        b: "Old rules + Jev",
+        rows: [
+          ["Real problems caught", [88, 84], false],
+          ["False alarms", [21, 34], true],
+          ["Approved with zero edits", [52, 61], false],
+          ["Jev approvals you would undo", [0, 3], true],
+        ],
+        verdict: "Jev sorts better, but the old rules cry wolf more. Tune the rules next.",
+      },
+      {
+        a: "Old rules + Jev",
+        b: "Rule pack v4 + Jev",
+        rows: [
+          ["Real problems caught", [84, 90], false],
+          ["False alarms", [34, 12], true],
+          ["Approved with zero edits", [61, 66], false],
+          ["Jev approvals you would undo", [3, 1], true],
+        ],
+        verdict: "v4 wins on all three. Promote it, keep old rules for rollback.",
+      },
+    ];
+    const table = document.getElementById("scoreTable"),
+      verdict = document.getElementById("verdict");
+    function bar(v, bad) {
+      return "<div class='bar" + (bad ? " bad" : "") + "'><i style='width:" + v + "%'></i></div>";
+    }
+    function score(i) {
+      const s = sets[i];
+      let h =
+        "<thead><tr><th>Out of 100 practice papers</th><th class='num'>" +
+        s.a +
+        "</th><th></th><th class='num'>" +
+        s.b +
+        "</th><th></th></tr></thead><tbody>";
+      s.rows.forEach(([n, [x, y], lowGood]) => {
+        h +=
+          "<tr><td>" +
+          n +
+          (lowGood ? " <span class='small muted'>(lower is better)</span>" : "") +
+          "</td><td class='num'>" +
+          x +
+          "</td><td>" +
+          bar(x, lowGood) +
+          "</td><td class='num'>" +
+          y +
+          "</td><td>" +
+          bar(y, lowGood) +
+          "</td></tr>";
+      });
+      table.innerHTML = h + "</tbody>";
+      verdict.textContent = s.verdict;
+      document
+        .querySelectorAll(".tabs button")
+        .forEach((b) => b.setAttribute("aria-selected", String(b.dataset.i == i)));
+    }
+    document
+      .querySelectorAll(".tabs button")
+      .forEach((b) => b.addEventListener("click", () => score(b.dataset.i)));
+    score(0);
+
+    // mock inbox: only things that need you
+    const items = [
+      {
+        id: 1,
+        who: "Meralco",
+        kind: "Bill",
+        when: "Today",
+        amt: "₱8,412.50",
+        why: "check",
+        src: "Email",
+        how: "jev",
+        conf: "0.97",
+        form: "bill",
+        reason: "Spot check. Jev approved this one; you were picked to confirm.",
+        lines: [["Electricity, Aug 20 to Sep 19", "6100 Utilities", "8,412.50"]],
+        att: "meralco-sep.pdf",
+        due: "Oct 12",
+      },
+      {
+        id: 2,
+        who: "Grab",
+        kind: "Receipt",
+        when: "Today",
+        amt: "₱386.00",
+        why: "fix",
+        src: "Upload",
+        how: "jev",
+        conf: "0.78",
+        form: "payout",
+        reason: "Pick an expense account. Travel or Meals?",
+        lines: [["GrabFood order", "(choose account)", "386.00"]],
+        att: "grab-0927.jpg",
+        paid: "1010 Cash on hand",
+      },
+      {
+        id: 3,
+        who: "Unknown sender",
+        kind: "Bill",
+        when: "Yesterday",
+        amt: "₱12,000.00",
+        why: "unsure",
+        src: "Email",
+        how: "jev",
+        conf: "0.41",
+        form: "bill",
+        reason: "Jev was unsure what this is. Confirm the vendor and type.",
+        lines: [["Services rendered", "(choose account)", "12,000.00"]],
+        att: "scan0042.pdf",
+        due: "?",
+      },
+      {
+        id: 4,
+        who: "Payroll, Sep 15 to 30",
+        kind: "Journal",
+        when: "Mon",
+        amt: "₱184,300.00",
+        why: "fix",
+        src: "Schedule",
+        how: "mem",
+        conf: "",
+        form: "journal",
+        reason: "SSS line is missing an account.",
+        jl: [
+          ["6500 Salaries", "184,300.00", ""],
+          ["2110 SSS payable", "", "(choose)"],
+          ["1020 BPI checking", "", "170,540.00"],
+        ],
+        att: "payroll-sep-b.csv",
+      },
+      {
+        id: 5,
+        who: "BPI statement",
+        kind: "Statement",
+        when: "Mon",
+        amt: "42 lines",
+        why: "fix",
+        src: "Schedule",
+        how: "",
+        conf: "",
+        form: "failed",
+        reason: "Reading the file failed. Retry or upload again.",
+        att: "bpi-sep.csv",
+      },
+    ];
+    let filt = "all",
+      cur = 1;
+    const list = document.getElementById("list"),
+      read = document.getElementById("read");
+    function esc(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+    const tagFor = {
+      fix: ["bad", "Needs a fix"],
+      unsure: ["jev", "Jev unsure"],
+      check: ["you", "Spot check"],
+    };
+    function formHtml(it) {
+      if (it.form === "bill") {
+        let h =
+          "<div class='small muted'>Opens in: <b>Bills editor</b> (same as Bills, then New)</div>";
+        h +=
+          "<div class='two' style='gap:10px'><div class='panel' style='padding:12px'><span class='mono small'>📄 " +
+          esc(it.att) +
+          "</span><div class='small muted'>document viewer</div></div>";
+        h +=
+          "<div class='panel' style='padding:12px;gap:6px'><div class='small'>Vendor: <b>" +
+          esc(it.who) +
+          "</b></div><div class='small'>Due: " +
+          esc(it.due) +
+          "</div></div></div>";
+        h +=
+          "<table class='lines'><thead><tr><th>Line</th><th>Account</th><th class='num'>Amount</th></tr></thead><tbody>";
+        it.lines.forEach((l) => {
+          h +=
+            "<tr><td>" +
+            esc(l[0]) +
+            "</td><td>" +
+            esc(l[1]) +
+            "</td><td class='num'>" +
+            esc(l[2]) +
+            "</td></tr>";
+        });
+        return h + "</tbody></table>";
+      }
+      if (it.form === "payout") {
+        let h = "<div class='small muted'>Opens in: <b>New transaction, Pay out tab</b></div>";
+        h +=
+          "<div class='tabs'><button type='button' aria-selected='false'>Journal</button><button type='button' aria-selected='false'>Pay in</button><button type='button' aria-selected='true'>Pay out</button><button type='button' aria-selected='false'>Transfer</button></div>";
+        h +=
+          "<div class='small'>Paid from: <b>" +
+          esc(it.paid) +
+          "</b> · To: <b>" +
+          esc(it.who) +
+          "</b></div>";
+        h +=
+          "<table class='lines'><thead><tr><th>For</th><th>Account</th><th class='num'>Amount</th></tr></thead><tbody>";
+        it.lines.forEach((l) => {
+          h +=
+            "<tr><td>" +
+            esc(l[0]) +
+            "</td><td>" +
+            esc(l[1]) +
+            "</td><td class='num'>" +
+            esc(l[2]) +
+            "</td></tr>";
+        });
+        return h + "</tbody></table>";
+      }
+      if (it.form === "journal") {
+        let h = "<div class='small muted'>Opens in: <b>New transaction, Journal tab</b></div>";
+        h +=
+          "<table class='lines'><thead><tr><th>Account</th><th class='num'>Debit</th><th class='num'>Credit</th></tr></thead><tbody>";
+        it.jl.forEach((l) => {
+          h +=
+            "<tr><td>" +
+            esc(l[0]) +
+            "</td><td class='num'>" +
+            esc(l[1]) +
+            "</td><td class='num'>" +
+            esc(l[2]) +
+            "</td></tr>";
+        });
+        return h + "</tbody></table>";
+      }
+      return (
+        "<div class='small muted'>No form yet. The file could not be read.</div><div class='attach'><span>📎 " +
+        esc(it.att) +
+        "</span></div>"
+      );
+    }
+    function draw() {
+      const cnt = (f) => items.filter((i) => f === "all" || i.why === f).length;
+      document.getElementById("cAll").textContent = cnt("all");
+      document.getElementById("cFix").textContent = cnt("fix");
+      document.getElementById("cUnsure").textContent = cnt("unsure");
+      document.getElementById("cCheck").textContent = cnt("check");
+      document
+        .querySelectorAll(".folder")
+        .forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.f === filt)));
+      const vis = items.filter((i) => filt === "all" || i.why === filt);
+      if (!vis.find((i) => i.id === cur)) cur = vis.length ? vis[0].id : null;
+      list.innerHTML = "";
+      vis.forEach((i) => {
+        const r = document.createElement("button");
+        r.type = "button";
+        r.className = "row";
+        r.setAttribute("aria-current", String(i.id === cur));
+        const t = i.form === "failed" ? ["bad", "Failed"] : tagFor[i.why];
+        r.innerHTML =
+          "<span class='who'>" +
+          esc(i.who) +
+          "</span><span class='amt'>" +
+          esc(i.amt) +
+          "</span><span class='why'>" +
+          esc(i.kind) +
+          " · " +
+          esc(i.when) +
+          "</span><span class='fix tag " +
+          t[0] +
+          "'>" +
+          t[1] +
+          "</span>";
+        r.addEventListener("click", () => {
+          cur = i.id;
+          draw();
+        });
+        list.appendChild(r);
+      });
+      const it = items.find((i) => i.id === cur);
+      if (!it) {
+        read.innerHTML =
+          "<h3>Nothing needs you.</h3><p class='muted'>Everything that came in is already in the books.</p>";
+        return;
+      }
+      const blocked = it.why === "fix" || it.form === "failed";
+      let h =
+        "<div class='head'><div><h3>" +
+        esc(it.who) +
+        " · " +
+        esc(it.amt) +
+        "</h3><div class='small muted'>" +
+        esc(it.kind) +
+        " · " +
+        esc(it.when) +
+        " · from " +
+        esc(it.src) +
+        "</div></div>";
+      h +=
+        "<div class='btns'><button class='btn' type='button' data-act='reject'>Reject</button><button class='btn primary' type='button' data-act='approve' " +
+        (blocked ? "disabled" : "") +
+        ">Approve</button></div></div>";
+      const t = it.form === "failed" ? ["bad", "Failed"] : tagFor[it.why];
+      h +=
+        "<div class='fixbox' style='background:var(--" +
+        (t[0] === "bad" ? "bad" : t[0]) +
+        "-soft)'><b style='color:var(--" +
+        t[0] +
+        ")'>" +
+        t[1] +
+        ".</b> " +
+        esc(it.reason) +
+        "</div>";
+      if (it.how === "jev")
+        h +=
+          "<div class='jevline'><span class='tag jev'>Jev</span><span>filled this in</span><span class='mono'>sure: " +
+          it.conf +
+          "</span></div>";
+      if (it.how === "mem")
+        h +=
+          "<div class='memline'><span class='tag acc'>Remembered</span><span>from your fix on the Sep 1 to 15 payroll</span></div>";
+      h += formHtml(it);
+      if (it.why === "fix" && it.form !== "failed")
+        h +=
+          "<label class='small' style='display:flex;gap:8px;align-items:center'><input type='checkbox' id='rem" +
+          it.id +
+          "' checked> Remember this fix for next time</label>";
+      read.innerHTML = h;
+      read.querySelectorAll("[data-act]").forEach((b) =>
+        b.addEventListener("click", () => {
+          const idx = items.findIndex((x) => x.id === it.id);
+          items.splice(idx, 1);
+          cur = null;
+          draw();
+        }),
+      );
+    }
+    document.querySelectorAll(".folder").forEach((b) =>
+      b.addEventListener("click", () => {
+        filt = b.dataset.f;
+        draw();
+      }),
+    );
+    draw();
+
+    // memory scope
+    const blasts = [
+      "Changes 0 past papers. Only this file is covered.",
+      "Would have changed 9 of 31 past Grab receipts, all GrabFood orders.",
+      "Would have changed 31 of 31 past Grab receipts, including 22 real rides. Too wide.",
+    ];
+    const blast = document.getElementById("blast");
+    function showBlast() {
+      const v = document.querySelector("input[name=scope]:checked").value;
+      blast.textContent = "Example: " + blasts[v];
+    }
+    document
+      .querySelectorAll("input[name=scope]")
+      .forEach((i) => i.addEventListener("change", showBlast));
+    showBlast();
+
+    // copy
+    const btn = document.getElementById("copyBtn");
+    btn.addEventListener("click", () => {
+      const t = document.getElementById("briefText").textContent;
+      const done = () => {
+        btn.textContent = "Copied";
+        setTimeout(() => (btn.textContent = "Copy the brief"), 1600);
+      };
+      try {
+        navigator.clipboard.writeText(t).then(done, () => sel());
+      } catch (e) {
+        sel();
+      }
+      function sel() {
+        const r = document.createRange();
+        r.selectNodeContents(document.getElementById("briefText"));
+        const s = getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        btn.textContent = "Selected. Press Cmd+C";
+      }
     });
-    if(!sure.children.length)sure.innerHTML="<span class='small muted'>Nothing clears the line.</span>";
-    if(!unsure.children.length)unsure.innerHTML="<span class='small muted'>Jev is sure about everything.</span>";
-  }
-  thr.addEventListener("input",lane);lane();
-
-  // scorecard
-  const sets=[
-    {a:"Old rules + Gemini",b:"Old rules + Jev",rows:[
-      ["Real problems caught",[88,84],false],["False alarms",[21,34],true],["Approved with zero edits",[52,61],false],["Jev approvals you would undo",[0,3],true]],
-     verdict:"Jev sorts better, but the old rules cry wolf more. Tune the rules next."},
-    {a:"Old rules + Jev",b:"Rule pack v4 + Jev",rows:[
-      ["Real problems caught",[84,90],false],["False alarms",[34,12],true],["Approved with zero edits",[61,66],false],["Jev approvals you would undo",[3,1],true]],
-     verdict:"v4 wins on all three. Promote it, keep old rules for rollback."}
-  ];
-  const table=document.getElementById("scoreTable"),verdict=document.getElementById("verdict");
-  function bar(v,bad){return "<div class='bar"+(bad?" bad":"")+"'><i style='width:"+v+"%'></i></div>";}
-  function score(i){
-    const s=sets[i];
-    let h="<thead><tr><th>Out of 100 practice papers</th><th class='num'>"+s.a+"</th><th></th><th class='num'>"+s.b+"</th><th></th></tr></thead><tbody>";
-    s.rows.forEach(([n,[x,y],lowGood])=>{h+="<tr><td>"+n+(lowGood?" <span class='small muted'>(lower is better)</span>":"")+"</td><td class='num'>"+x+"</td><td>"+bar(x,lowGood)+"</td><td class='num'>"+y+"</td><td>"+bar(y,lowGood)+"</td></tr>";});
-    table.innerHTML=h+"</tbody>";verdict.textContent=s.verdict;
-    document.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected",String(b.dataset.i==i)));
-  }
-  document.querySelectorAll(".tabs button").forEach(b=>b.addEventListener("click",()=>score(b.dataset.i)));
-  score(0);
-
-  // mock inbox: only things that need you
-  const items=[
-    {id:1,who:"Meralco",kind:"Bill",when:"Today",amt:"₱8,412.50",why:"check",src:"Email",how:"jev",conf:"0.97",form:"bill",
-     reason:"Spot check. Jev approved this one; you were picked to confirm.",
-     lines:[["Electricity, Aug 20 to Sep 19","6100 Utilities","8,412.50"]],att:"meralco-sep.pdf",due:"Oct 12"},
-    {id:2,who:"Grab",kind:"Receipt",when:"Today",amt:"₱386.00",why:"fix",src:"Upload",how:"jev",conf:"0.78",form:"payout",
-     reason:"Pick an expense account. Travel or Meals?",
-     lines:[["GrabFood order","(choose account)","386.00"]],att:"grab-0927.jpg",paid:"1010 Cash on hand"},
-    {id:3,who:"Unknown sender",kind:"Bill",when:"Yesterday",amt:"₱12,000.00",why:"unsure",src:"Email",how:"jev",conf:"0.41",form:"bill",
-     reason:"Jev was unsure what this is. Confirm the vendor and type.",
-     lines:[["Services rendered","(choose account)","12,000.00"]],att:"scan0042.pdf",due:"?"},
-    {id:4,who:"Payroll, Sep 15 to 30",kind:"Journal",when:"Mon",amt:"₱184,300.00",why:"fix",src:"Schedule",how:"mem",conf:"",form:"journal",
-     reason:"SSS line is missing an account.",
-     jl:[["6500 Salaries","184,300.00",""],["2110 SSS payable","","(choose)"],["1020 BPI checking","","170,540.00"]],att:"payroll-sep-b.csv"},
-    {id:5,who:"BPI statement",kind:"Statement",when:"Mon",amt:"42 lines",why:"fix",src:"Schedule",how:"",conf:"",form:"failed",
-     reason:"Reading the file failed. Retry or upload again.",att:"bpi-sep.csv"}
-  ];
-  let filt="all",cur=1;
-  const list=document.getElementById("list"),read=document.getElementById("read");
-  function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML;}
-  const tagFor={fix:["bad","Needs a fix"],unsure:["jev","Jev unsure"],check:["you","Spot check"]};
-  function formHtml(it){
-    if(it.form==="bill"){
-      let h="<div class='small muted'>Opens in: <b>Bills editor</b> (same as Bills, then New)</div>";
-      h+="<div class='two' style='gap:10px'><div class='panel' style='padding:12px'><span class='mono small'>📄 "+esc(it.att)+"</span><div class='small muted'>document viewer</div></div>";
-      h+="<div class='panel' style='padding:12px;gap:6px'><div class='small'>Vendor: <b>"+esc(it.who)+"</b></div><div class='small'>Due: "+esc(it.due)+"</div></div></div>";
-      h+="<table class='lines'><thead><tr><th>Line</th><th>Account</th><th class='num'>Amount</th></tr></thead><tbody>";
-      it.lines.forEach(l=>{h+="<tr><td>"+esc(l[0])+"</td><td>"+esc(l[1])+"</td><td class='num'>"+esc(l[2])+"</td></tr>";});
-      return h+"</tbody></table>";
-    }
-    if(it.form==="payout"){
-      let h="<div class='small muted'>Opens in: <b>New transaction, Pay out tab</b></div>";
-      h+="<div class='tabs'><button type='button' aria-selected='false'>Journal</button><button type='button' aria-selected='false'>Pay in</button><button type='button' aria-selected='true'>Pay out</button><button type='button' aria-selected='false'>Transfer</button></div>";
-      h+="<div class='small'>Paid from: <b>"+esc(it.paid)+"</b> · To: <b>"+esc(it.who)+"</b></div>";
-      h+="<table class='lines'><thead><tr><th>For</th><th>Account</th><th class='num'>Amount</th></tr></thead><tbody>";
-      it.lines.forEach(l=>{h+="<tr><td>"+esc(l[0])+"</td><td>"+esc(l[1])+"</td><td class='num'>"+esc(l[2])+"</td></tr>";});
-      return h+"</tbody></table>";
-    }
-    if(it.form==="journal"){
-      let h="<div class='small muted'>Opens in: <b>New transaction, Journal tab</b></div>";
-      h+="<table class='lines'><thead><tr><th>Account</th><th class='num'>Debit</th><th class='num'>Credit</th></tr></thead><tbody>";
-      it.jl.forEach(l=>{h+="<tr><td>"+esc(l[0])+"</td><td class='num'>"+esc(l[1])+"</td><td class='num'>"+esc(l[2])+"</td></tr>";});
-      return h+"</tbody></table>";
-    }
-    return "<div class='small muted'>No form yet. The file could not be read.</div><div class='attach'><span>📎 "+esc(it.att)+"</span></div>";
-  }
-  function draw(){
-    const cnt=f=>items.filter(i=>f==="all"||i.why===f).length;
-    document.getElementById("cAll").textContent=cnt("all");document.getElementById("cFix").textContent=cnt("fix");
-    document.getElementById("cUnsure").textContent=cnt("unsure");document.getElementById("cCheck").textContent=cnt("check");
-    document.querySelectorAll(".folder").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.f===filt)));
-    const vis=items.filter(i=>filt==="all"||i.why===filt);
-    if(!vis.find(i=>i.id===cur))cur=vis.length?vis[0].id:null;
-    list.innerHTML="";
-    vis.forEach(i=>{
-      const r=document.createElement("button");r.type="button";r.className="row";
-      r.setAttribute("aria-current",String(i.id===cur));
-      const t=i.form==="failed"?["bad","Failed"]:tagFor[i.why];
-      r.innerHTML="<span class='who'>"+esc(i.who)+"</span><span class='amt'>"+esc(i.amt)+"</span><span class='why'>"+esc(i.kind)+" · "+esc(i.when)+"</span><span class='fix tag "+t[0]+"'>"+t[1]+"</span>";
-      r.addEventListener("click",()=>{cur=i.id;draw();});
-      list.appendChild(r);
-    });
-    const it=items.find(i=>i.id===cur);
-    if(!it){read.innerHTML="<h3>Nothing needs you.</h3><p class='muted'>Everything that came in is already in the books.</p>";return;}
-    const blocked=it.why==="fix"||it.form==="failed";
-    let h="<div class='head'><div><h3>"+esc(it.who)+" · "+esc(it.amt)+"</h3><div class='small muted'>"+esc(it.kind)+" · "+esc(it.when)+" · from "+esc(it.src)+"</div></div>";
-    h+="<div class='btns'><button class='btn' type='button' data-act='reject'>Reject</button><button class='btn primary' type='button' data-act='approve' "+(blocked?"disabled":"")+">Approve</button></div></div>";
-    const t=it.form==="failed"?["bad","Failed"]:tagFor[it.why];
-    h+="<div class='fixbox' style='background:var(--"+(t[0]==="bad"?"bad":t[0])+"-soft)'><b style='color:var(--"+t[0]+")'>"+t[1]+".</b> "+esc(it.reason)+"</div>";
-    if(it.how==="jev")h+="<div class='jevline'><span class='tag jev'>Jev</span><span>filled this in</span><span class='mono'>sure: "+it.conf+"</span></div>";
-    if(it.how==="mem")h+="<div class='memline'><span class='tag acc'>Remembered</span><span>from your fix on the Sep 1 to 15 payroll</span></div>";
-    h+=formHtml(it);
-    if(it.why==="fix"&&it.form!=="failed")h+="<label class='small' style='display:flex;gap:8px;align-items:center'><input type='checkbox' id='rem"+it.id+"' checked> Remember this fix for next time</label>";
-    read.innerHTML=h;
-    read.querySelectorAll("[data-act]").forEach(b=>b.addEventListener("click",()=>{
-      const idx=items.findIndex(x=>x.id===it.id);items.splice(idx,1);cur=null;draw();
-    }));
-  }
-  document.querySelectorAll(".folder").forEach(b=>b.addEventListener("click",()=>{filt=b.dataset.f;draw();}));
-  draw();
-
-  // memory scope
-  const blasts=["Changes 0 past papers. Only this file is covered.","Would have changed 9 of 31 past Grab receipts, all GrabFood orders.","Would have changed 31 of 31 past Grab receipts, including 22 real rides. Too wide."];
-  const blast=document.getElementById("blast");
-  function showBlast(){const v=document.querySelector("input[name=scope]:checked").value;blast.textContent="Example: "+blasts[v];}
-  document.querySelectorAll("input[name=scope]").forEach(i=>i.addEventListener("change",showBlast));showBlast();
-
-  // copy
-  const btn=document.getElementById("copyBtn");
-  btn.addEventListener("click",()=>{
-    const t=document.getElementById("briefText").textContent;
-    const done=()=>{btn.textContent="Copied";setTimeout(()=>btn.textContent="Copy the brief",1600);};
-    try{navigator.clipboard.writeText(t).then(done,()=>sel());}catch(e){sel();}
-    function sel(){const r=document.createRange();r.selectNodeContents(document.getElementById("briefText"));const s=getSelection();s.removeAllRanges();s.addRange(r);btn.textContent="Selected. Press Cmd+C";}
-  });
-})();
+  })();
 </script>
