@@ -24,6 +24,31 @@ description: Bulk data import and export for migration and backup
 | **Financial Package** | ZIP (CSV + XLSX) | Ledger → ⋯ Menu → Download Financial Package |
 | **Chart of Accounts** | CSV              | Settings → Import/Export                     |
 
+## Full Export (Settings → Export / Import)
+
+**Settings → Export / Import** exports the organization's records as one JSON file (or CSV
+sections) and imports them back one kind at a time. Besides the books — chart of accounts,
+parties, banks, products, transactions, bills, invoices — the file carries the Inbox's own
+configuration:
+
+| Data Type                   | What comes along                                                            |
+| --------------------------- | --------------------------------------------------------------------------- |
+| **Rule Snapshots**          | Each frozen rule pack, with its label and the exact time it was made        |
+| **Routines**                | How papers get in: inbound email, signed webhooks, and schedules, with pins |
+| **Classification Memories** | The answers the Inbox remembers, with their use and undo counts, on or off  |
+
+Import them in that order, after vendors, customers, and the chart of accounts:
+
+- **Signing secrets never leave.** A signed webhook routine arrives turned off; generate a new
+  secret for it, update the sender, then turn it on.
+- A routine that uses a rule snapshot needs that snapshot imported first.
+- Your organization keeps a single inbound email routine; an imported one is skipped if you
+  already have it.
+- A memory whose vendor, customer, or account is not in this organization is skipped and listed
+  in the import results, so you can see what was not brought over.
+
+Importing the same file twice adds nothing the second time.
+
 ## CSV Format Requirements
 
 ### Transactions CSV
