@@ -22,6 +22,7 @@ test.describe("Settings Layout and Navigation", () => {
       "General",
       "Business Profile",
       "Email",
+      "Review Rules",
       "AI Credentials",
       "Members",
       "Export / Import",

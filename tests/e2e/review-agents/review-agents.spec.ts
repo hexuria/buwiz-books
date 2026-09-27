@@ -53,7 +53,10 @@ test.describe("Review agents", () => {
     await expect(page.locator("textarea")).toHaveCount(0);
     await expect(page.getByRole("spinbutton", { name: /Standard deviations/i })).toBeVisible();
     await expect(page.getByRole("spinbutton", { name: /Lookback window/i })).toBeVisible();
-    await expect(page.getByRole("combobox", { name: /Approval impact/i })).toBeVisible();
+    // The editor is shared with Settings -> Review Rules, which labels impact Stop / Warn.
+    await expect(page.getByRole("group", { name: "Approval impact" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Stop" })).toBeAttached();
+    await expect(page.getByRole("radio", { name: "Warn" })).toBeAttached();
   });
 
   test("tells a book agent apart from a review agent in the detail pane", async ({ page }) => {
