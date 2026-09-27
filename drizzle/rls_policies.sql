@@ -630,6 +630,28 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Inbox v2 rule snapshots (rule_snapshots)
+-- Standard tenant isolation. Snapshots are org configuration: created, listed,
+-- and pinned through the server-context wrappers, and read by the candidate
+-- path inside the organization's own context. A routine may only pin a
+-- snapshot its organization can see.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'rule_snapshots'
+  ) THEN
+    ALTER TABLE rule_snapshots ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_rule_snapshots ON rule_snapshots;
+    CREATE POLICY org_isolation_rule_snapshots ON rule_snapshots FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for rule_snapshots';
+  END IF;
+END $$;
+
+-- ============================================================================
 -- AI telemetry (ai_invocations)
 -- Append-only telemetry written OUTSIDE org context on the raw pool connection
 -- (see src/lib/ai/invoke.ts) so rows survive caller-transaction rollback.
