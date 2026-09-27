@@ -1117,9 +1117,10 @@
       changing that rule on purpose. The next section shows how to do it safely.
     </p>
     <p class="muted small">
-      I could not check Jev's actual API. This design only assumes it takes text and returns a label
-      plus a 0 to 1 confidence. Adding it means a fourth provider next to Gemini, OpenAI, and
-      Anthropic, then putting it first in the sorting chain.
+      Jev only sees text after personal details are masked, and only for orgs that opted in to
+      sending data to it. I could not check Jev's actual API. This design only assumes it takes text
+      and returns a label plus a 0 to 1 confidence. Adding it means a fourth provider next to
+      Gemini, OpenAI, and Anthropic, then putting it first in the sorting chain.
     </p>
   </section>
 
@@ -1286,6 +1287,7 @@
           <li>A possible duplicate.</li>
           <li>A date in a closed period, or a different period than usual.</li>
           <li>Anything that failed to read.</li>
+          <li>A bill that changes a vendor's bank or payment details.</li>
           <li>Bank matching and splits. These walls stay.</li>
         </ul>
       </div>
@@ -1295,14 +1297,17 @@
       <div class="arrow">→</div>
       <div class="step"><b>🏷️ Labeled</b><span>"by Jev" tag on the entry in the books</span></div>
       <div class="arrow">→</div>
-      <div class="step you"><b>🎲 Spot check</b><span>1 in 10 comes back to your Inbox</span></div>
+      <div class="step you">
+        <b>🎲 Spot check</b><span>1 in 10 is held back for you before it posts</span>
+      </div>
       <div class="arrow">→</div>
       <div class="step book"><b>↩️ Undo = reversal</b><span>never a delete</span></div>
     </div>
     <p class="note">
       The spot check matters. Today, a human approval is also the "right answer" that trains the
-      test pile. If Jev approves everything, that signal stops. The random sample keeps it flowing
-      and feeds the step-down check.
+      test pile. If Jev approves everything, that signal stops. So Jev holds back 1 in 10 of the
+      papers it would approve, before posting, and you decide those. Nothing has to be undone, and
+      your answer is a fair test of Jev.
     </p>
     <p class="muted small">
       Most of this ladder already exists in <code>src/lib/ai/autonomy.ts</code>. It asks for 200
@@ -1715,93 +1720,196 @@
     </div>
   </section>
 
+  <section id="deep">
+    <span class="eyebrow">11 · What seven reviewers changed</span>
+    <h2>Seven reviewers, one angle each. Here is what moved.</h2>
+    <p>
+      Each one read the real code from one side: screen, intake, posting, Jev, rules, security,
+      rollout. These are the changes that mattered.
+    </p>
+    <div class="two">
+      <div class="panel bad">
+        <span class="tag bad">Posting</span>
+        <h3>One save path for everyone</h3>
+        <p class="small">
+          The editors' save buttons need a logged-in person, and Jev has none. So the saving code
+          moves into shared "cores" that the editors, the Inbox, and Jev all call. This also fixes
+          the missing bill records, even in today's Inbox.
+        </p>
+      </div>
+      <div class="panel bad">
+        <span class="tag bad">Audit</span>
+        <h3>Jev needs a name in the log</h3>
+        <p class="small">
+          Today every approval must point at a real user. The log gets an "actor type" so it can say
+          "approved by Jev, lane Meralco bills, sure 0.97, rules snapshot 12".
+        </p>
+      </div>
+      <div class="panel">
+        <span class="tag you">Screen</span>
+        <h3>Editors become parts, not pages</h3>
+        <p class="small">
+          The Bills and New transaction screens jump away after saving. They get split into
+          components that take a draft and a save action. The pages keep using the same parts. Keys
+          j/k/a/r and auto-advance make clearing fast.
+        </p>
+      </div>
+      <div class="panel">
+        <span class="tag acc">Rules</span>
+        <h3>Rules read a frozen snapshot</h3>
+        <p class="small">
+          Inbox rules read live settings today, the same settings Review Agents edits. So those
+          settings move to Settings first. Routines then pin a frozen snapshot, which makes replay
+          and rollback exact.
+        </p>
+      </div>
+      <div class="panel">
+        <span class="tag jev">Jev</span>
+        <h3>Two small questions, not one big one</h3>
+        <p class="small">
+          First "what kind of paper", then "which of your ~120 categories". Thresholds come from how
+          often Jev was actually right at each confidence level, not from what it says.
+        </p>
+      </div>
+      <div class="panel bad">
+        <span class="tag bad">Security</span>
+        <h3>Bank details never change by themselves</h3>
+        <p class="small">
+          A bill that changes a vendor's bank account is the classic fraud trick. It always goes to
+          a person. Memories need posting rights, webhooks are signed, and background jobs read the
+          org from the routine itself.
+        </p>
+      </div>
+      <div class="panel">
+        <span class="tag you">Intake</span>
+        <h3>Simple schedules, loud failures</h3>
+        <p class="small">
+          "Hourly, daily at 6am, weekly" instead of free cron, so no new library is needed. Skipped
+          duplicates get logged. A missing worker secret stops startup instead of silently doing
+          nothing.
+        </p>
+      </div>
+      <div class="panel good">
+        <span class="tag ok">Undo</span>
+        <h3>Undo already exists</h3>
+        <p class="small">
+          The code already has "amend by reversal": the original stays, and a mirror entry cancels
+          it. Undoing a Jev approval uses that, which stays safe even after a period is filed.
+        </p>
+      </div>
+    </div>
+    <p class="muted small">
+      Every claim, and the ones I overruled, are in
+      <code>research/inbox-v2/review-findings.md</code> on the research branch.
+    </p>
+  </section>
+
   <section id="build">
-    <span class="eyebrow">11 · Build order</span>
-    <h2>Nine steps, each one testable on its own.</h2>
+    <span class="eyebrow">12 · Build order</span>
+    <h2>Twelve steps. Step 3 is worth shipping even alone.</h2>
     <ol class="build">
+      <li>
+        <div>
+          <b>Move rule settings into Settings.</b
+          ><span class="done-when"
+            >Done when: Inbox findings behave the same, and nothing depends on the Review Agents
+            page.</span
+          >
+        </div>
+      </li>
       <li>
         <div>
           <b>Hide Review Agents, redirect the old link.</b
           ><span class="done-when"
-            >Done when: the sidebar has no Review Agents entry and the old address lands on the
-            Inbox.</span
+            >Done when: No sidebar entry. The old address lands on the Inbox. Ledger scan is one
+            button in Settings.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Routines table, and move inbound email into it.</b
+          <b>Shared posting cores and the Jev actor.</b
           ><span class="done-when"
-            >Done when: email arrives through a routine of type webhook, and the old path's tests
-            still pass.</span
+            >Done when: Editors and the Inbox save through the same code. An emailed bill shows up
+            in Bills. The log can name Jev.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Add the schedule trigger.</b
+          <b>Routines, with email as the first one.</b
           ><span class="done-when"
-            >Done when: the existing worker drain starts due routines, saves a bookmark, and running
-            twice makes no duplicate papers.</span
+            >Done when: Email arrives through a routine. Skipped duplicates are logged. New tables
+            are tenant-locked.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Add Jev as a provider, first in the sorting chain.</b
+          <b>Schedules: hourly, daily, weekly.</b
           ><span class="done-when"
-            >Done when: saved Jev answers pass the recorded tests, confidence is pinned 0 to 1, and
-            Gemini still catches failures.</span
+            >Done when: Due routines fire once. A double run creates no duplicate papers.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Category and vendor checks with Jev.</b
+          <b>Add Jev (waiting on its API).</b
           ><span class="done-when"
-            >Done when: a routine cannot be enabled without a chart, Jev only returns accounts from
-            the org's own list, a missing fit lands in Uncategorized and blocks, and look-alike
-            vendor names are matched by Jev from a short list of candidates.</span
+            >Done when: Saved Jev answers pass tests. Text is masked first. Orgs must opt in.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Rule packs, replay, and the scorecard.</b
+          <b>Category and vendor checks.</b
           ><span class="done-when"
-            >Done when: one command replays the practice pile under two rule packs and prints the
-            three numbers.</span
+            >Done when: No chart, no routine. Jev picks only your categories. Look-alike vendors
+            resolve.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>The new Inbox screen, built from the existing editors.</b
+          <b>Rule snapshots, replay, scorecard.</b
           ><span class="done-when"
-            >Done when: the list shows only papers that need someone, each opens the matching
-            existing editor prefilled, Approve saves through that editor's own save (an emailed bill
-            becomes a real bill), failed papers show here, and Approve stays disabled while a
-            stop-level fix is open.</span
+            >Done when: One command prints the scorecard. CI fails if a locked fix breaks.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Memory layer and "Remember this?".</b
+          <b>New Inbox screen, per-org switch.</b
           ><span class="done-when"
-            >Done when: fixing a paper and saving a memory makes the same paper come back with the
-            same answer, with no model call on the answer path. The fix is also saved as a locked
-            test case that fails if anything changes that answer.</span
+            >Done when: Only what needs you. Real editors in the pane. Keyboard and
+            auto-advance.</span
           >
         </div>
       </li>
       <li>
         <div>
-          <b>Jev approval, starting at Watch.</b
+          <b>Memory and "Remember this?".</b
           ><span class="done-when"
-            >Done when: Jev logs "would approve" on every row, the scorecard shows agreement per
-            vendor + kind, an admin can unlock level 2, and undoing a Jev approval posts a reversal
-            and counts toward step-down.</span
+            >Done when: The same paper gets the same answer with no model call. The fix becomes a
+            locked test.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Jev approval lanes.</b
+          ><span class="done-when"
+            >Done when: Watch, suggest, approve. 1 in 10 held back. Undo is a reversal. Kill switch
+            per org.</span
+          >
+        </div>
+      </li>
+      <li>
+        <div>
+          <b>Switch everyone over.</b
+          ><span class="done-when"
+            >Done when: Old Inbox removed. Export includes routines, memories, snapshots, lanes.
+            Docs updated.</span
           >
         </div>
       </li>
@@ -1809,118 +1917,47 @@
   </section>
 
   <section id="brief">
-    <span class="eyebrow">12 · Hand this to an agent</span>
+    <span class="eyebrow">13 · Hand this to an agent</span>
     <h2>The same plan, in agent words.</h2>
     <pre class="brief" id="briefText">
-GOAL
-  Replace the Inbox pipeline with Routines -> Jev triage -> versioned Rule Packs
-  -> two-folder Inbox. Jev may approve postings once earned; humans approve the
-  rest. Base branch: v2.
-
-KEEP (do not rewrite)
-  ingestion_events, processing_jobs, source_records, transaction_candidates(+lines),
-  inbox_items, review_findings, review_decisions, workflow_events.
-  Earned-autonomy mechanics in src/lib/ai/autonomy.ts (thresholds, auto-demote,
-  admin-only promotion).
-  src/lib/ai/chains.ts router, tests/evals graders, ai_run_feedback -> ai_eval_cases.
-  STRUCTURAL_MANUAL_KINDS wall for match, split, coa_accounts, create_party, date_fix.
-  OCR stays Gemini-only unless the owner decides otherwise.
+SOURCE OF TRUTH
+  research/inbox-v2/README.md on branch research/inbox-v2-routines-jev (hexuria).
+  Findings and overruled claims: research/inbox-v2/review-findings.md. Base: v2.
 
 PRINCIPLE
-  The ledger works without the Inbox. The Inbox only automates typing: its output
-  must equal what a human would save in the existing editors. Never bend ledger
-  rules to fit the Inbox. Any failure degrades to "Needs you", never to wrong books.
+  Ledger works without the Inbox. Inbox output = what a human saves in the editors,
+  through the SAME domain code. Ledger invariants never bend. Failures -> "Needs you".
+  Jev approving changes AI authority only.
 
-CATEGORIES
-  Enabling a routine requires an applied chart (coa preset applier: org is fully
-    mapped or untouched). Otherwise block with "Set up your chart of accounts first."
-  Jev classifies against a CLOSED list: the org's leaf accounts, passed as an enum
-    in the output schema. Never free text, never a new account.
-  No fit -> resolve via src/lib/coa/resolve-mapped-account.ts (default_expense ->
-    uncategorized_expense). Existing "uncategorized" rule is blocking, so Jev can
-    never auto-approve it.
-  Jev may emit a non-binding "suggest new category" note; account creation stays
-    human (coa_accounts is structural-manual).
+ORDER (one PR each)
+  1  rule config -> Settings (inbox findings read live review_rule_configs)
+  2  hide Review Agents, redirect, ledger-scan button
+  3  posting cores (createBillCore / postTransactionCore / createInvoiceCore),
+     explicit actor {user|system:jev}, cent policy; approveInboxItem uses cores
+     -> emailed bills become bill rows
+  4  routines table + email as webhook routine; HMAC; dedupe logged; RLS
+  5  schedule presets via existing drain (SKIP LOCKED on next_run_at)
+  6  Jev provider: enum, adapter, pricing, health, mock, fixtures; redacted text only;
+     per-org opt-in; confidence pinned 0..1          [blocked on Jev API]
+  7  chart gate, two-stage closed-enum categories, Uncategorized blocks,
+     TIN/email/alias -> pg_trgm top5 -> Jev -> create_party draft
+  8  rule_snapshots + replay + `bun eval:scorecard` + CI gate (locked = 100%)
+  9  new Inbox behind org flag inbox_v2: extracted editors (draft + onSubmit),
+     reason chips, j/k/a/r, auto-advance, invalidate inbox/bills/transactions/invoices
+  10 classification_memories + "Remember this?" + permission + locked eval case
+  11 ai_autonomy_lanes (org+party+doc_kind), watch->suggest->auto, calibrated
+     thresholds, 10% hold-back spot check, undo = journal-amendment reversal,
+     kill switch; separate PR lifts `categorize` for this lane only
+  12 cutover, export v5, docs
 
-ENTITIES
-  Order: exact TIN / email / vendor_aliases / memory -> pg_trgm top-5 look-alikes
-    -> Jev picks one or says "new" -> create_party draft (name, type, TIN, email).
-  Today -ai-entity-resolver.ts matches by exact ilike name only; replace the
-    matching step, keep it write-free.
-  New party is created in the same transaction as the approved entry, through
-    src/lib/entity-creation.ts (reuse-or-create). create_party stays human-applied,
-    so a first bill from a new party always needs a person; afterwards the alias
-    is remembered.
-  Fix the stale comment in entity-creation.ts claiming create_party can run
-    unattended.
-
-MEMORY (human fixes stick)
-  classification_memories: org_id, match_kind(file_hash|sender_party|party|line_text),
-    match_key (normalized), answer (doc kind, party, account per line, tax code),
-    created_by, source_feedback_id, rule_pack_version, uses, undos, enabled.
-  Lookup order: memory -> Jev(+ approved ai_lessons) -> rule pack. A memory hit
-    answers deterministically; Jev may run in shadow only for the scorecard.
-  Two matching memories that disagree -> Needs you, no guess.
-  Two consecutive undos -> memory disables itself and surfaces in Needs you.
-  "Remember this?" appears after a correction; scope picker shows how many past
-    papers the memory would have changed (replay over history) before saving.
-  Reuse vendor_aliases for name normalization; extend beyond match-assist.
-  Every saved memory also writes an ai_eval_cases row (provenance authored,
-    expected = corrected answer). Replay must reproduce it exactly or CI fails.
-
-JEV APPROVAL (owner decision: Jev may approve)
-  New autonomy lane "inbox_approve", keyed per org + vendor + doc kind.
-  Levels: watch (log would-approve) -> suggest -> auto. Promotion admin-only,
-  gated by 200 reviewed at >=98% agreement. Auto-demote below 95% over last 50.
-  Auto-approve ONLY if: lane at auto, confidence >= threshold (0..1 pinned),
-  no open blocking finding, no duplicate case, known party, open period,
-  amount <= org cap, lines balance to the cent.
-  Posts via the same approve path with actor = Jev, labeled in review_decisions.
-  Undo = reversing journal, never delete; counts as a disagreement.
-  Random spot-check sample (default 10%) goes to "Needs you" as the feedback signal.
-  This lifts the "categorize" wall for inbox approval only: its own reviewed PR + tests.
-
-NEW
-  routines: org_id, name, trigger_kind(webhook|schedule|integration),
-            schedule (cron), source config, rule_pack_version, enabled, cursor.
-  rule_packs: version, rule set snapshot, created_by. Pinned per routine.
-  Jev adapter in src/lib/ai/adapters, first hop for ingest_triage/classify_document,
-            output schema pins confidence to 0..1.
-  Replay command: practice pile x (model chain, rule pack) -> scorecard
-            {problems caught, false alarms, zero-edit approvals,
-             Jev approvals a human would undo, memory hit rate,
-             locked cases still passing (must be 100%)}.
-
-UI
-  Inbox = ONLY items that need a human. No Done folder. Approved work lives in
-    Bills / Transactions / ledger. Empty state: "Nothing needs you."
-  One list; filter chips by reason: needs_fix | jev_unsure | spot_check | failed.
-    Open states + failed only. approved|rejected|dismissed never render here.
-  Row: who, kind, relative date, amount, one reason chip.
-  Pane = the EXISTING editor for the classified kind, prefilled, plus a thin
-    inbox strip (reason, Remembered/Jev + confidence, Approve, Reject,
-    "Remember this?", duplicate warning when present):
-      bill        -> Bills editor (bills_.create: document viewer + line items)
-      paid expense-> transactions_.new, pay_out tab (PayForm)
-      money in    -> transactions_.new, pay_in tab (PayForm)
-      transfer    -> transactions_.new, transfer tab (TransferForm)
-      other       -> transactions_.new, journal tab (JournalForm)
-      sales inv.  -> invoice draft editor
-  Approve = that editor's own save path (e.g. createBill), not a separate
-    inbox journal insert. Today approveInboxItem inserts journal_headers
-    directly and only updates a pre-existing bill, so emailed bills never
-    become bill records. Link the saved entry back via ledger_source_links.
-  Saved entries carry a "by Jev" / "remembered" tag; Undo = reversing entry
-    from the entry's own screen, counted as a Jev disagreement.
-  Rejected sources stay findable in Documents.
-  Settings: Routines, Rule packs (on/off, stop vs warn), Scorecard,
-            Jev approval lanes (level, agreement, cap, step-down history).
-  /review-agents redirects to /inbox; ledger scan becomes one Settings button.
+ALWAYS HUMAN
+  new party, bank/payment detail change, duplicate, closed period, failed read,
+  over cap, bank matching, splits, uncategorized.
 
 RULES FOR THE AGENT
-  Every DB access through the org-context wrappers. Money via src/lib/money.ts.
-  Query keys from src/lib/query-keys.ts. Read .agent/rules/schema-export-import.md
-  before adding tables. bun check must pass. Ship each step as its own PR.</pre
+  Org-context wrappers for requests; withOrgContext(org from owning row) in jobs.
+  Exact money; balance to the cent. Query keys from src/lib/query-keys.ts.
+  Read .agent/rules/schema-export-import.md before new tables. bun check clean.</pre
     >
     <button class="copy" id="copyBtn" type="button">Copy the brief</button>
   </section>
