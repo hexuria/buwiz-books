@@ -50,10 +50,13 @@ describe("classification memory wiring", () => {
     );
   });
 
-  it("exports the Drizzle table and notes the deferred export/import bump", () => {
+  it("exports the Drizzle table, which the v5 export/import carries", () => {
     expect(read("src/db/schema/index.ts")).toContain('export * from "./classification-memories";');
     const schema = read("src/db/schema/classification-memories.ts");
-    expect(schema).toContain("deliberately NOT exported yet");
+    expect(schema).toContain("exported since version 5");
+    expect(read("src/lib/export-inbox.ts")).toContain(
+      "export async function exportClassificationMemories(",
+    );
   });
 
   it("registers memory_conflict as a blocking system rule with a Settings entry", () => {

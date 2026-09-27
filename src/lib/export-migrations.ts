@@ -21,6 +21,7 @@ const migrations: Record<number, MigrationFn> = {
   1: migrateV1toV2,
   2: migrateV2toV3,
   3: migrateV3toV4,
+  4: migrateV4toV5,
 };
 
 // ============================================================================
@@ -134,4 +135,26 @@ function migrateV3toV4(data: Record<string, unknown>): VersionedExportFile {
   const file = data as unknown as VersionedExportFile;
   const meta: ExportMeta = { ...file.meta, version: 4 };
   return { meta, data: file.data };
+}
+
+/**
+ * v4 → v5: Inbox v2 organization configuration joins the export — rule snapshots, routines and
+ * classification memories (src/lib/export-inbox.ts). A v4 file has none, so each gets an empty
+ * array; every other key, known or not, passes through untouched.
+ */
+export const V5_INBOX_CONFIG_ENTITIES = [
+  "ruleSnapshots",
+  "routines",
+  "classificationMemories",
+  // TODO(inbox-v2 step 11): "aiAutonomyLanes" (see src/lib/export-inbox.ts).
+] as const;
+
+function migrateV4toV5(data: Record<string, unknown>): VersionedExportFile {
+  const file = data as unknown as VersionedExportFile;
+  const next: Record<string, unknown> = { ...file.data };
+  for (const entity of V5_INBOX_CONFIG_ENTITIES) {
+    if (!Array.isArray(next[entity])) next[entity] = [];
+  }
+  const meta: ExportMeta = { ...file.meta, version: 5 };
+  return { meta, data: next };
 }

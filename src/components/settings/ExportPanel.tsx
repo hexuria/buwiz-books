@@ -1,6 +1,7 @@
 /**
  * ExportPanel — Entity selector with cherry-pick drill-down and download
- * Supports the versioned export format (core books entities + PH tax slice).
+ * Supports the versioned export format (core books entities, PH tax slice,
+ * and the v5 Inbox configuration).
  */
 import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -35,6 +36,9 @@ const ENTITY_ICONS: Record<string, string> = {
     "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M12 18v-6M9 15l3 3 3-3",
   numberSequences: "M4 9h16M4 15h16M10 3L8 21M16 3l-2 18",
   orgSettings: "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z",
+  ruleSnapshots: "M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11",
+  routines: "M17 1l4 4-4 4M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4M21 13v2a4 4 0 0 1-4 4H3",
+  classificationMemories: "M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z",
 };
 
 /** Entity keys shown in the UI — excludes numberSequences and orgSettings which have no cherry-pick */
@@ -53,6 +57,11 @@ const CHERRY_PICKABLE: EntityType[] = [
   "transactions",
   "bills",
   "invoices",
+  // v5 Inbox configuration. Rule snapshots come with the routines that pin them: a routine whose
+  // pinned snapshot is left out of the file cannot be imported.
+  "ruleSnapshots",
+  "routines",
+  "classificationMemories",
 ];
 
 const PH_ICON = "M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6";

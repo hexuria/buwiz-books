@@ -6,6 +6,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { validateImport, executeImport } from "../../routes/api/-export-import";
 import type { EntityType } from "../../routes/api/-export-import";
 import { ENTITY_LABELS, PH_EXPORTABLE_ENTITIES } from "../../lib/export-versions";
+import { keys } from "../../lib/query-keys";
 
 // ============================================================================
 // Constants
@@ -27,7 +28,19 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
     value,
     label: ENTITY_LABELS[value],
   })),
+  // v5 Inbox configuration, in import order: snapshots before the routines that pin them,
+  // memories after the vendors, customers and categories they map onto.
+  { value: "ruleSnapshots", label: ENTITY_LABELS.ruleSnapshots },
+  { value: "routines", label: ENTITY_LABELS.routines },
+  { value: "classificationMemories", label: ENTITY_LABELS.classificationMemories },
 ];
+
+/** Caches an Inbox-configuration import changes, from src/lib/query-keys.ts. */
+const INBOX_CONFIG_QUERY_KEYS: Partial<Record<EntityType, ReadonlyArray<readonly unknown[]>>> = {
+  ruleSnapshots: [keys.ruleSnapshots.all()],
+  routines: [keys.routines.all(), keys.ruleSnapshots.all()],
+  classificationMemories: [keys.inbox.memories()],
+};
 
 type ImportStep = "select" | "validate" | "importing" | "done";
 
@@ -117,11 +130,14 @@ export function ImportPanel() {
           locations: ["locations"],
           products: ["products"],
         };
-        const keys = queryKeyMap[entityType];
-        if (keys) {
-          for (const key of keys) {
+        const legacyKeys = queryKeyMap[entityType];
+        if (legacyKeys) {
+          for (const key of legacyKeys) {
             queryClient.invalidateQueries({ queryKey: [key] });
           }
+        }
+        for (const queryKey of INBOX_CONFIG_QUERY_KEYS[entityType] ?? []) {
+          queryClient.invalidateQueries({ queryKey });
         }
       }
     },

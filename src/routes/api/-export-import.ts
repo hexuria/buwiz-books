@@ -2,7 +2,9 @@
  * Export / Import Server Functions (v2 — Versioned)
  * Handles bulk export and import of organization data.
  * Supports the core books entities plus the v3 Philippine tax slice
- * (see src/lib/export-ph.ts and docs/tax/forms-handoff.md).
+ * (see src/lib/export-ph.ts and docs/tax/forms-handoff.md) and the v5 Inbox
+ * configuration — rule snapshots, routines, classification memories
+ * (see src/lib/export-inbox.ts).
  */
 import { createServerFn } from "@tanstack/react-start";
 
@@ -35,6 +37,16 @@ import {
   phSpecFor,
   PH_ENTITY_KEYS,
 } from "../../lib/export-ph";
+import {
+  exportInboxConfigEntity,
+  importInboxConfigEntity,
+  listInboxConfigRecords,
+} from "../../lib/export-inbox";
+import {
+  inboxConfigRowSchema,
+  isInboxConfigEntity,
+  type InboxConfigEntityKey,
+} from "../../lib/export-inbox-rows";
 
 // ============================================================================
 // Types
@@ -82,6 +94,10 @@ const ENTITY_ENUM = [
   "phPayrollLines",
   "phPayrollYearState",
   "phComputedReturns",
+  // v5: Inbox v2 organization configuration — export-inbox.ts.
+  "ruleSnapshots",
+  "routines",
+  "classificationMemories",
 ] as const;
 
 export type EntityType = (typeof ENTITY_ENUM)[number];
@@ -91,6 +107,10 @@ export const ENTITY_TYPES: EntityType[] = [...ENTITY_ENUM];
 // Every registry key must be present in ENTITY_ENUM (wiring-tested).
 const _PH_KEYS_IN_ENUM: readonly string[] = PH_ENTITY_KEYS;
 void _PH_KEYS_IN_ENUM;
+// Type-level only (the import above is erased): a runtime reference to export-inbox-rows here
+// would keep its server-only dependencies (node:crypto) in the client bundle.
+const _INBOX_CONFIG_KEYS_ARE_ENTITY_TYPES = (key: InboxConfigEntityKey): EntityType => key;
+void _INBOX_CONFIG_KEYS_ARE_ENTITY_TYPES;
 
 const exportDataSchema = z.object({
   entities: z.array(z.enum(ENTITY_ENUM)),
@@ -114,6 +134,14 @@ export const exportData = createServerFn({ method: "POST" }).handler(
         const phSpec = phSpecFor(entity);
         if (phSpec) {
           result[entity] = await exportPhEntity(db, orgId, phSpec);
+          continue;
+        }
+        // Inbox configuration (v5): never routine secrets; references travel resolvably.
+        // Disabled rows are configuration too, so includeInactive does not apply.
+        if (isInboxConfigEntity(entity)) {
+          result[entity] = await exportInboxConfigEntity(db, orgId, entity, {
+            ids: ids?.[entity],
+          });
           continue;
         }
         switch (entity) {
@@ -800,6 +828,7 @@ const productRowSchema = z.object({
 function getRowSchema(entityType: string) {
   const phSpec = phSpecFor(entityType);
   if (phSpec) return phRowSchema(phSpec);
+  if (isInboxConfigEntity(entityType)) return inboxConfigRowSchema(entityType);
   switch (entityType) {
     case "banks":
       return bankRowSchema;
@@ -944,7 +973,7 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
       "organization",
       "update",
       { routeKey: "export-import:execute", limit: 10, windowMs: 300_000 },
-      async ({ orgId, db }) => {
+      async ({ orgId, db, userId, role }) => {
         const { entityType, rows: rawRows } = executeImportSchema.parse(rawData);
 
         const results: Array<{
@@ -1340,6 +1369,17 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
             break;
           }
 
+          // Inbox configuration (v5): snapshots, then routines (their pins remap onto
+          // the snapshots), then memories (parties and accounts remap by reference).
+          case "ruleSnapshots":
+          case "routines":
+          case "classificationMemories": {
+            results.push(
+              ...(await importInboxConfigEntity({ db, orgId, userId, role }, entityType, rows)),
+            );
+            break;
+          }
+
           // Transactions, bills, invoices, numberSequences, orgSettings
           // are read-only exports for now — import is not yet supported
           case "transactions":
@@ -1575,6 +1615,11 @@ export const listExportableRecords = createServerFn({ method: "GET" }).handler(
             .where(and(...conditions))
             .orderBy(desc(invoices.issueDate));
         }
+
+        case "ruleSnapshots":
+        case "routines":
+        case "classificationMemories":
+          return await listInboxConfigRecords(db, orgId, entityType);
 
         // Number sequences and org settings don't have cherry-pick
         default:

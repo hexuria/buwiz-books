@@ -5,6 +5,14 @@
  */
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+// v5 Inbox configuration: these validators live in a plain module, not the server-function
+// file, so the tests below exercise the real ones rather than replicas.
+import {
+  classificationMemoryExportRowSchema,
+  routineExportRowSchema,
+  ruleSnapshotExportRowSchema,
+} from "@/lib/export-inbox-rows";
+import v5Sample from "../../fixtures/export-v5-sample.json";
 
 // ── Replicated schemas (matching src/routes/api/-export-import.ts) ─────────
 // We replicate rather than import because the server file uses createServerFn
@@ -347,6 +355,161 @@ describe("export-import schemas", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.isActive).toBe(true);
+      }
+    });
+  });
+});
+
+// ── v5: Inbox configuration (the route's real validators) ───────────────────
+
+describe("v5 Inbox configuration row schemas", () => {
+  const [snapshotRow] = v5Sample.data.ruleSnapshots;
+  const [emailRoutine, webhookRoutine] = v5Sample.data.routines;
+  const [memoryRow] = v5Sample.data.classificationMemories;
+
+  describe("ruleSnapshotExportRowSchema", () => {
+    it("accepts the fixture row and defaults a missing label to null", () => {
+      expect(ruleSnapshotExportRowSchema.safeParse(snapshotRow).success).toBe(true);
+      const { label: _label, ...unlabeled } = snapshotRow;
+      const parsed = ruleSnapshotExportRowSchema.parse(unlabeled);
+      expect(parsed.label).toBeNull();
+    });
+
+    it("rejects an empty or duplicated rule list", () => {
+      expect(ruleSnapshotExportRowSchema.safeParse({ ...snapshotRow, snapshot: [] }).success).toBe(
+        false,
+      );
+      const twice = [snapshotRow.snapshot[0], snapshotRow.snapshot[0]];
+      expect(
+        ruleSnapshotExportRowSchema.safeParse({ ...snapshotRow, snapshot: twice }).success,
+      ).toBe(false);
+    });
+
+    it("rejects an impact other than Stop or Warn", () => {
+      const snapshot = [{ ...snapshotRow.snapshot[0], impact: "info" }];
+      expect(ruleSnapshotExportRowSchema.safeParse({ ...snapshotRow, snapshot }).success).toBe(
+        false,
+      );
+    });
+
+    it("needs the source id and an exact UTC creation time", () => {
+      for (const patch of [
+        { id: "not-a-uuid" },
+        { createdAt: "2026-09-20 08:30:00" },
+        { createdAt: "2026-09-20T08:30:00+08:00" },
+      ]) {
+        expect(ruleSnapshotExportRowSchema.safeParse({ ...snapshotRow, ...patch }).success).toBe(
+          false,
+        );
+      }
+      expect(
+        ruleSnapshotExportRowSchema.safeParse({ ...snapshotRow, createdAt: "2026-09-20T08:30:00Z" })
+          .success,
+      ).toBe(true);
+    });
+  });
+
+  describe("routineExportRowSchema", () => {
+    it("accepts the fixture rows and defaults the pins and run limit", () => {
+      expect(routineExportRowSchema.safeParse(emailRoutine).success).toBe(true);
+      const {
+        ruleSnapshot: _pin,
+        shadowRuleSnapshot: _shadow,
+        maxConcurrentRuns: _max,
+        ...bare
+      } = webhookRoutine;
+      const parsed = routineExportRowSchema.parse(bare);
+      expect(parsed).toMatchObject({
+        ruleSnapshot: null,
+        shadowRuleSnapshot: null,
+        maxConcurrentRuns: 1,
+      });
+    });
+
+    it("rejects a blank name, an unknown trigger, and fewer than one concurrent run", () => {
+      for (const patch of [{ name: "   " }, { triggerKind: "cron" }, { maxConcurrentRuns: 0 }]) {
+        expect(routineExportRowSchema.safeParse({ ...webhookRoutine, ...patch }).success).toBe(
+          false,
+        );
+      }
+    });
+
+    it("rejects a pin that does not name a snapshot exactly", () => {
+      const pin = { ...emailRoutine.ruleSnapshot, createdAt: "yesterday" };
+      expect(routineExportRowSchema.safeParse({ ...emailRoutine, ruleSnapshot: pin }).success).toBe(
+        false,
+      );
+    });
+  });
+
+  describe("classificationMemoryExportRowSchema", () => {
+    it("accepts the fixture row", () => {
+      expect(classificationMemoryExportRowSchema.safeParse(memoryRow).success).toBe(true);
+    });
+
+    it("needs a key, except for a party memory, which names its party", () => {
+      expect(
+        classificationMemoryExportRowSchema.safeParse({ ...memoryRow, matchKey: null }).success,
+      ).toBe(false);
+      expect(
+        classificationMemoryExportRowSchema.safeParse({
+          ...memoryRow,
+          matchKind: "party",
+          matchKey: null,
+          matchPartyName: "Acme Hosting",
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a file key that is not a sha256 digest", () => {
+      for (const matchKey of ["abc", "A".repeat(64), "g".repeat(64)]) {
+        expect(
+          classificationMemoryExportRowSchema.safeParse({
+            ...memoryRow,
+            matchKind: "file_hash",
+            matchKey,
+          }).success,
+        ).toBe(false);
+      }
+      expect(
+        classificationMemoryExportRowSchema.safeParse({
+          ...memoryRow,
+          matchKind: "file_hash",
+          matchKey: "a1".repeat(32),
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a 'these words' memory that names a party", () => {
+      expect(
+        classificationMemoryExportRowSchema.safeParse({
+          ...memoryRow,
+          matchKind: "line_text",
+          matchKey: "ACME HOSTING",
+        }).success,
+      ).toBe(false);
+    });
+
+    it("keeps money as exact positive decimals", () => {
+      const line = memoryRow.answerLines[0];
+      for (const amount of ["1e3", "-49.99", "0", "49.999999999", 49.99]) {
+        const answerLines = [{ ...line, amount }, memoryRow.answerLines[1]];
+        expect(
+          classificationMemoryExportRowSchema.safeParse({ ...memoryRow, answerLines }).success,
+          `amount ${String(amount)}`,
+        ).toBe(false);
+      }
+    });
+
+    it("rejects a one-line answer, an unknown kind of paper, and negative counters", () => {
+      for (const patch of [
+        { answerLines: [memoryRow.answerLines[0]] },
+        { answerDocKind: "other" },
+        { uses: -1 },
+      ]) {
+        expect(
+          classificationMemoryExportRowSchema.safeParse({ ...memoryRow, ...patch }).success,
+        ).toBe(false);
       }
     });
   });
