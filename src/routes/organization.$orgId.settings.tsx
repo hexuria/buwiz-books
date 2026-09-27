@@ -40,6 +40,7 @@ import type {
 import { ExportImportSection } from "../components/settings/ExportImportSection";
 import { ReviewRulesSettings } from "../components/settings/ReviewRulesSettings";
 import { UnsavedChangesBar } from "../components/settings/UnsavedChangesBar";
+import { InboxV2Setting } from "../components/settings/InboxV2Setting";
 import { CURRENCIES } from "@/lib/constants";
 import Combobox from "@/components/ui/Combobox";
 import { AI_MODEL_OPTIONS, AI_MODEL_DEFAULTS, AI_TASK_LABELS } from "@/lib/ai-models";
@@ -475,6 +476,8 @@ function GeneralSection({
           <CountrySection queryClient={queryClient} />
         </div>
       </section>
+
+      <InboxV2Setting orgId={orgId} enabled={settings.inboxV2} />
     </div>
   );
 }

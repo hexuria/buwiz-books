@@ -39,6 +39,10 @@ export const keys = {
     // Was a top-level ["inbox-settings"], so it sat outside the `all()` prefix and never
     // invalidated with the rest of the Inbox. One cheap read; folding it in is the right default.
     settings: () => ["inbox", "settings"] as const,
+    /** Inbox v2: the needs-a-human list. The sidebar badge reads the same entry. */
+    v2List: () => ["inbox", "v2", "list"] as const,
+    /** Inbox v2: the per-org rollout flag that picks the /inbox screen. */
+    v2Enabled: () => ["inbox", "v2", "enabled"] as const,
   },
   reviewAgents: {
     all: () => ["review-agents"] as const,
@@ -106,6 +110,7 @@ export const keys = {
     all: () => ["documents"] as const,
     detail: (id: string) => ["documents", "detail", id] as const,
     thumbnail: (id: string) => ["documents", "thumbnail", id] as const,
+    viewer: (id: string) => ["documents", "viewer", id] as const,
   },
   reports: {
     all: () => ["reports"] as const,

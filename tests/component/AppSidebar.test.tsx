@@ -53,6 +53,10 @@ vi.mock("../../src/hooks/usePhTaxFilingEnabled", () => ({
   usePhTaxFilingEnabled: () => ({ enabled: false, isPending: false }),
 }));
 vi.mock("../../src/routes/api/-tax-module-state", () => ({ getTaxModuleState: vi.fn() }));
+const inbox = vi.hoisted(() => ({ badge: undefined as number | string | undefined }));
+vi.mock("../../src/components/inbox-v2/useInboxV2", () => ({
+  useInboxV2Badge: () => inbox.badge,
+}));
 
 function renderSidebar() {
   return render(
@@ -66,6 +70,7 @@ function renderSidebar() {
 
 beforeEach(() => {
   layout.compact = false;
+  inbox.badge = undefined;
 });
 
 describe("AppSidebar without Review Agents", () => {
@@ -89,5 +94,28 @@ describe("AppSidebar without Review Agents", () => {
   it("still links to Settings, where review rules now live", () => {
     const { container } = renderSidebar();
     expect(container.querySelector('a[href="/organization/org-1/settings"]')).not.toBeNull();
+  });
+});
+
+describe("AppSidebar Inbox badge", () => {
+  it("shows how many items need a human when the org is on Inbox v2", () => {
+    inbox.badge = 7;
+    const { container } = renderSidebar();
+    expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent("Inbox7");
+  });
+
+  it("says there are more past the list's ceiling", () => {
+    inbox.badge = "250+";
+    const { container } = renderSidebar();
+    expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent("Inbox250+");
+  });
+
+  it("shows no badge on the classic Inbox or when nothing needs a human", () => {
+    const { container, unmount } = renderSidebar();
+    expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent(/^Inbox$/);
+    unmount();
+    inbox.badge = 0;
+    const second = renderSidebar();
+    expect(second.container.querySelector('a[href="/inbox"]')).toHaveTextContent(/^Inbox$/);
   });
 });

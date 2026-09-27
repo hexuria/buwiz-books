@@ -47,6 +47,29 @@ the Bills page while its Inbox item is still pending. Those actions already
 post, cancel or remove its accrual, so the Inbox refuses to approve that item;
 reject it instead.
 
+## Inbox v2 (per-organization preview)
+
+Admins can turn on the new Inbox under **Settings → General → New Inbox**
+(`inboxV2` in the organization's metadata; off by default). Both screens read
+the same Inbox items, so switching moves no data and open items carry over.
+
+- The list holds only what needs a person: open items and failed ones, never
+  approved, rejected, or dismissed. The sidebar's Inbox badge is its length.
+- Each item carries one reason: **Failed** (the item failed, or its source could
+  not be processed), **Needs a fix** (an open blocking check, or details still
+  missing), **Jev unsure** (a low-confidence category, or — until autonomy lanes
+  exist — any item Jev is not cleared to approve on its own), and **Spot check**
+  (reserved for autonomy hold-back samples; nothing produces it yet).
+- The reading pane is the real editor, prefilled: vendor bills open in the Bills
+  editor, everything else in the New transaction editor on its tab. Its Save
+  runs the candidate correction and the book checks; Approve first saves any
+  unsaved edits the same way, then approves through the shared posting cores.
+  Approve stays off while a blocking check is open.
+- Keyboard: `j` / `k` move, `a` approves, `r` rejects with a reason, `e` jumps
+  into the editor. Shortcuts are ignored while typing.
+- A sales invoice from a paper is booked as an entry; approval does not create
+  an invoice record yet.
+
 ## Review policy
 
 - **Book rules** detect missing or invalid accounting data. A finding with
