@@ -110,19 +110,20 @@ function sourceDocumentStampFor(
   return null;
 }
 
-/** The Bills-editor bill behind a "bill" candidate, found by its uuid external id. */
-async function findCandidateBillId(
-  db: DbExecutor,
-  orgId: string,
-  externalId: string | null,
-): Promise<string | null> {
+/**
+ * The Bills-editor bill behind a "bill" candidate, found by its uuid external
+ * id and locked: the Bills page takes the same row lock before it posts an
+ * accrual, so the two paths serialize instead of both accruing.
+ */
+async function lockCandidateBill(db: DbExecutor, orgId: string, externalId: string | null) {
   if (!externalId || !UUID_SHAPE.test(externalId)) return null;
   const [bill] = await db
-    .select({ id: bills.id })
+    .select({ id: bills.id, status: bills.status, journalHeaderId: bills.journalHeaderId })
     .from(bills)
     .where(and(eq(bills.id, externalId), eq(bills.organizationId, orgId)))
-    .limit(1);
-  return bill?.id ?? null;
+    .limit(1)
+    .for("update");
+  return bill ?? null;
 }
 
 function sourceProvider(input: CreateCandidateInput): string {
@@ -850,6 +851,12 @@ export interface ApproveInboxInput {
 export const DUPLICATE_APPROVAL_BLOCKED_MESSAGE =
   "Resolve the blocking Possible Duplicate case before approving this transaction.";
 
+export const BILL_ALREADY_ACCRUED_MESSAGE =
+  "This bill was already approved in Bills, so its accrual is posted. Reject this Inbox item instead of approving it again.";
+
+export const BILL_VOIDED_MESSAGE =
+  "This bill was voided in Bills. Reject this Inbox item instead of approving it.";
+
 export type ApproveInboxResult =
   | {
       approvalOutcome: "approved";
@@ -923,6 +930,18 @@ export async function approveInboxItem(
       );
     }
   }
+
+  // A Bills-editor bill can be approved, scheduled or paid on the Bills page
+  // while its Inbox item is still pending, and each of those posts the
+  // accrual there. Accruing it again here would double the payable and
+  // repoint the bill's journal_header_id, and approving a voided bill would
+  // revive it. Both are refused; the item stays open for a person to reject.
+  const existingBill =
+    row.candidate.candidateType === "bill"
+      ? await lockCandidateBill(db, orgId, row.sourceRecordExternalId)
+      : null;
+  if (existingBill?.journalHeaderId) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
+  if (existingBill?.status === "voided") throw new Error(BILL_VOIDED_MESSAGE);
 
   const linkedCandidateSources = await db
     .select({
@@ -1181,15 +1200,13 @@ export async function approveInboxItem(
     })),
   };
 
-  // A Bills-editor bill already has its row: approval posts the accrual and
-  // links it (below). Any other vendor bill whose entry accrues a payable gets
-  // its bill row now, through the bill core, so it appears in Bills and in A/P
-  // aging. A vendor bill booked straight against cash never touched payables,
-  // so it posts as an ordinary journal: there is nothing left to pay.
-  const existingBillId =
-    row.candidate.candidateType === "bill"
-      ? await findCandidateBillId(db, orgId, row.sourceRecordExternalId)
-      : null;
+  // A Bills-editor bill already has its row (locked and checked above):
+  // approval posts the accrual and links it (below). Any other vendor bill
+  // whose entry accrues a payable gets its bill row now, through the bill
+  // core, so it appears in Bills and in A/P aging. A vendor bill booked
+  // straight against cash never touched payables, so it posts as an ordinary
+  // journal: there is nothing left to pay.
+  const existingBillId = existingBill?.id ?? null;
   const originEconomicEventClass =
     candidateSources.find(({ id }) => id === originSourceRecordId)?.economicEventClass ?? null;
   const createsBill =

@@ -38,7 +38,14 @@ import {
   type CandidateCorrectionLineInput,
   type CorrectInboxCandidateInput,
 } from "@/lib/inbox/candidate-correction";
-import { approveInboxItem, type ApproveInboxResult } from "@/lib/inbox/service";
+import { postBillAccrualJournal } from "@/lib/bill-journal";
+import {
+  approveInboxItem,
+  BILL_ALREADY_ACCRUED_MESSAGE,
+  BILL_VOIDED_MESSAGE,
+  rejectInboxItem,
+  type ApproveInboxResult,
+} from "@/lib/inbox/service";
 import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
 import { createInvoiceCore } from "@/lib/posting/invoice-core";
 import { BILL_ACCRUAL_SHAPE_MESSAGE, BILL_SUB_CENT_MESSAGE } from "@/lib/posting/posting-lines";
@@ -652,36 +659,46 @@ describe("Inbox approval of vendor bills", () => {
   });
 });
 
+/** A Bills-editor save, as the createBill server function submits it. */
+function editorBillDraft(fixture: Fixture) {
+  return {
+    idempotencyKey: randomUUID(),
+    vendorId: fixture.vendor.id,
+    billNumber: "PSC-77",
+    billDate: BILL_DATE,
+    dueDate: "2026-08-19",
+    memo: "Toner",
+    status: "in_review" as const,
+    lineItems: [
+      {
+        description: "Toner cartridges",
+        amount: "45.50",
+        accountId: fixture.expense.id,
+        departmentId: fixture.department.id,
+        locationId: fixture.location.id,
+      },
+    ],
+  };
+}
+
+async function submitEditorBill(fixture: Fixture, draft: ReturnType<typeof editorBillDraft>) {
+  const submitted = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+    submitBillForReviewCore(tx, fixture.orgId, { type: "user", userId: fixture.userId }, draft),
+  );
+  if (submitted.deduplicated) throw new Error("A first submission cannot be a replay.");
+  return submitted;
+}
+
 describe("Bills editor submission through the bill core", () => {
   it("saves the bill for review, replays exactly, and approval posts onto the same bill", async () => {
     const fixture = await setupOrganization("bill-editor");
     // A fresh editor bill has no invoice document linked yet.
     await disableRule(fixture, "missing_invoice");
-    const idempotencyKey = randomUUID();
-    const draft = {
-      idempotencyKey,
-      vendorId: fixture.vendor.id,
-      billNumber: "PSC-77",
-      billDate: BILL_DATE,
-      dueDate: "2026-08-19",
-      memo: "Toner",
-      status: "in_review" as const,
-      lineItems: [
-        {
-          description: "Toner cartridges",
-          amount: "45.50",
-          accountId: fixture.expense.id,
-          departmentId: fixture.department.id,
-          locationId: fixture.location.id,
-        },
-      ],
-    };
+    const draft = editorBillDraft(fixture);
+    const { idempotencyKey } = draft;
     const actor = { type: "user" as const, userId: fixture.userId };
 
-    const submitted = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
-      submitBillForReviewCore(tx, fixture.orgId, actor, draft),
-    );
-    if (submitted.deduplicated) throw new Error("A first submission cannot be a replay.");
+    const submitted = await submitEditorBill(fixture, draft);
     expect(submitted).toMatchObject({
       status: "in_review",
       amount: "45.50",
@@ -719,6 +736,104 @@ describe("Bills editor submission through the bill core", () => {
     });
     const [journal] = await orgJournals(fixture.orgId);
     expect(journal).toMatchObject({ sourceDocumentType: "bill", sourceDocumentId: submitted.id });
+  });
+});
+
+describe("a bill the Bills page settled while its Inbox item was pending", () => {
+  it("refuses a second accrual and leaves the Inbox item for a person to reject", async () => {
+    const fixture = await setupOrganization("bill-race");
+    await disableRule(fixture, "missing_invoice");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+
+    // Approved on the Bills page first, exactly as transitionBillStatus does
+    // for in_review -> awaiting_payment: lock the row, post the accrual, link it.
+    const accrualId = await withOrgContext(fixture.orgId, fixture.userId, "owner", async (tx) => {
+      const [bill] = await tx
+        .select()
+        .from(bills)
+        .where(eq(bills.id, submitted.id))
+        .limit(1)
+        .for("update");
+      const journalId = await postBillAccrualJournal(tx, {
+        organizationId: fixture.orgId,
+        userId: fixture.userId,
+        bill,
+      });
+      await tx
+        .update(bills)
+        .set({ status: "awaiting_payment", journalHeaderId: journalId, updatedAt: new Date() })
+        .where(eq(bills.id, bill.id));
+      return journalId;
+    });
+    const [itemBefore] = await db
+      .select()
+      .from(inboxItems)
+      .where(eq(inboxItems.id, submitted.inboxItemId));
+
+    await expect(approve(fixture, submitted.inboxItemId)).rejects.toThrow(
+      BILL_ALREADY_ACCRUED_MESSAGE,
+    );
+
+    const journals = await orgJournals(fixture.orgId);
+    expect(journals).toHaveLength(1);
+    expect(journals[0]).toMatchObject({
+      id: accrualId,
+      idempotencyKey: `bill-accrual:${submitted.id}`,
+      sourceDocumentId: submitted.id,
+    });
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill).toMatchObject({ status: "awaiting_payment", journalHeaderId: accrualId });
+    const [itemAfter] = await db
+      .select()
+      .from(inboxItems)
+      .where(eq(inboxItems.id, submitted.inboxItemId));
+    expect(itemAfter).toMatchObject({
+      state: "ready_for_review",
+      lockVersion: itemBefore.lockVersion,
+    });
+    const [candidate] = await db
+      .select()
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, itemAfter.candidateId!));
+    expect(candidate).toMatchObject({ status: "current", postedJournalHeaderId: null });
+    expect(
+      await db
+        .select()
+        .from(reviewDecisions)
+        .where(eq(reviewDecisions.inboxItemId, submitted.inboxItemId)),
+    ).toHaveLength(0);
+
+    // The person resolves it by rejecting; the ledger and the bill stay put.
+    const rejected = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      rejectInboxItem(
+        { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
+        {
+          inboxItemId: submitted.inboxItemId,
+          expectedLockVersion: itemAfter.lockVersion,
+          reason: "Already approved in Bills.",
+        },
+      ),
+    );
+    expect(rejected.state).toBe("rejected");
+    expect(await orgJournals(fixture.orgId)).toHaveLength(1);
+    const [billAfter] = await orgBills(fixture.orgId);
+    expect(billAfter).toMatchObject({ status: "awaiting_payment", journalHeaderId: accrualId });
+  });
+
+  it("refuses to revive a bill that was voided in Bills", async () => {
+    const fixture = await setupOrganization("bill-voided");
+    await disableRule(fixture, "missing_invoice");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    // in_review -> voided on the Bills page: no accrual existed to void.
+    await db
+      .update(bills)
+      .set({ status: "voided", updatedAt: new Date() })
+      .where(eq(bills.id, submitted.id));
+
+    await expect(approve(fixture, submitted.inboxItemId)).rejects.toThrow(BILL_VOIDED_MESSAGE);
+    expect(await orgJournals(fixture.orgId)).toHaveLength(0);
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill).toMatchObject({ status: "voided", journalHeaderId: null });
   });
 });
 

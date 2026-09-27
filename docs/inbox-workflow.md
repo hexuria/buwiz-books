@@ -42,6 +42,11 @@ straight against cash posts as an ordinary journal with no bill. Nothing
 extracts a due date yet, so these bills are due on the bill date until their
 terms are set on the bill.
 
+A Bills-editor bill can also be approved, scheduled, paid or voided on the
+Bills page while its Inbox item is still pending. Those actions already post
+(or cancel) its accrual, so the Inbox refuses to approve that item again;
+reject it instead.
+
 ## Review policy
 
 - **Book rules** detect missing or invalid accounting data. A finding with
