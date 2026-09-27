@@ -25,6 +25,7 @@ import { EditLineItemsPanel } from "../components/bills/EditLineItemsPanel";
 import { listOrgMembers, createInvitation } from "./api/-org-settings";
 import { ICON_PATHS } from "../components/accounts/icons";
 import { ConfirmModal } from "../components/shared/ConfirmModal";
+import { JevApprovalPanel } from "../components/jev/JevApprovalPanel";
 import { Modal } from "../components/ui/Modal";
 import { CommentThread } from "../components/comments/CommentThread";
 import { BillUploadProgress } from "../components/bills/BillUploadProgress";
@@ -728,6 +729,12 @@ function BillDetailPage() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left — Document Preview / Structured Card */}
         <div className="flex-1 overflow-y-auto p-8">
+          {/* Approved by Jev: which lane, how sure, and Undo */}
+          {bill.journalHeaderId && (
+            <div className="max-w-3xl mx-auto mb-4 empty:hidden">
+              <JevApprovalPanel journalHeaderId={bill.journalHeaderId} />
+            </div>
+          )}
           {/* Overdue / Duplicate banner — above document viewer */}
           {isOverdue && (
             <div className="max-w-3xl mx-auto flex items-center gap-2 px-4 py-2.5 mb-4 rounded-lg bg-[#fff7ed] dark:bg-orange-900/20 border border-[#fed7aa] dark:border-orange-800/40">

@@ -12,6 +12,8 @@ import { inboxItems, sourceRecords, transactionCandidates } from "@/db/schema/in
 import { parties } from "@/db/schema/parties";
 import { loadDuplicateEngineConfig } from "../duplicate-engine";
 import { DUPLICATE_MATCHER_VERSION } from "../duplicate-matcher";
+import { JEV_AUTO_APPROVAL_HELD_ACTION } from "../jev-approval/feedback";
+import { JEV_PROPOSAL_RECORDED_ACTION } from "../jev-approval/proposal";
 import {
   CANDIDATE_CLASSIFIED_ACTION,
   entryShapeOf,
@@ -65,11 +67,6 @@ export interface InboxV2List {
   truncated: boolean;
   /** Papers still being read (received / processing): not listed, not in the badge. */
   beingRead: number;
-}
-
-/** STEP 11 HOOK. Autonomy lanes will hold back a sample of would-be approvals as spot checks. */
-function isSpotCheckSample(_itemId: string): boolean {
-  return false;
 }
 
 function openFindingsFrom(raw: unknown): InboxV2OpenFinding[] {
@@ -218,6 +215,30 @@ export async function listInboxV2Items(
           and l.candidate_id = ${transactionCandidates.id}
           and l.prediction_evidence->>'source' = ${REMEMBERED_EVIDENCE_SOURCE}
       )`,
+      // Jev approval lanes (step 11), from what was decided BEFORE posting: the
+      // proposal record or the approval job's hold, at the current revision. A
+      // person's edit moves the revision past both.
+      spotCheck: sql<boolean>`exists (
+        select 1
+        from workflow_events we
+        where we.organization_id = ${inboxItems.organizationId}
+          and we.entity_type = 'transaction_candidate'
+          and we.entity_id = ${transactionCandidates.id}
+          and we.action in (${JEV_PROPOSAL_RECORDED_ACTION}, ${JEV_AUTO_APPROVAL_HELD_ACTION})
+          and we.data->>'candidateRevision' = ${transactionCandidates.revision}::text
+          and we.data->'evaluation'->>'heldForSpotCheck' = 'true'
+      )`,
+      jevWouldApprove: sql<boolean>`exists (
+        select 1
+        from workflow_events we
+        where we.organization_id = ${inboxItems.organizationId}
+          and we.entity_type = 'transaction_candidate'
+          and we.entity_id = ${transactionCandidates.id}
+          and we.action = ${JEV_PROPOSAL_RECORDED_ACTION}
+          and we.data->>'candidateRevision' = ${transactionCandidates.revision}::text
+          and we.data->'evaluation'->>'wouldApprove' = 'true'
+          and we.data->'evaluation'->>'laneLevel' in ('suggest', 'auto')
+      )`,
     })
     .from(inboxItems)
     .innerJoin(
@@ -251,7 +272,8 @@ export async function listInboxV2Items(
       openFindings: openFindingsFrom(row.openFindings),
       entry: entryShapeOf(lines),
       modelUnsureSignals: modelUnsureSignalsFor({ lines, unresolvedParty: row.unresolvedParty }),
-      spotCheck: isSpotCheckSample(row.id),
+      spotCheck: row.spotCheck === true,
+      jevWouldApprove: row.jevWouldApprove === true,
       remembered: row.remembered === true,
     });
     return {

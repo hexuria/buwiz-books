@@ -16,6 +16,7 @@ import { user as authUsers } from "../../../db/schema/auth";
 import { integrationSources, ledgerSourceLinks, sourceRecords } from "../../../db/schema/inbox";
 import { eq, desc, and, inArray, gte, lte, sql, asc, ilike, or, type SQL } from "drizzle-orm";
 import { z } from "zod";
+import { JEV_AUDIT_ACTOR_ID } from "../../../lib/jev-actor";
 import { isDateInLockedPeriod } from "../../../lib/period-close";
 import { withSessionOrgContext } from "../../../lib/server-context";
 
@@ -26,6 +27,9 @@ import {
   accountBalancesSchema,
   getTransactionSchema,
 } from "./-_shared";
+
+/** Jev approved the entry through its autonomy lane: the list's "by Jev" tag (src/lib/jev-actor.ts). */
+const approvedByJev = sql<boolean>`coalesce(${journalHeaders.createdBy} = ${JEV_AUDIT_ACTOR_ID}, false)`;
 
 const similarTransactionsSchema = z.object({
   transactionId: z.string().uuid(),
@@ -151,6 +155,7 @@ export const listTransactions = createServerFn({ method: "GET" })
           voidedAt: journalHeaders.voidedAt,
           partyName: parties.name,
           createdByName: authUsers.name,
+          approvedByJev,
         })
         .from(journalHeaders)
         .leftJoin(parties, eq(journalHeaders.partyId, parties.id))
@@ -759,6 +764,7 @@ export const listTransactionsGrouped = createServerFn({ method: "GET" })
             createdAt: journalHeaders.createdAt,
             partyName: parties.name,
             createdByName: authUsers.name,
+            approvedByJev,
           })
           .from(journalHeaders)
           .leftJoin(parties, eq(journalHeaders.partyId, parties.id))
@@ -1002,6 +1008,7 @@ export const loadMoreTransactions = createServerFn({ method: "GET" })
           createdAt: journalHeaders.createdAt,
           partyName: parties.name,
           createdByName: authUsers.name,
+          approvedByJev,
         })
         .from(journalHeaders)
         .leftJoin(parties, eq(journalHeaders.partyId, parties.id))

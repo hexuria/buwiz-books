@@ -183,4 +183,23 @@ describe("Jev approval lanes wiring", () => {
     expect(correction).toContain('action: "correct",');
     expect(correction.match(/recordJevLaneFeedback\(/g)).toHaveLength(1);
   });
+
+  it("keeps every lane and settings write admin-only, and undo behind inbox:approve", () => {
+    const serverFns = read("src/routes/api/-jev-lanes.ts");
+    const writes = serverFns.match(
+      /withMutationPermissionOrgContext\(\s*"aiTask",\s*"configure",/g,
+    );
+    expect(writes).toHaveLength(4);
+    expect(serverFns.match(/assertAdmin\(ctx\);/g)).toHaveLength(4);
+    expect(serverFns).toMatch(/withMutationPermissionOrgContext\(\s*"inbox",\s*"approve",/);
+    expect(serverFns).toContain('withPermissionOrgContext("aiTask", "view"');
+    expect(serverFns).toContain('withPermissionOrgContext("journal", "view"');
+  });
+
+  it("reads the Inbox's spot checks from the recorded decision, not a recomputed draw", () => {
+    const list = read("src/lib/inbox/v2/list.ts");
+    expect(list).not.toContain("isSpotCheckSample");
+    expect(list).toContain("spotCheck: row.spotCheck === true,");
+    expect(list).toContain("we.data->'evaluation'->>'heldForSpotCheck' = 'true'");
+  });
 });

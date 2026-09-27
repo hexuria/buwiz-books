@@ -25,12 +25,15 @@ import {
 } from "@/db/schema/inbox";
 import { journalHeaders } from "@/db/schema/journals";
 import { approveInboxItem } from "@/lib/inbox/service";
+import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
+import { listInboxV2Items } from "@/lib/inbox/v2/list";
 import {
   JEV_AUTO_APPROVE_JOB_TYPE,
   enqueueJevAutoApproval,
 } from "@/lib/inbox/jev-approval/auto-approve";
 import { JEV_AUTO_APPROVAL_HELD_ACTION } from "@/lib/inbox/jev-approval/feedback";
 import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
+import { updateJevApprovalSettings } from "@/lib/inbox/jev-approval/settings";
 import { processJevAutoApproveJob } from "@/lib/jobs/handlers/jev-auto-approve";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
@@ -135,6 +138,66 @@ describeDb("Jev auto-approval while categorize is walled", () => {
       actorId: JEV_AUDIT_ACTOR_ID,
       data: { evaluation: { approve: false, heldForSpotCheck: false } },
     });
+  });
+});
+
+describeDb("the organization's Jev settings", () => {
+  it("are off by default, admin-changed with an audit row, and hold papers while off", async () => {
+    const fixture = await setupJevOrganization("jev-auto-settings");
+    const earlier = await submitJevExpense(fixture, { amount: "14.10", day: 2 });
+    // No settings row at all: the switch reads off, and holds the paper.
+    expect(earlier.proposal!.evaluation.holds.map((hold) => hold.reason)).toContain(
+      "autoapprove_off",
+    );
+
+    const saved = await asOrg(fixture, (tx) =>
+      updateJevApprovalSettings(tx, {
+        orgId: fixture.orgId,
+        actorId: fixture.userId,
+        autoApproveEnabled: true,
+        spotCheckRate: "0.2500",
+      }),
+    );
+    expect(saved).toMatchObject({ autoApproveEnabled: true, spotCheckRate: 0.25 });
+    const [audit] = await db
+      .select()
+      .from(activityLogs)
+      .where(
+        and(
+          eq(activityLogs.organizationId, fixture.orgId),
+          eq(activityLogs.action, "jev_approval_settings_updated"),
+        ),
+      );
+    expect(audit).toMatchObject({
+      actorId: fixture.userId,
+      changes: {
+        autoApproveEnabled: { old: false, new: true },
+        spotCheckRate: { old: 0.1, new: 0.25 },
+      },
+    });
+    await expect(
+      asOrg(fixture, (tx) =>
+        updateJevApprovalSettings(tx, {
+          orgId: fixture.orgId,
+          actorId: fixture.userId,
+          spotCheckRate: "1.5",
+        }),
+      ),
+    ).rejects.toThrow(/between 0 and 1/);
+
+    const later = await submitJevExpense(fixture, { amount: "14.20", day: 3 });
+    expect(later.proposal!.evaluation.holds.map((hold) => hold.reason)).not.toContain(
+      "autoapprove_off",
+    );
+    await asOrg(fixture, (tx) =>
+      updateJevApprovalSettings(tx, {
+        orgId: fixture.orgId,
+        actorId: fixture.userId,
+        autoApproveEnabled: false,
+      }),
+    );
+    const off = await submitJevExpense(fixture, { amount: "14.30", day: 4 });
+    expect(off.proposal!.evaluation.holds.map((hold) => hold.reason)).toContain("autoapprove_off");
   });
 });
 
@@ -306,5 +369,87 @@ describeDb("the system approval path", () => {
     await expect(approveTwoWith(true, grantForTwo)).resolves.toMatchObject({
       approvalOutcome: "approved",
     });
+  });
+});
+
+describeDb("the Inbox reads Jev's decisions", () => {
+  it("says when a suggest lane's Jev would approve a paper", async () => {
+    const fixture = await setupJevOrganization("jev-list-suggest");
+    const earlier = await submitJevExpense(fixture, { amount: "10.10", day: 2 });
+    const { aiAutonomyLanes } = await import("@/db/schema/ai");
+    await db
+      .update(aiAutonomyLanes)
+      .set({ level: "suggest" })
+      .where(eq(aiAutonomyLanes.id, earlier.proposal!.laneId));
+    const suggested = await submitJevExpense(fixture, { amount: "10.20", day: 3 });
+
+    const list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    const byId = new Map(list.items.map((item) => [item.id, item]));
+    expect(byId.get(suggested.item.id)).toMatchObject({
+      reason: "ready",
+      reasonDetail: "jev_would_approve",
+      reasonText: "Jev would approve this. Review the entry and approve it.",
+    });
+    // Recorded while the lane was still watching: no suggestion.
+    expect(byId.get(earlier.item.id)).toMatchObject({ reason: "ready", reasonDetail: "ready" });
+  });
+
+  it("keeps a paper held back as a spot check in the Inbox, until a person changes it", async () => {
+    const fixture = await setupJevOrganization("jev-list-spot");
+    const paper = await submitJevExpense(fixture, { amount: "12.30", day: 4 });
+    // What the approval job records when the sample holds a paper back.
+    await db.insert(workflowEvents).values({
+      organizationId: fixture.orgId,
+      inboxItemId: paper.item.id,
+      entityType: "transaction_candidate",
+      entityId: paper.candidate.id,
+      action: JEV_AUTO_APPROVAL_HELD_ACTION,
+      actorType: "system",
+      actorId: JEV_AUDIT_ACTOR_ID,
+      data: {
+        candidateRevision: paper.candidate.revision,
+        evaluation: { heldForSpotCheck: true, holds: [{ reason: "spot_check", scope: "sample" }] },
+      },
+    });
+    let list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((item) => item.id === paper.item.id)).toMatchObject({
+      reason: "spot_check",
+      reasonText: "Jev would approve this — spot check.",
+    });
+
+    // A person's edit moves the paper past the held revision.
+    await asOrg(
+      fixture,
+      (tx) =>
+        correctInboxCandidate(
+          { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+          {
+            inboxItemId: paper.item.id,
+            expectedRevision: paper.candidate.revision,
+            expectedLockVersion: paper.item.lockVersion,
+            transactionDate: "2026-08-04",
+            transactionType: "pay_out",
+            partyId: fixture.vendor.id,
+            originalCurrency: "USD",
+            lines: [
+              {
+                accountId: fixture.hardware.id,
+                debit: "12.30",
+                departmentId: fixture.department.id,
+                locationId: fixture.location.id,
+              },
+              {
+                accountId: fixture.bank.id,
+                credit: "12.30",
+                departmentId: fixture.department.id,
+                locationId: fixture.location.id,
+              },
+            ],
+          },
+        ),
+      fixture.reviewerId,
+    );
+    list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((item) => item.id === paper.item.id)?.reason).toBe("ready");
   });
 });

@@ -266,6 +266,9 @@ describe("deriveInboxV2Reason", () => {
 
   it("marks a held-back sample as a spot check, but never over a real problem or doubt", () => {
     expect(reasonFor({ spotCheck: true })).toMatchObject({ reason: "spot_check" });
+    expect(describeInboxV2Reason(reasonFor({ spotCheck: true }))).toBe(
+      "Jev would approve this — spot check.",
+    );
     expect(
       reasonFor({ openFindings: [blocking("missing_vendor")], spotCheck: true }),
     ).toMatchObject({ reason: "needs_fix" });
@@ -282,6 +285,18 @@ describe("deriveInboxV2Reason", () => {
     );
     // No signal at all, however it was entered: not Jev unsure.
     expect(reasonFor({ modelUnsureSignals: [] }).reason).toBe("ready");
+  });
+
+  it("says when Jev's lane would approve a ready paper, and only a ready one", () => {
+    const suggested = reasonFor({ jevWouldApprove: true });
+    expect(suggested).toMatchObject({ reason: "ready", detail: "jev_would_approve" });
+    expect(describeInboxV2Reason(suggested)).toBe(
+      "Jev would approve this. Review the entry and approve it.",
+    );
+    expect(
+      reasonFor({ openFindings: [blocking("missing_vendor")], jevWouldApprove: true }).reason,
+    ).toBe("needs_fix");
+    expect(reasonFor({ spotCheck: true, jevWouldApprove: true }).reason).toBe("spot_check");
   });
 });
 

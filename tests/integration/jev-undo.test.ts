@@ -22,6 +22,7 @@ import {
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { currentOrgDate } from "@/lib/org-calendar";
 import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
+import { loadJevEntryApproval } from "@/lib/inbox/jev-approval/entry";
 import { undoJevApproval } from "@/lib/inbox/jev-approval/undo";
 import { approveInboxItem } from "@/lib/inbox/service";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
@@ -278,5 +279,57 @@ describeDb("undo a Jev approval", () => {
     const [lane] = await db.select().from(aiAutonomyLanes).where(eq(aiAutonomyLanes.id, laneId));
     expect(lane.level).toBe("suggest");
     expect(lane.demotedAt).toBeInstanceOf(Date);
+  });
+
+  it("describes the approval on the entry, and what the undo left", async () => {
+    const fixture = await setupJevOrganization("jev-undo-entry");
+    const paper = await submitJevBill(fixture, { amount: "20.00", day: 9 });
+    const approved = await jevApprove(fixture, paper);
+    const before = await asOrg(fixture, (tx) =>
+      loadJevEntryApproval(tx, fixture.orgId, approved.journalHeaderId),
+    );
+    expect(before).toMatchObject({
+      inboxItemId: paper.item.id,
+      laneId: paper.proposal!.laneId,
+      laneLabel: "Paper Street Supply · Vendor bill",
+      confidence: 0.97,
+      billId: approved.billId,
+      undone: null,
+      canUndo: true,
+      cannotUndoReason: null,
+    });
+
+    await undo(fixture, approved.journalHeaderId, "Duplicate of last week's");
+    const after = await asOrg(fixture, (tx) =>
+      loadJevEntryApproval(tx, fixture.orgId, approved.journalHeaderId),
+    );
+    expect(after).toMatchObject({
+      canUndo: false,
+      cannotUndoReason: "Jev's approval was already undone.",
+      undone: { undoneByName: "Jev Lane Reviewer", reason: "Duplicate of last week's" },
+    });
+    expect(after!.undone!.reversalHeaderId).toBeTruthy();
+
+    // A person's own approval is not Jev's: nothing to show.
+    const typed = await submitJevExpense(fixture, { amount: "5.00", day: 10, typed: true });
+    const byPerson = await asOrg(
+      fixture,
+      (tx) =>
+        approveInboxItem(
+          { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+          {
+            inboxItemId: typed.item.id,
+            expectedRevision: typed.candidate.revision,
+            expectedLockVersion: typed.item.lockVersion,
+          },
+        ),
+      fixture.reviewerId,
+    );
+    if (byPerson.approvalOutcome !== "approved") throw new Error("expected an approval");
+    expect(
+      await asOrg(fixture, (tx) =>
+        loadJevEntryApproval(tx, fixture.orgId, byPerson.journalHeaderId),
+      ),
+    ).toBeNull();
   });
 });
