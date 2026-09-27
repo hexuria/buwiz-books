@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "../../src/components/ui/Toast";
 import { ReviewRulesSettings } from "../../src/components/settings/ReviewRulesSettings";
 import type { ReviewRule } from "../../src/components/settings/ReviewRuleConfigForm";
-import type { listReviewFindings } from "../../src/routes/api/-review-agents";
+import type { listReviewFindings, listReviewRuns } from "../../src/routes/api/-review-agents";
 
 /**
  * The Settings home for per-organization review rule configuration.
@@ -30,22 +30,30 @@ const api = vi.hoisted(() => ({
   updateReviewAgent: vi.fn(),
   runReviewAgents: vi.fn(),
   listReviewFindings: vi.fn(),
+  listReviewRuns: vi.fn(),
   resolveReviewFinding: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-review-agents", () => api);
 
-const permission = vi.hoisted(() => ({ configure: true, run: true, resolve: true }));
+const permission = vi.hoisted(() => ({
+  configure: true,
+  run: true,
+  resolve: true,
+  // While the role loads, the real hook reports canAccess: false, isLoading: true.
+  loading: false,
+}));
 vi.mock("../../src/lib/use-permission", () => ({
   usePermission: (resource: string, action: string) => ({
-    canAccess:
-      resource === "agentRule" && action === "configure"
+    canAccess: permission.loading
+      ? false
+      : resource === "agentRule" && action === "configure"
         ? permission.configure
         : resource === "agentRule" && action === "run"
           ? permission.run
           : resource === "review" && action === "resolve"
             ? permission.resolve
             : true,
-    isLoading: false,
+    isLoading: permission.loading,
   }),
 }));
 
@@ -210,19 +218,40 @@ const INBOX_BOUND_FINDING: Finding = {
   resolvableHere: false,
 };
 
-function renderSection(
-  props: { focusRuleKey?: string; onUnsavedChange?: (unsaved: boolean) => void } = {},
-) {
+type Run = Awaited<ReturnType<typeof listReviewRuns>>[number];
+
+function run(overrides: Partial<Run> = {}): Run {
+  return {
+    id: "00000000-0000-4000-8000-0000000000c1",
+    status: "completed",
+    trigger: "manual",
+    windowStart: "2026-09-01",
+    windowEnd: "2026-09-30",
+    asOfDate: "2026-09-30",
+    counts: { scanned: 12, findings: 0 },
+    lastError: null,
+    startedAt: new Date("2026-09-30T08:00:00.000Z"),
+    completedAt: new Date("2026-09-30T08:00:02.000Z"),
+    ...overrides,
+  };
+}
+
+type SectionProps = { focusRuleKey?: string; onUnsavedChange?: (unsaved: boolean) => void };
+
+function renderSection(props: SectionProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const tree = (next: SectionProps) => (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ReviewRulesSettings {...props} />
+        <ReviewRulesSettings {...next} />
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree(props));
+  // Same page, new search: what Settings does when a second Inbox link arrives while it is open.
+  return { ...view, rerenderWith: (next: SectionProps) => view.rerender(tree(next)) };
 }
 
 function rowOf(name: string) {
@@ -239,7 +268,9 @@ beforeEach(() => {
   permission.configure = true;
   permission.run = true;
   permission.resolve = true;
+  permission.loading = false;
   api.listReviewAgents.mockReset().mockResolvedValue(RULES);
+  api.listReviewRuns.mockReset().mockResolvedValue([]);
   api.listReviewFindings.mockReset().mockResolvedValue({ findings: [], nextCursor: null });
   api.runReviewAgents.mockReset();
   api.resolveReviewFinding.mockReset().mockResolvedValue({ alreadyResolved: false });
@@ -540,12 +571,34 @@ describe("ReviewRulesSettings — opened from an Inbox finding", () => {
     // Only the linked rule.
     expect(screen.queryByRole("switch", { name: "Enable Unusual Spend" })).toBeNull();
   });
+
+  it("opens a rule linked after Settings is already showing", async () => {
+    const view = renderSection({ focusRuleKey: "missing_vendor" });
+    expect(await screen.findByRole("switch", { name: "Enable Missing Vendor" })).toBeVisible();
+
+    view.rerenderWith({ focusRuleKey: "unusual_spend" });
+
+    expect(await screen.findByRole("switch", { name: "Enable Unusual Spend" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close Unusual Spend" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Rows open independently, so the earlier one stays as it was.
+    expect(screen.getByRole("switch", { name: "Enable Missing Vendor" })).toBeVisible();
+    // The ledger findings follow the link to that check.
+    await waitFor(() =>
+      expect(api.listReviewFindings).toHaveBeenCalledWith({
+        data: { ruleKey: "unusual_spend", state: "open", limit: 50 },
+      }),
+    );
+  });
 });
 
 describe("ReviewRulesSettings — Scan books", () => {
-  it("runs the existing ledger scan and shows what it flagged", async () => {
+  it("runs the existing ledger scan and reports what ran, not a fetch window or a total", async () => {
     api.runReviewAgents.mockResolvedValue({
       asOfDate: "2026-09-30",
+      // The fetch bound across every config, including Inbox checks the scan does not run.
       windowStart: "2026-07-01",
       rules: [
         { ruleKey: "unusual_spend", findingCount: 0 },
@@ -564,12 +617,93 @@ describe("ReviewRulesSettings — Scan books", () => {
     expect(call).toEqual({ data: { asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) } });
 
     const summary = await within(scan).findByRole("status");
-    expect(summary).toHaveTextContent("Scanned 2026-07-01 to 2026-09-30 · 2 checks · 2 findings");
-    expect(within(summary).getByRole("button", { name: "Material Expense · 2" })).toBeVisible();
-    expect(within(summary).getByRole("button", { name: "Unusual Spend · 0" })).toBeVisible();
+    expect(summary).toHaveTextContent("Scan as of 2026-09-30 finished · 2 checks ran.");
+    expect(summary).not.toHaveTextContent("2026-07-01");
+    expect(summary).not.toHaveTextContent(/2 findings/);
 
-    // Counts and last-run times are re-read after a scan.
+    // Open counts and each check's own run row are re-read after a scan.
     await waitFor(() => expect(api.listReviewAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        api.listReviewRuns.mock.calls.filter(
+          ([input]) => (input as { data: { ruleKey: string } }).data.ruleKey === "material_expense",
+        ),
+      ).toHaveLength(2),
+    );
+  });
+
+  it("shows each check's own window and what it observed, apart from its Open count", async () => {
+    api.listReviewRuns.mockImplementation(async ({ data }: { data: { ruleKey: string } }) =>
+      data.ruleKey === "unusual_spend"
+        ? [run({ windowStart: "2026-04-01", counts: { scanned: 40, findings: 2 } })]
+        : [
+            run({
+              status: "running",
+              windowStart: "2026-09-01",
+              completedAt: null,
+              // Left running by a request that died two hours ago.
+              startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+            }),
+          ],
+    );
+    renderSection();
+
+    const runs = await screen.findByRole("list", { name: "Ledger check runs" });
+    expect(api.listReviewRuns).toHaveBeenCalledWith({
+      data: { ruleKey: "unusual_spend", limit: 1 },
+    });
+    const spend = within(runs)
+      .getByRole("button", { name: "Unusual Spend, 0 open" })
+      .closest("li")!;
+    expect(await within(spend).findByText(/2026-04-01 → 2026-09-30/)).toBeVisible();
+    expect(spend).toHaveTextContent("2 observed this run");
+    expect(spend).toHaveTextContent(/Last run/);
+
+    const expense = within(runs)
+      .getByRole("button", { name: "Material Expense, 1 open" })
+      .closest("li")!;
+    expect(await within(expense).findByText(/Did not finish/)).toBeVisible();
+    expect(expense).not.toHaveTextContent("observed this run");
+  });
+
+  it("shows a run still in progress, a failed run, and its error", async () => {
+    api.listReviewRuns.mockImplementation(async ({ data }: { data: { ruleKey: string } }) =>
+      data.ruleKey === "unusual_spend"
+        ? [run({ status: "running", completedAt: null, startedAt: new Date() })]
+        : [run({ status: "failed", completedAt: null, lastError: "Ledger read timed out." })],
+    );
+    renderSection();
+
+    const runs = await screen.findByRole("list", { name: "Ledger check runs" });
+    expect(await within(runs).findByText(/Running · started/)).toBeVisible();
+    expect(within(runs).queryByText(/Did not finish/)).toBeNull();
+    expect(await within(runs).findByText(/Failed ·/)).toBeVisible();
+    expect(within(runs).getByText("Ledger read timed out.")).toBeVisible();
+  });
+
+  it("waits for the role before saying scanning or resolving is not allowed", async () => {
+    permission.loading = true;
+    api.listReviewFindings.mockResolvedValue({ findings: [LEDGER_FINDING], nextCursor: null });
+    renderSection();
+
+    const scan = await screen.findByRole("region", { name: "Scan books" });
+    const list = await within(scan).findByRole("list", { name: "Material Expense findings" });
+    expect(within(scan).queryByRole("button", { name: "Scan books" })).toBeNull();
+    expect(scan).not.toHaveTextContent(/requires the “run agent rules” permission/);
+    expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
+    expect(list).not.toHaveTextContent(/needs the “resolve review findings” permission/);
+  });
+
+  it("says resolving needs the review permission when the role lacks it", async () => {
+    permission.resolve = false;
+    api.listReviewFindings.mockResolvedValue({ findings: [LEDGER_FINDING], nextCursor: null });
+    renderSection();
+
+    const list = await screen.findByRole("list", { name: "Material Expense findings" });
+    expect(list).toHaveTextContent(
+      "Resolving this finding needs the “resolve review findings” permission.",
+    );
+    expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
   });
 
   it("is not offered without the run permission", async () => {
@@ -633,7 +767,7 @@ describe("ReviewRulesSettings — Scan books", () => {
     renderSection();
 
     const scan = await screen.findByRole("region", { name: "Scan books" });
-    await user.click(within(scan).getByRole("button", { name: "Unusual Spend" }));
+    await user.click(within(scan).getByRole("button", { name: "Unusual Spend, 0 open" }));
     await waitFor(() =>
       expect(api.listReviewFindings).toHaveBeenCalledWith({
         data: { ruleKey: "unusual_spend", state: "open", limit: 50 },

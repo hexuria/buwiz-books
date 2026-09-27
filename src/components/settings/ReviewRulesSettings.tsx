@@ -199,9 +199,7 @@ export function ReviewRulesSettings({
                 onSaved={onSaved}
                 onError={onError}
               />
-              {group === "review" && (
-                <LedgerScan rules={groupRules} initialRuleKey={focusRuleKey} />
-              )}
+              {group === "review" && <LedgerScan rules={groupRules} focusRuleKey={focusRuleKey} />}
             </Fragment>
           ))}
         </div>
@@ -276,10 +274,18 @@ function RuleRow({
   const [mounted, setMounted] = useState(focused && rule.configurable);
   const panelId = useId();
   const rowRef = useRef<HTMLLIElement>(null);
+  // Settings stays mounted when only the search changes (a second Inbox link, back/forward), so a
+  // rule linked after mount is opened here too, not just by the initial state above. Other open
+  // rows stay open: rows open independently.
   useEffect(() => {
+    if (!focused) return;
+    if (rule.configurable) {
+      setMounted(true);
+      setOpen(true);
+    }
     // Optional call: jsdom has no scrollIntoView.
-    if (focused) rowRef.current?.scrollIntoView?.({ block: "center" });
-  }, [focused]);
+    rowRef.current?.scrollIntoView?.({ block: "center" });
+  }, [focused, rule.configurable]);
   const editable = canConfigure && rule.configurable;
   const toggleLabel = open ? "Close" : editable ? "Edit" : "View";
   // The unsaved draft, if any, so a collapsed row reads what will be saved, not what is stored.

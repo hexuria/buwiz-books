@@ -3,14 +3,19 @@
  *
  * The ledger checks never run on their own: they read the posted ledger only when someone asks.
  * This panel is that ask. It calls the existing `runReviewAgents` server function (permission
- * `agentRule:run`), reports what the scan flagged, and lists each check's findings through
- * `listReviewFindings` with the existing `resolveReviewFinding` action (permission
- * `review:resolve`). It replaces the run button and findings panel of the retired Review Agents
- * page; nothing here adds server behavior.
+ * `agentRule:run`) and lists each check's findings through `listReviewFindings` with the existing
+ * `resolveReviewFinding` action (permission `review:resolve`). It replaces the run button, run
+ * history and findings panel of the retired Review Agents page; nothing here adds server behavior.
+ *
+ * What a scan did is read per check from its own `review_rule_runs` row (`listReviewRuns`), not
+ * from the run's return value: each check has its own lookback window, and a check's run count is
+ * every condition it observed — including ones a reviewer already resolved, which a re-run does
+ * not reopen. So the window shown is the check's own, the count is labelled "observed this run",
+ * and the Open count is shown separately.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import DayPicker from "@/components/ui/DayPicker";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ArrowRightIcon, CheckCircleIcon, LockIcon, PlayIcon } from "@/components/ui/icons";
@@ -20,6 +25,7 @@ import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
 import {
   listReviewFindings,
+  listReviewRuns,
   resolveReviewFinding,
   runReviewAgents,
 } from "../../routes/api/-review-agents";
@@ -27,7 +33,25 @@ import type { ReviewRule } from "./ReviewRuleConfigForm";
 
 type ScanResult = Awaited<ReturnType<typeof runReviewAgents>>;
 type Finding = Awaited<ReturnType<typeof listReviewFindings>>["findings"][number];
+type Run = Awaited<ReturnType<typeof listReviewRuns>>[number];
 type FindingsState = "open" | "all";
+
+/**
+ * `usePermission` reports `canAccess: false` while the role is still loading, which is not a
+ * refusal. Nothing that says "you cannot" is shown until the answer is known.
+ */
+type Access = "loading" | "granted" | "denied";
+
+function toAccess({ canAccess, isLoading }: { canAccess: boolean; isLoading: boolean }): Access {
+  if (isLoading) return "loading";
+  return canAccess ? "granted" : "denied";
+}
+
+/**
+ * A scan runs inside a single request. A run row still marked `running` after this long belongs
+ * to a request that died after the row was written, and will never complete.
+ */
+const STALE_RUN_MS = 15 * 60 * 1000;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -71,28 +95,32 @@ function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+function formatDateTime(value: Date | string) {
+  return new Date(value).toLocaleString();
+}
+
 const CARD =
   "bg-white dark:bg-[#1e293b] rounded-2xl border border-[#e2e8f0] dark:border-white/10 p-6";
-const PILL_BASE =
-  "min-h-11 lg:min-h-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors border";
-const PILL_ON =
-  "border-[#0d9488] bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0d9488] dark:text-teal-400";
-const PILL_OFF =
-  "border-[#e2e8f0] dark:border-white/10 text-[#64748b] dark:text-white/50 hover:text-[#1e293b] dark:hover:text-white";
+const CHECK_BASE =
+  "flex w-full min-h-11 lg:min-h-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors";
+const CHECK_ON =
+  "border-[#0d9488] bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0f766e] dark:text-teal-300";
+const CHECK_OFF =
+  "border-[#e2e8f0] dark:border-white/10 text-[#1e293b] dark:text-white hover:bg-[#f8fafc] dark:hover:bg-white/5";
 
 export function LedgerScan({
   rules,
-  initialRuleKey,
+  focusRuleKey,
 }: {
   /** The ledger (review-group) rules, as loaded by the section. */
   rules: ReviewRule[];
-  /** Preselect this check's findings, e.g. when Settings was opened from one of its findings. */
-  initialRuleKey?: string;
+  /** Select this check's findings, e.g. when Settings was opened from one of its findings. */
+  focusRuleKey?: string;
 }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { canAccess: canRun } = usePermission("agentRule", "run");
-  const { canAccess: canResolve } = usePermission("review", "resolve");
+  const runAccess = toAccess(usePermission("agentRule", "run"));
+  const resolveAccess = toAccess(usePermission("review", "resolve"));
   const headingId = useId();
 
   const [asOfDate, setAsOfDate] = useState(todayIso);
@@ -100,34 +128,33 @@ export function LedgerScan({
   // Chosen once, so resolving the last open finding does not jump the list to another check.
   const [selectedKey, setSelectedKey] = useState<string | undefined>(
     () =>
-      rules.find((rule) => rule.key === initialRuleKey)?.key ??
+      rules.find((rule) => rule.key === focusRuleKey)?.key ??
       rules.find((rule) => rule.openFindingCount > 0)?.key ??
       rules[0]?.key,
   );
+  // A later link to one of these checks, while Settings is already showing, selects it too.
+  const focusIsLedgerCheck = rules.some((rule) => rule.key === focusRuleKey);
+  useEffect(() => {
+    if (focusRuleKey && focusIsLedgerCheck) setSelectedKey(focusRuleKey);
+  }, [focusRuleKey, focusIsLedgerCheck]);
   const [findingsState, setFindingsState] = useState<FindingsState>("open");
 
   const selected = rules.find((rule) => rule.key === selectedKey) ?? rules[0];
   const enabledCount = rules.filter((rule) => rule.enabled).length;
-  const nameByKey = new Map(rules.map((rule) => [rule.key, rule.name]));
 
   const scanMutation = useMutation({
     mutationFn: () => callServerFn(runReviewAgents, { data: { asOfDate } }),
     onSuccess: async (result) => {
       setLastScan(result);
-      const flagged = result.rules.reduce((sum, rule) => sum + rule.findingCount, 0);
-      showToast(
-        flagged === 0
-          ? "Scan finished — nothing flagged."
-          : `Scan finished — ${plural(flagged, "finding")}.`,
-        { icon: "success" },
-      );
+      showToast(`Scan finished — ${plural(result.rules.length, "check")} ran.`, {
+        icon: "success",
+      });
+      // Re-reads each check's run row, open count and findings.
       await queryClient.invalidateQueries({ queryKey: keys.reviewAgents.all() });
       await queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
     },
     onError: (error) => showToast(errorMessage(error, "The scan failed."), { icon: "error" }),
   });
-
-  const flagged = lastScan?.rules.reduce((sum, rule) => sum + rule.findingCount, 0) ?? 0;
 
   return (
     <section aria-labelledby={headingId} className={CARD}>
@@ -141,7 +168,12 @@ export function LedgerScan({
             below. Set it to a period end to reproduce a close.
           </p>
         </div>
-        {canRun ? (
+        {runAccess === "loading" ? (
+          <div
+            aria-hidden="true"
+            className="h-10 w-48 shrink-0 animate-pulse rounded-lg bg-[#f1f5f9] dark:bg-white/5"
+          />
+        ) : runAccess === "granted" ? (
           <div className="flex shrink-0 flex-wrap items-end gap-2">
             <div className="text-xs font-medium text-[#64748b] dark:text-white/50">
               As of
@@ -171,48 +203,58 @@ export function LedgerScan({
       {lastScan && (
         <div
           role="status"
-          className="mt-4 rounded-xl border border-[#99f6e4] dark:border-teal-900/50 bg-[#f0fdfa] dark:bg-teal-900/10 px-4 py-3"
+          className="mt-4 flex items-start justify-between gap-3 rounded-xl border border-[#99f6e4] dark:border-teal-900/50 bg-[#f0fdfa] dark:bg-teal-900/10 px-4 py-3"
         >
-          <div className="flex items-start justify-between gap-3">
-            <p className="text-sm text-[#115e59] dark:text-teal-200">
-              Scanned {lastScan.windowStart} to {lastScan.asOfDate} ·{" "}
-              {plural(lastScan.rules.length, "check")} · {plural(flagged, "finding")}
-            </p>
-            <button
-              type="button"
-              onClick={() => setLastScan(null)}
-              className="shrink-0 text-xs font-medium text-[#0d9488] dark:text-teal-400 hover:underline"
-            >
-              Dismiss
-            </button>
-          </div>
-          {lastScan.rules.length > 0 && (
-            <ul className="mt-2 flex flex-wrap gap-1.5">
-              {lastScan.rules.map((result) => (
-                <li key={result.ruleKey}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedKey(result.ruleKey);
-                      setFindingsState("open");
-                    }}
-                    className="rounded-full border border-[#99f6e4] dark:border-teal-900/50 bg-white dark:bg-[#0f172a] px-2.5 py-1 text-[11px] font-medium text-[#115e59] dark:text-teal-200 hover:border-[#0d9488]"
-                  >
-                    {nameByKey.get(result.ruleKey) ?? titleCase(result.ruleKey)} ·{" "}
-                    {result.findingCount}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <p className="text-sm text-[#115e59] dark:text-teal-200">
+            Scan as of {lastScan.asOfDate} finished · {plural(lastScan.rules.length, "check")} ran.
+            Each check's own window and what it observed are listed below.
+          </p>
+          <button
+            type="button"
+            onClick={() => setLastScan(null)}
+            className="shrink-0 text-xs font-medium text-[#0d9488] dark:text-teal-400 hover:underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
+
+      <div className="mt-6 border-t border-[#e2e8f0] dark:border-white/10 pt-5">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-[#64748b] dark:text-white/50">
+          Last run of each check
+        </h4>
+        <ul aria-label="Ledger check runs" className="mt-3 space-y-2">
+          {rules.map((rule) => (
+            <li key={rule.key}>
+              <button
+                type="button"
+                aria-pressed={rule.key === selected?.key}
+                aria-label={`${rule.name}, ${rule.openFindingCount} open`}
+                onClick={() => setSelectedKey(rule.key)}
+                className={`${CHECK_BASE} ${rule.key === selected?.key ? CHECK_ON : CHECK_OFF}`}
+              >
+                <span className="min-w-0 truncate">{rule.name}</span>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    rule.openFindingCount > 0
+                      ? "bg-[#fef3c7] dark:bg-amber-900/30 text-[#92400e] dark:text-amber-200"
+                      : "bg-[#f1f5f9] dark:bg-white/5 text-[#64748b] dark:text-white/50"
+                  }`}
+                >
+                  {rule.openFindingCount} open
+                </span>
+              </button>
+              <CheckLastRun rule={rule} />
+            </li>
+          ))}
+        </ul>
+      </div>
 
       {selected && (
         <div className="mt-6 border-t border-[#e2e8f0] dark:border-white/10 pt-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-[#64748b] dark:text-white/50">
-              Ledger findings
+              Ledger findings · {selected.name}
             </h4>
             <div
               role="group"
@@ -237,35 +279,11 @@ export function LedgerScan({
             </div>
           </div>
 
-          <div role="group" aria-label="Ledger check" className="mt-3 flex flex-wrap gap-1.5">
-            {rules.map((rule) => (
-              <button
-                key={rule.key}
-                type="button"
-                aria-pressed={rule.key === selected.key}
-                aria-label={
-                  rule.openFindingCount > 0
-                    ? `${rule.name}, ${rule.openFindingCount} open`
-                    : rule.name
-                }
-                onClick={() => setSelectedKey(rule.key)}
-                className={`${PILL_BASE} ${rule.key === selected.key ? PILL_ON : PILL_OFF}`}
-              >
-                {rule.name}
-                {rule.openFindingCount > 0 && (
-                  <span className="ml-1.5 rounded-full bg-[#fef3c7] dark:bg-amber-900/30 px-1.5 text-[10px] font-semibold text-[#92400e] dark:text-amber-200">
-                    {rule.openFindingCount}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-
           <RuleFindings
             key={`${selected.key}:${findingsState}`}
             rule={selected}
             state={findingsState}
-            canResolve={canResolve}
+            resolveAccess={resolveAccess}
           />
         </div>
       )}
@@ -273,14 +291,80 @@ export function LedgerScan({
   );
 }
 
+/**
+ * One line per check from its latest `review_rule_runs` row: when it ran, whether it finished, the
+ * window it actually read, and how many conditions it observed. The Open count is on the check's
+ * button, not here — the two measure different things.
+ */
+function CheckLastRun({ rule }: { rule: ReviewRule }) {
+  const runsQuery = useQuery({
+    queryKey: keys.reviewAgents.runs(rule.key),
+    queryFn: () => callServerFn(listReviewRuns, { data: { ruleKey: rule.key, limit: 1 } }),
+  });
+  const run = runsQuery.data?.[0];
+  const line = "mt-1 px-3 text-[11px] leading-5 text-[#64748b] dark:text-white/50";
+
+  if (runsQuery.isLoading) {
+    return (
+      <div
+        aria-hidden="true"
+        className="mx-3 mt-1.5 h-3 w-2/3 animate-pulse rounded bg-[#f1f5f9] dark:bg-white/5"
+      />
+    );
+  }
+  if (runsQuery.isError) {
+    return <p className={line}>The last run could not be loaded.</p>;
+  }
+  if (!run) {
+    return (
+      <p className={line}>{rule.enabled ? "Not scanned yet." : "Off, so Scan books skips it."}</p>
+    );
+  }
+  return (
+    <p className={line}>
+      <RunStatus run={run} />
+      {" · "}
+      <span className="tabular-nums">
+        {run.windowStart} → {run.windowEnd}
+      </span>
+      {run.status === "completed" && <> · {run.counts.findings} observed this run</>}
+      {!rule.enabled && <> · off now, so the next scan skips it</>}
+      {run.lastError && (
+        <span className="block text-[#ef4444] dark:text-red-400">{run.lastError}</span>
+      )}
+    </p>
+  );
+}
+
+function RunStatus({ run }: { run: Run }) {
+  if (run.status === "completed") {
+    return <>Last run {formatDateTime(run.completedAt ?? run.startedAt)}</>;
+  }
+  if (run.status === "running") {
+    const stale = Date.now() - new Date(run.startedAt).getTime() > STALE_RUN_MS;
+    return stale ? (
+      <span className="font-medium text-[#b45309] dark:text-amber-300">
+        Did not finish · started {formatDateTime(run.startedAt)}
+      </span>
+    ) : (
+      <>Running · started {formatDateTime(run.startedAt)}</>
+    );
+  }
+  return (
+    <span className="font-medium text-[#b45309] dark:text-amber-300">
+      {titleCase(run.status)} · {formatDateTime(run.startedAt)}
+    </span>
+  );
+}
+
 function RuleFindings({
   rule,
   state,
-  canResolve,
+  resolveAccess,
 }: {
   rule: ReviewRule;
   state: FindingsState;
-  canResolve: boolean;
+  resolveAccess: Access;
 }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
@@ -331,7 +415,7 @@ function RuleFindings({
             <FindingRow
               key={finding.id}
               finding={finding}
-              canResolve={canResolve}
+              resolveAccess={resolveAccess}
               note={notes[finding.id] ?? ""}
               onNoteChange={(value) => setNotes((current) => ({ ...current, [finding.id]: value }))}
               onResolve={() =>
@@ -386,14 +470,14 @@ function FindingsEmptyState({ rule, state }: { rule: ReviewRule; state: Findings
 
 function FindingRow({
   finding,
-  canResolve,
+  resolveAccess,
   note,
   onNoteChange,
   onResolve,
   resolvePending,
 }: {
   finding: Finding;
-  canResolve: boolean;
+  resolveAccess: Access;
   note: string;
   onNoteChange: (value: string) => void;
   onResolve: () => void;
@@ -491,7 +575,15 @@ function FindingRow({
             </div>
           )}
 
-          {open && finding.resolvableHere && canResolve && (
+          {open && finding.resolvableHere && resolveAccess === "denied" && (
+            <p className="mt-3 flex items-center gap-1.5 text-xs text-[#64748b] dark:text-white/50">
+              <LockIcon size={12} />
+              Resolving this finding needs the “resolve review findings” permission. Ask an owner or
+              admin.
+            </p>
+          )}
+
+          {open && finding.resolvableHere && resolveAccess === "granted" && (
             <div className="mt-3 flex gap-2">
               <input
                 value={note}
