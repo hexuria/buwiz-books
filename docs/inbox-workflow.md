@@ -319,12 +319,12 @@ lists the lanes with their agreement and calibration; admins change them.
   `created_by`, the bill's `approver_id` and the activity rows say `system:jev`, and the activity
   log names the lane, the confidence and the rule snapshot. Entries Jev approved show a **by Jev**
   tag in Bills and Transactions.
-- **Undo.** On the entry's screen, **Undo Jev approval** (needs Inbox approve, and a reason) posts
-  a reversal — never a delete — dated like the original, or today (the first open day) when that
-  period is closed; voids the bill it created, refused once anything was paid; returns the paper to
-  the Inbox on a new revision; counts as a rejected label for the lane; and, when a memory answered
-  the paper, counts an undo against that memory. An entry already reversed, matched to a bank
-  statement, or in a finalized reconciliation cannot be undone this way.
+- **Undo.** On the entry's screen, **Undo Jev approval** (needs Inbox approve; what was wrong is an
+  optional note) posts a reversal — never a delete — dated like the original, or today (the first
+  open day) when that period is closed; voids the bill it created, refused once anything was paid;
+  returns the paper to the Inbox on a new revision; counts as a rejected label for the lane; and,
+  when a memory answered the paper, counts an undo against that memory. An entry already reversed,
+  matched to a bank statement, or in a finalized reconciliation cannot be undone this way.
 - **Categories.** `categorize` stays structurally manual (`STRUCTURAL_MANUAL_KINDS`) for per-kind
   autonomy and every other path; only the inbox_approve lane may apply the category of a paper it
   approves (`INBOX_APPROVE_LANE_EXCEPTIONS` in `src/lib/ai/autonomy.ts`, with the reasons and
@@ -445,9 +445,9 @@ bun eval:scorecard --pile org:<orgId> --rules live --limit 500
 
 Settings → Export / Import carries the Inbox's organization configuration since export version 5
 (`src/lib/export-inbox.ts`, protocol in `.agent/rules/schema-export-import.md`): **Rule
-Snapshots**, **Routines**, and **Classification Memories**. Older files import unchanged (the
-v4 → v5 migration gives them empty lists). Import them in that order, after vendors, customers and
-categories:
+Snapshots**, **Routines**, **Classification Memories**, and **Jev Approval Lanes**. Older files
+import unchanged (the v4 → v5 migration gives them empty lists). Import them in that order, after
+vendors, customers and categories:
 
 - **Rule snapshots** keep their label, content and exact creation time; import creates new rows
   (snapshots are never overwritten) and skips one already present with the same creation time,
@@ -465,10 +465,17 @@ categories:
   ambiguous, or now a different kind of account) is **dropped and reported**. Counters and the
   on/off state come along — a memory that turned itself off arrives off. No `ai_eval_cases` lock
   is written for an imported memory, since its source paper is not part of the file.
+- **Jev approval lanes** carry the lane, its kind of paper, its party by name, its level, amount
+  cap and confidence threshold — as configuration. **Earned autonomy is never imported**: every
+  lane arrives at **watch**, with a note naming the level it had, and this organization's own
+  reviews must earn suggest and auto again (promotion to auto sets and re-validates the cap and
+  threshold against this organization's calibration). A lane whose party cannot be mapped is
+  dropped and reported; a lane this organization already has keeps its own level. The lanes'
+  labels and evidence (`ai_run_feedback`) and the organization's Jev-approval switch, maker-checker
+  opt-in and spot-check rate are never exported, so an import can never make Jev approve anything.
 
 Disabled routines and memories are always exported ("Include inactive records" does not filter
-them), and every imported row writes an activity-log entry naming who imported it. Jev's approval
-lanes are not part of the export yet; their evidence (`ai_run_feedback`) never will be.
+them), and every imported row writes an activity-log entry naming who imported it.
 
 ## Inbound email
 

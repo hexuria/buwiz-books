@@ -31,11 +31,12 @@ sections) and imports them back one kind at a time. Besides the books — chart 
 parties, banks, products, transactions, bills, invoices — the file carries the Inbox's own
 configuration:
 
-| Data Type                   | What comes along                                                            |
-| --------------------------- | --------------------------------------------------------------------------- |
-| **Rule Snapshots**          | Each frozen rule pack, with its label and the exact time it was made        |
-| **Routines**                | How papers get in: inbound email, signed webhooks, and schedules, with pins |
-| **Classification Memories** | The answers the Inbox remembers, with their use and undo counts, on or off  |
+| Data Type                   | What comes along                                                               |
+| --------------------------- | ------------------------------------------------------------------------------ |
+| **Rule Snapshots**          | Each frozen rule pack, with its label and the exact time it was made           |
+| **Routines**                | How papers get in: inbound email, signed webhooks, and schedules, with pins    |
+| **Classification Memories** | The answers the Inbox remembers, with their use and undo counts, on or off     |
+| **Jev Approval Lanes**      | Each lane's vendor or customer, kind of paper, level, amount cap and threshold |
 
 Import them in that order, after vendors, customers, and the chart of accounts:
 
@@ -46,6 +47,10 @@ Import them in that order, after vendors, customers, and the chart of accounts:
   already have it.
 - A memory whose vendor, customer, or account is not in this organization is skipped and listed
   in the import results, so you can see what was not brought over.
+- **Jev's approval is never imported.** Every lane arrives at **Watch**, whatever level it had:
+  Jev has to earn Suggest and Auto again from your own reviews. The **Let Jev approve Inbox
+  papers** switch and the spot-check share are not in the file, so importing never turns Jev
+  approval on. A lane for a vendor or customer you do not have is skipped and listed.
 
 Importing the same file twice adds nothing the second time.
 
