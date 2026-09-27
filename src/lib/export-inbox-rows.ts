@@ -277,20 +277,13 @@ export function planRoutineImport(
 // ============================================================================
 
 /**
- * An exact, positive decimal with at most 8 places, checked by pattern alone. (The app's own
- * answer schema parses the value inside its refinement, which throws on a malformed string
- * instead of failing validation; a file is untrusted input, so its amounts are checked here first.)
+ * A remembered line as exported: the account by (number, name) instead of its id. The amount keeps
+ * the app's own rule — an exact, positive decimal with at most 8 places — which fails validation
+ * (never throws) on a malformed value.
  */
-const exactPositiveDecimal = z
-  .string()
-  .regex(/^\d+(?:\.\d{1,8})?$/u, "must be a decimal with at most 8 places")
-  .refine((value) => !/^0*(?:\.0*)?$/u.test(value), "must be greater than zero");
-
-/** A remembered line as exported: the account by (number, name) instead of its id. */
 export const memoryAnswerLineExportSchema = memoryAnswerLineSchema
   .omit({ accountId: true })
   .extend({
-    amount: exactPositiveDecimal,
     accountNumber: z.string().min(1).nullable().default(null),
     accountName: z.string().min(1).nullable().default(null),
   });
