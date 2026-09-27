@@ -102,7 +102,7 @@ test.describe("Inbox v2", () => {
 
     // Resolve whatever checks block it (department, location, …) with a documented exception,
     // the same action the classic page offers. Approve stays off until none block.
-    const approve = page.getByRole("button", { name: "Approve" });
+    const approve = page.getByRole("button", { name: "Approve", exact: true });
     const notes = page.getByPlaceholder("Resolution or documented exception");
     for (
       let remaining = await notes.count();
@@ -174,7 +174,7 @@ test.describe("Inbox v2", () => {
     await rows.first().click();
     const drawer = page.getByRole("dialog");
     await expect(drawer).toBeVisible();
-    await expect(drawer.getByRole("button", { name: "Approve" })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
     await drawer.getByRole("button", { name: "Back to Inbox" }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
   });
