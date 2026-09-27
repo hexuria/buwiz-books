@@ -202,4 +202,42 @@ describe("Jev approval lanes wiring", () => {
     expect(list).toContain("spotCheck: row.spotCheck === true,");
     expect(list).toContain("we.data->'evaluation'->>'heldForSpotCheck' = 'true'");
   });
+
+  it("keeps remembered answers out of eligibility and calibration, but not demotion", () => {
+    const lanes = read("src/lib/ai/autonomy-lanes.ts");
+    expect(lanes).toContain(
+      "const jevAnswered = sql`${aiRunFeedback.laneEvidence}->>'source' = 'jev'`;",
+    );
+    const eligibility = lanes.slice(
+      lanes.indexOf("export async function computeLaneEligibility"),
+      lanes.indexOf("function confidenceOf"),
+    );
+    expect(eligibility).toContain("jevAnswered");
+    const calibration = lanes.slice(
+      lanes.indexOf("async function laneCalibrationSamples"),
+      lanes.indexOf("export async function loadLaneReliability"),
+    );
+    expect(calibration).toContain("jevAnswered");
+    const demotion = lanes.slice(
+      lanes.indexOf("export async function shouldDemoteLane"),
+      lanes.indexOf("async function recordLaneChange"),
+    );
+    expect(demotion).not.toContain("jevAnswered");
+  });
+
+  it("counts Jev's approvals and undos of a remembered answer with the memory too", () => {
+    const service = read("src/lib/inbox/service.ts");
+    const note = service.slice(service.indexOf("await noteApprovalOfMemoryAnswer(db, {"));
+    expect(note).toContain('actorType: systemApproval ? "system" : "user",');
+    // The undo names itself to the memory while the candidate still points at
+    // the journal, before the reversal (which would otherwise be the reason).
+    const undo = read("src/lib/inbox/jev-approval/undo.ts");
+    const noteAt = undo.indexOf("await noteReversedMemoryEntries(db, {");
+    const amendAt = undo.indexOf("const amended = await amendPostedJournal(db, {");
+    const resetAt = undo.indexOf('.set({ status: "current", postedJournalHeaderId: null');
+    expect(noteAt).toBeGreaterThan(-1);
+    expect(amendAt).toBeGreaterThan(noteAt);
+    expect(resetAt).toBeGreaterThan(amendAt);
+    expect(undo.slice(noteAt, amendAt)).toContain("reason: JEV_APPROVAL_UNDONE,");
+  });
 });

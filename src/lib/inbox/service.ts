@@ -1423,12 +1423,13 @@ export async function approveInboxItem(
   }
 
   // A memory's answer approved as-is is an accepted hit; approved with a
-  // different answer, an undo (src/lib/inbox/memory/tracking.ts).
+  // different answer, an undo (src/lib/inbox/memory/tracking.ts). Jev
+  // approving a remembered answer confirms it as the system actor.
   await noteApprovalOfMemoryAnswer(db, {
     orgId,
     candidateId: row.candidate.id,
     inboxItemId: row.item.id,
-    actorType: "user",
+    actorType: systemApproval ? "system" : "user",
     actorId: userId,
     settled: {
       docKind:

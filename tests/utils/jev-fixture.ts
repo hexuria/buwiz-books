@@ -30,7 +30,11 @@ import type { AiCompleteFn } from "@/lib/party-match/model-pick";
 import { planCoaPreset } from "@/lib/coa/plan-preset";
 import { COA_PRESETS } from "@/lib/coa/presets";
 import { loadCoaSnapshot } from "@/lib/coa/snapshot";
+import { classifyInboxCandidate } from "@/lib/inbox/candidate-classification";
+import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
+import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
 import { recordJevProposal } from "@/lib/inbox/jev-approval/proposal";
+import { rememberCorrection } from "@/lib/inbox/memory/service";
 import { createTransactionCandidate } from "@/lib/inbox/service";
 
 export async function setupJevOrganization(
@@ -195,7 +199,7 @@ export async function submitJevExpense(
 export async function seedLaneLabels(
   orgId: string,
   laneId: string,
-  counts: { accepted: number; other?: number; confidence?: number },
+  counts: { accepted: number; other?: number; confidence?: number; source?: "jev" | "memory" },
   startAt = Date.now() - 10_000_000,
 ) {
   const rows = [
@@ -205,7 +209,11 @@ export async function seedLaneLabels(
     organizationId: orgId,
     laneId,
     verdict,
-    laneEvidence: { confidence: counts.confidence ?? 0.99, wouldApprove: true },
+    laneEvidence: {
+      source: counts.source ?? "jev",
+      confidence: counts.source === "memory" ? 1 : (counts.confidence ?? 0.99),
+      wouldApprove: true,
+    },
     createdAt: new Date(startAt + index * 1000),
   }));
   if (rows.length > 0) await db.insert(aiRunFeedback).values(rows);
@@ -462,4 +470,87 @@ export async function rememberPaymentSide(
         ),
       );
   });
+}
+
+/**
+ * Stage 2 on one uploaded paper, the way its job runs it: the model is the stub
+ * given (a remembered answer never calls it), and the classification's own
+ * transaction records Jev's proposal for its lane.
+ */
+export async function classifyPaper(
+  fixture: JevFixture,
+  candidate: { id: string; revision: number },
+  complete: AiCompleteFn = stubbedJevClassifier("67200", 0.96),
+) {
+  return classifyInboxCandidate(
+    { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: candidate.revision },
+    {
+      complete,
+      beforeCommit: async (tx) => {
+        await recordJevProposalAfterClassification(tx, {
+          orgId: fixture.orgId,
+          candidateId: candidate.id,
+        });
+        return true;
+      },
+    },
+  );
+}
+
+/**
+ * Build step 10, for real: stage 2 reads a receipt from the fixture vendor, a
+ * reviewer settles its payment side on the bank and saves the entry, and asks
+ * Jev to remember it for that vendor. Every later receipt from the vendor is
+ * then answered by the memory — category, payment side and vendor — with no
+ * model. The organization tracks no departments or locations, so a remembered
+ * answer can settle the whole entry.
+ */
+export async function rememberVendorReceipts(fixture: JevFixture) {
+  await disableRule(fixture.orgId, "missing_department");
+  await disableRule(fixture.orgId, "missing_location");
+  const first = await uploadPaper(fixture, { amount: "48.60", date: "2026-08-20" });
+  await classifyPaper(fixture, first.candidate);
+  const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, first.inboxItemId));
+  await asOrg(
+    fixture,
+    (tx) =>
+      correctInboxCandidate(
+        { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+        {
+          inboxItemId: first.inboxItemId,
+          expectedRevision: item.candidateRevision,
+          expectedLockVersion: item.lockVersion,
+          transactionDate: "2026-08-20",
+          transactionType: "pay_out",
+          memo: "Printer paper",
+          partyId: fixture.vendor.id,
+          originalCurrency: "USD",
+          lines: [
+            { accountId: fixture.officeSupplies.id, debit: "48.60" },
+            { accountId: fixture.bank.id, credit: "48.60" },
+          ],
+        },
+      ),
+    fixture.reviewerId,
+  );
+  const memory = await asOrg(
+    fixture,
+    (tx) =>
+      rememberCorrection(
+        { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+        { candidateId: first.candidate.id, scope: "party" },
+      ),
+    fixture.reviewerId,
+  );
+  return { first, memory };
+}
+
+/** Another receipt from the fixture vendor, read by stage 2: the memory answers it. */
+export async function nextRememberedReceipt(
+  fixture: JevFixture,
+  input: { amount: string; date: string },
+) {
+  const paper = await uploadPaper(fixture, { amount: input.amount, date: input.date });
+  const classified = await classifyPaper(fixture, paper.candidate);
+  return { ...paper, classified };
 }

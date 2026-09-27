@@ -119,13 +119,22 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
 - **Levels.** A lane is created at **watch** the first time Jev proposes a paper
   for it. Admins promote it to **suggest** (the Inbox says when Jev would
   approve) and then to **auto** (Jev approves), one step at a time. Each
-  promotion re-checks, at that moment, that the lane has 200 reviewed papers
-  with at least 98% accepted unchanged (`AUTONOMY_CRITERIA`, counted over the
-  lane's own labels). Auto also needs the lane's vendor or customer (the lane
-  for papers with no known party can never approve), an amount cap, and a
-  confidence threshold the lane's calibration supports. After every new label,
-  an auto lane whose last 50 labels fall below 95% drops back to suggest by
-  itself.
+  promotion re-checks, at that moment, that 200 of Jev's own answers on the
+  lane were reviewed with at least 98% accepted unchanged (`AUTONOMY_CRITERIA`,
+  counted over the lane's own labels). Auto also needs the lane's vendor or
+  customer (the lane for papers with no known party can never approve), an
+  amount cap, and a confidence threshold the lane's calibration supports. After
+  every new label, an auto lane whose last 50 labels fall below 95% drops back
+  to suggest by itself, and a lane in that state is not promoted.
+- **Remembered answers.** A paper a classification memory answered (build step 10) is a proposal too, recorded as the memory's, with a confidence of 1. Its
+  label counts toward the lane's agreement and its demotion — a lane at auto
+  approves remembered answers as well — but not toward promotion or
+  calibration, which are about Jev: a remembered answer replays a person's fix,
+  has no model confidence, and counting it would let a lane earn authority Jev
+  never showed. So a vendor whose every paper is remembered never earns a lane;
+  its papers wait, one click from approval, for a person. The memory keeps its
+  own count as well: Jev approving its answer unchanged confirms it, and an undo
+  of that approval counts against it (two in a row turn it off).
 - **Labels.** A proposal is a draft stage 2 answered (a category it picked at
   or above the threshold) or a remembered answer. It is recorded with its lane
   after classification (`jev_proposal_recorded`), and the first person's
@@ -164,8 +173,9 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
 - **Undo.** On the entry screen, **Undo Jev approval** (needs Inbox approve)
   posts a reversal — never a delete — dated like the original, or today when
   that period is closed; voids the bill it created (refused once anything was
-  paid); returns the paper to the Inbox on a new revision; and counts as a
-  disagreement for the lane.
+  paid); returns the paper to the Inbox on a new revision; counts as a
+  disagreement for the lane; and, when a memory answered the paper, counts an
+  undo against that memory.
 - **Not yet.** `categorize` is structurally manual (`STRUCTURAL_MANUAL_KINDS`),
   so while it is walled for the lane nothing Jev approves is posted — lanes
   still learn and can be promoted. Stage 2 never picks the payment side, so a

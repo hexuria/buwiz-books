@@ -228,6 +228,8 @@ async function label(
     other?: number;
     confidence?: number;
     verdict?: "corrected" | "rejected";
+    /** Whose answer the labeled proposal was: Jev's (default) or a remembered one. */
+    source?: "jev" | "memory";
   },
   startAt = Date.now() - 1_000_000,
 ) {
@@ -238,7 +240,11 @@ async function label(
     organizationId: orgId,
     laneId,
     verdict,
-    laneEvidence: { confidence: counts.confidence ?? 0.99, wouldApprove: true },
+    laneEvidence: {
+      source: counts.source ?? "jev",
+      confidence: counts.source === "memory" ? 1 : (counts.confidence ?? 0.99),
+      wouldApprove: true,
+    },
     createdAt: new Date(startAt + index * 1000),
   }));
   if (rows.length > 0) await db.insert(aiRunFeedback).values(rows);
@@ -322,7 +328,7 @@ describeDb("lane lifecycle", () => {
       asOrg(orgId, userId, (tx) =>
         promoteAutonomyLane(tx, { orgId, laneId: lane.id, to: "suggest", actorId: userId }),
       ),
-    ).rejects.toThrow(/has not earned suggest yet. Needs 1 more reviewed papers/);
+    ).rejects.toThrow(/has not earned suggest yet. Needs 1 more reviewed Jev answers/);
     await expect(
       asOrg(orgId, userId, (tx) =>
         promoteAutonomyLane(tx, {
@@ -553,5 +559,72 @@ describeDb("lane lifecycle", () => {
         and(eq(aiRunFeedback.organizationId, orgId), inArray(aiRunFeedback.verdict, ["accepted"])),
       );
     expect(kept).toEqual([{ laneId: null }]);
+  });
+
+  it("promotes on Jev's own answers only; remembered answers count toward demotion", async () => {
+    const { orgId, vendor, userId } = await organizationWithAdmin("lane-sources");
+    const lane = await asOrg(orgId, userId, (tx) =>
+      ensureAutonomyLane(tx, orgId, {
+        laneKey: "inbox_approve",
+        partyId: vendor.id,
+        docKind: "expense",
+      }),
+    );
+    // 250 remembered answers, all accepted: not one of them is Jev's.
+    await label(orgId, lane.id, { accepted: 250, source: "memory" }, Date.now() - 5_000_000);
+    expect(
+      await asOrg(orgId, userId, (tx) => computeLaneEligibility(tx, orgId, lane.id)),
+    ).toMatchObject({
+      eligible: false,
+      total: 0,
+      reason: "Needs 200 more reviewed Jev answers (0/200).",
+    });
+    await expect(
+      asOrg(orgId, userId, (tx) =>
+        promoteAutonomyLane(tx, { orgId, laneId: lane.id, to: "suggest", actorId: userId }),
+      ),
+    ).rejects.toThrow(/Needs 200 more reviewed Jev answers/);
+
+    // Jev's own answers earn it, and only they are calibrated.
+    await label(orgId, lane.id, { accepted: 200, confidence: 0.96 }, Date.now() - 4_000_000);
+    expect(
+      await asOrg(orgId, userId, (tx) => computeLaneEligibility(tx, orgId, lane.id)),
+    ).toMatchObject({ eligible: true, total: 200 });
+    const table = await asOrg(orgId, userId, (tx) => loadLaneReliability(tx, orgId, lane.id));
+    expect(table.reviewed).toBe(200);
+    expect(table.minimumThreshold).toBe(0.95);
+    await asOrg(orgId, userId, (tx) =>
+      promoteAutonomyLane(tx, { orgId, laneId: lane.id, to: "suggest", actorId: userId }),
+    );
+    const [summary] = await asOrg(orgId, userId, (tx) =>
+      listAutonomyLanes(tx, orgId, "inbox_approve"),
+    );
+    expect(summary.agreement).toMatchObject({ labeled: 450, accepted: 450, remembered: 250 });
+    expect(summary.eligibility).toMatchObject({ total: 200, eligible: true });
+
+    // Three remembered answers people corrected, newest: 47 of the last 50.
+    await label(orgId, lane.id, { accepted: 0, other: 3, source: "memory" }, Date.now() - 100);
+    await expect(
+      asOrg(orgId, userId, (tx) =>
+        promoteAutonomyLane(tx, {
+          orgId,
+          laneId: lane.id,
+          to: "auto",
+          actorId: userId,
+          amountCap: "500",
+          confidenceThreshold: "0.95",
+        }),
+      ),
+    ).rejects.toThrow(/remembered ones included, were accepted less than 95%/);
+    // …and an auto lane in that state is demoted by the next label.
+    await db
+      .update(aiAutonomyLanes)
+      .set({ level: "auto", amountCap: "500", confidenceThreshold: "0.95" })
+      .where(eq(aiAutonomyLanes.id, lane.id));
+    expect(
+      await asOrg(orgId, userId, (tx) =>
+        demoteLaneIfSlipped(tx, { orgId, laneId: lane.id, triggeredBy: userId }),
+      ),
+    ).toBe(true);
   });
 });

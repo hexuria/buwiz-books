@@ -83,9 +83,10 @@ export function laneTitle(lane: Pick<JevLaneView, "partyName" | "docKind">): str
 }
 
 function agreementText(lane: JevLaneView): string {
-  const { labeled, accepted } = lane.agreement;
+  const { labeled, accepted, remembered } = lane.agreement;
   if (labeled === 0) return "No reviewed papers yet.";
-  return `Agreement ${percent(accepted / labeled)} · ${labeled} reviewed`;
+  const rememberedNote = remembered > 0 ? ` (${remembered} remembered)` : "";
+  return `Agreement ${percent(accepted / labeled)} · ${labeled} reviewed${rememberedNote}`;
 }
 
 function wouldApproveText(lane: JevLaneView): string | null {
@@ -322,9 +323,10 @@ export function JevLanesPanel({
       </h3>
       <p className="text-xs text-[#64748b] dark:text-white/50 mb-4">
         Jev earns approval one vendor and one kind of paper at a time. A lane can be promoted only
-        after 200 reviewed papers with at least 98% accepted unchanged, and it drops back to suggest
-        by itself if agreement over its last 50 papers falls below 95%. New vendors, changed bank
-        details, duplicates, closed periods and open checks always go to a person.
+        after 200 of Jev&apos;s own answers were reviewed with at least 98% accepted unchanged
+        (remembered answers do not count toward it), and it drops back to suggest by itself if
+        agreement over its last 50 papers, remembered ones included, falls below 95%. New vendors,
+        changed bank details, duplicates, closed periods and open checks always go to a person.
       </p>
 
       {error && (

@@ -15,7 +15,9 @@
 //      keeps its link to the paper as `reversed_origin`, so the paper can
 //      originate its corrected entry;
 //   4. the lane gets a `rejected` label for the proposal: an undo is a
-//      disagreement, and counts toward demotion like any other.
+//      disagreement, and counts toward demotion like any other;
+//   5. a remembered answer Jev approved counts an undo against its memory
+//      (build step 10): two in a row turn the memory off.
 //
 // Everything happens in the caller's transaction, under the candidate's
 // lifecycle lock, and is refused whole — with nothing written — when the entry
@@ -37,6 +39,7 @@ import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { statementLineMatches, statementLines } from "@/db/schema/reconciliations";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { amendPostedJournal } from "@/lib/journal-amendment";
+import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import { moneyToCents } from "@/lib/money";
 import { currentOrgDate, firstOpenDateAfter } from "@/lib/org-calendar";
 import { getClosedThrough, isDateLocked } from "@/lib/period-close";
@@ -172,6 +175,16 @@ export async function undoJevApproval(
     const firstOpen = firstOpenDateAfter(closedThrough!);
     amendmentDate = today > firstOpen ? today : firstOpen;
   }
+  // The memory whose answer Jev approved, if one did, was disagreed with. Named
+  // here, while the candidate still points at this journal, so the memory's
+  // history says why; the reversal below would count it too, and once is all
+  // it counts (src/lib/inbox/memory/tracking.ts).
+  await noteReversedMemoryEntries(db, {
+    orgId,
+    journalHeaderIds: [journal.id],
+    reason: JEV_APPROVAL_UNDONE,
+    actorId: userId,
+  });
   const amended = await amendPostedJournal(db, {
     organizationId: orgId,
     userId,

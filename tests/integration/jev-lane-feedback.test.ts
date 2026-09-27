@@ -8,7 +8,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { aiAutonomyLanes, aiRunFeedback } from "@/db/schema/ai";
-import { transactionCandidates, workflowEvents } from "@/db/schema/inbox";
+import { inboxItems, transactionCandidates, workflowEvents } from "@/db/schema/inbox";
 import { computeLaneEligibility, listAutonomyLanes } from "@/lib/ai/autonomy-lanes";
 import { classifyInboxCandidate } from "@/lib/inbox/candidate-classification";
 import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
@@ -17,6 +17,8 @@ import { JEV_PROPOSAL_RECORDED_ACTION, latestJevProposal } from "@/lib/inbox/jev
 import { approveInboxItem, rejectInboxItem } from "@/lib/inbox/service";
 import {
   asOrg,
+  nextRememberedReceipt,
+  rememberVendorReceipts,
   seedLaneLabels,
   setLaneAuto,
   setupJevOrganization,
@@ -298,6 +300,7 @@ describeDb("Jev lane feedback", () => {
       wouldApprove: 2,
       // Jev would have approved the corrected paper: an approval a person would undo.
       wouldApproveUndone: 1,
+      remembered: 0,
     });
     // Two of three labels in the 0.95–0.98 bucket, one in 0.85–0.9.
     const buckets = new Map(summary.reliability.buckets.map((bucket) => [bucket.lower, bucket]));
@@ -384,5 +387,56 @@ describeDb("Jev lane feedback", () => {
     expect(proposal!.evaluation.holds.map((hold) => hold.reason)).toEqual(
       expect.arrayContaining(["incomplete_entry", "blocking_finding"]),
     );
+  });
+
+  it("labels a remembered answer as the memory's, and keeps it out of the lane's eligibility", async () => {
+    const fixture = await setupJevOrganization("jev-fb-memory");
+    const { first } = await rememberVendorReceipts(fixture);
+    const firstProposal = await asOrg(fixture, (tx) =>
+      latestJevProposal(tx, fixture.orgId, first.candidate.id),
+    );
+    expect(firstProposal).toMatchObject({ source: "jev", kind: "expense" });
+
+    const second = await nextRememberedReceipt(fixture, { amount: "52.10", date: "2026-08-25" });
+    expect(second.classified).toMatchObject({
+      status: "classified",
+      memory: { outcome: "hit", matchKind: "party" },
+      readyForReview: true,
+    });
+    const proposal = await asOrg(fixture, (tx) =>
+      latestJevProposal(tx, fixture.orgId, second.candidate.id),
+    );
+    // A memory's answer is a proposal too: the same lane, recorded as the memory's.
+    expect(proposal).toMatchObject({
+      laneId: firstProposal!.laneId,
+      source: "memory",
+      confidence: 1,
+      partyId: fixture.vendor.id,
+      evaluation: { wouldApprove: true },
+    });
+
+    // People approve both, unchanged.
+    for (const paper of [first, second]) {
+      const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, paper.inboxItemId));
+      await approve(fixture, item);
+    }
+    const labels = await feedbackOf(fixture.orgId);
+    expect(
+      labels.map((row) => [row.verdict, (row.laneEvidence as { source: string }).source]).sort(),
+    ).toEqual([
+      ["accepted", "jev"],
+      ["accepted", "memory"],
+    ]);
+    const [summary] = await asOrg(fixture, (tx) =>
+      listAutonomyLanes(tx, fixture.orgId, "inbox_approve"),
+    );
+    expect(summary.agreement).toMatchObject({ labeled: 2, accepted: 2, remembered: 1 });
+    // Only Jev's own answer counts toward promotion.
+    expect(summary.eligibility).toMatchObject({ total: 1, accepted: 1 });
+    expect(
+      await asOrg(fixture, (tx) =>
+        computeLaneEligibility(tx, fixture.orgId, firstProposal!.laneId),
+      ),
+    ).toMatchObject({ total: 1 });
   });
 });

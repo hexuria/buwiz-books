@@ -55,6 +55,7 @@ function lane(overrides: Partial<JevLaneView> & Pick<JevLaneView, "id">): JevLan
       rejected: 0,
       wouldApprove: 0,
       wouldApproveUndone: 0,
+      remembered: 0,
     },
     eligibility: {
       eligible: false,
@@ -62,7 +63,7 @@ function lane(overrides: Partial<JevLaneView> & Pick<JevLaneView, "id">): JevLan
       accepted: 0,
       acceptanceRate: 0,
       remaining: 200,
-      reason: "Needs 200 more reviewed papers (0/200).",
+      reason: "Needs 200 more reviewed Jev answers (0/200).",
     },
     calibration: {
       buckets: EMPTY_BUCKETS,
@@ -83,6 +84,7 @@ const WATCHING = lane({
     rejected: 0,
     wouldApprove: 120,
     wouldApproveUndone: 1,
+    remembered: 12,
   },
   eligibility: {
     eligible: false,
@@ -90,7 +92,7 @@ const WATCHING = lane({
     accepted: 161,
     acceptanceRate: 161 / 163,
     remaining: 37,
-    reason: "Needs 37 more reviewed papers (163/200).",
+    reason: "Needs 37 more reviewed Jev answers (163/200).",
   },
 });
 
@@ -105,6 +107,7 @@ const SUGGESTING = lane({
     rejected: 1,
     wouldApprove: 240,
     wouldApproveUndone: 2,
+    remembered: 0,
   },
   eligibility: {
     eligible: true,
@@ -112,7 +115,7 @@ const SUGGESTING = lane({
     accepted: 248,
     acceptanceRate: 0.992,
     remaining: 0,
-    reason: "Eligible: 99.2% accepted across 250 papers.",
+    reason: "Eligible: 99.2% accepted across 250 Jev answers.",
   },
   calibration: {
     buckets: EMPTY_BUCKETS.map((bucket) =>
@@ -175,7 +178,9 @@ describe("JevLanesPanel", () => {
       name: "Northwind Traders · Paid expense",
     });
     expect(within(watching).getByText("Watch")).toBeVisible();
-    expect(within(watching).getByText("Agreement 98.8% · 163 reviewed")).toBeVisible();
+    expect(
+      within(watching).getByText("Agreement 98.8% · 163 reviewed (12 remembered)"),
+    ).toBeVisible();
     expect(
       within(watching).getByText("Jev would have approved 120; people changed 1 of them."),
     ).toBeVisible();
@@ -206,7 +211,9 @@ describe("JevLanesPanel", () => {
     const watching = screen.getByRole("listitem", { name: "Northwind Traders · Paid expense" });
     const promote = within(watching).getByRole("button", { name: "Promote to suggest" });
     expect(promote).toBeDisabled();
-    expect(within(watching).getByText("Needs 37 more reviewed papers (163/200).")).toBeVisible();
+    expect(
+      within(watching).getByText("Needs 37 more reviewed Jev answers (163/200)."),
+    ).toBeVisible();
   });
 
   it("promotes to auto with a cap and a threshold prefilled from the calibration", async () => {

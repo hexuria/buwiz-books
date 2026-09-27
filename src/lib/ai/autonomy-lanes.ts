@@ -14,6 +14,18 @@
 //     an `auto` lane whose trailing window slipped below the demotion rate
 //     drops to `suggest`. An admin may also demote by hand at any time.
 //
+// WHOSE LABELS COUNT. A lane labels two kinds of proposal: Jev's own answers
+// (a model pick) and remembered answers (a classification memory, build step
+// 10 — a replay of a person's earlier fix). Promotion is about Jev, so
+// ELIGIBILITY and CALIBRATION count Jev's answers only: a remembered answer is
+// right almost by construction, has no model confidence, and counting it would
+// let a lane earn authority Jev never showed — then spend it on Jev's own
+// guesses. DEMOTION counts every label: a lane at auto approves remembered
+// answers too, and any disagreement with what it lets through narrows it. A
+// lane is not promoted while that trailing window would demote it straight
+// back. Remembered answers have their own guard as well: two consecutive undos
+// turn the memory off (src/lib/inbox/memory/tracking.ts).
+//
 // Every change writes a workflow event and an activity log row. All of it runs
 // on the caller's org-context executor.
 // ============================================================================
@@ -54,8 +66,11 @@ export interface AutonomyLaneIdentity {
 
 const LEVEL_RANK: Record<AutonomyLaneLevel, number> = { watch: 0, suggest: 1, auto: 2 };
 
-/** What lane papers are counted in, for the eligibility sentence. */
-const LANE_NOUN = "papers";
+/** What a lane's eligibility counts, for its sentence: Jev's answers only (see above). */
+const LANE_NOUN = "Jev answers";
+
+/** Lane labels whose proposal Jev answered (lane_evidence.source), for eligibility and calibration. */
+const jevAnswered = sql`${aiRunFeedback.laneEvidence}->>'source' = 'jev'`;
 
 function identityWhere(orgId: string, identity: AutonomyLaneIdentity) {
   return and(
@@ -138,7 +153,7 @@ export async function loadAutonomyLane(
   return row ?? null;
 }
 
-/** AUTONOMY_CRITERIA over this lane's labels only. */
+/** AUTONOMY_CRITERIA over this lane's labels of Jev's own answers (see the header). */
 export async function computeLaneEligibility(
   db: DbExecutor,
   orgId: string,
@@ -150,7 +165,9 @@ export async function computeLaneEligibility(
       accepted: sql<number>`count(*) filter (where ${aiRunFeedback.verdict} = 'accepted')::int`,
     })
     .from(aiRunFeedback)
-    .where(and(eq(aiRunFeedback.organizationId, orgId), eq(aiRunFeedback.laneId, laneId)));
+    .where(
+      and(eq(aiRunFeedback.organizationId, orgId), eq(aiRunFeedback.laneId, laneId), jevAnswered),
+    );
   return judgeAutonomyEligibility(Number(row?.total ?? 0), Number(row?.accepted ?? 0), LANE_NOUN);
 }
 
@@ -178,7 +195,14 @@ async function laneCalibrationSamples(
       evidence: aiRunFeedback.laneEvidence,
     })
     .from(aiRunFeedback)
-    .where(and(eq(aiRunFeedback.organizationId, orgId), inArray(aiRunFeedback.laneId, laneIds)));
+    .where(
+      and(
+        eq(aiRunFeedback.organizationId, orgId),
+        inArray(aiRunFeedback.laneId, laneIds),
+        // A remembered answer has no model confidence to calibrate.
+        jevAnswered,
+      ),
+    );
   for (const row of rows) {
     const confidence = confidenceOf(row.evidence);
     if (!row.laneId || confidence === null) continue;
@@ -199,7 +223,7 @@ export async function loadLaneReliability(
   return buildReliabilityTable(samples.get(laneId) ?? []);
 }
 
-/** The lane's trailing-window verdict, newest label first. */
+/** The lane's trailing-window verdict over every label, newest first (see the header). */
 export async function shouldDemoteLane(
   db: DbExecutor,
   orgId: string,
@@ -337,6 +361,13 @@ export async function promoteAutonomyLane(
   const eligibility = await computeLaneEligibility(db, input.orgId, lane.id);
   if (!eligibility.eligible) {
     throw new Error(`This lane has not earned ${input.to} yet. ${eligibility.reason}`);
+  }
+  // Remembered answers people disagreed with count here, though not above:
+  // a lane its own trailing window would demote is not promoted.
+  if (await shouldDemoteLane(db, input.orgId, lane.id)) {
+    throw new Error(
+      `This lane's last ${AUTONOMY_CRITERIA.demotionWindow} reviewed papers, remembered ones included, were accepted less than ${Math.round(AUTONOMY_CRITERIA.demotionRate * 100)}% of the time.`,
+    );
   }
 
   const patch: Partial<typeof aiAutonomyLanes.$inferInsert> = {};
@@ -481,11 +512,13 @@ export async function setAutonomyLaneLimits(
 }
 
 export interface LaneAgreement {
-  /** Human labels on this lane's proposals. */
+  /** Human labels on this lane's proposals, Jev's and remembered ones. */
   labeled: number;
   accepted: number;
   corrected: number;
   rejected: number;
+  /** Of those, the labels on remembered answers (build step 10). */
+  remembered: number;
   /** Labeled proposals Jev would have approved (the paper checks passed). */
   wouldApprove: number;
   /** Of those, the ones a person changed or rejected: approvals a human would undo. */
@@ -529,6 +562,9 @@ export async function listAutonomyLanes(
             rejected: sql<number>`count(*) filter (where ${aiRunFeedback.verdict} = 'rejected')::int`,
             wouldApprove: sql<number>`count(*) filter (where ${aiRunFeedback.laneEvidence}->>'wouldApprove' = 'true')::int`,
             wouldApproveUndone: sql<number>`count(*) filter (where ${aiRunFeedback.laneEvidence}->>'wouldApprove' = 'true' and ${aiRunFeedback.verdict} <> 'accepted')::int`,
+            remembered: sql<number>`count(*) filter (where ${aiRunFeedback.laneEvidence}->>'source' = 'memory')::int`,
+            jevLabeled: sql<number>`count(*) filter (where ${jevAnswered})::int`,
+            jevAccepted: sql<number>`count(*) filter (where ${jevAnswered} and ${aiRunFeedback.verdict} = 'accepted')::int`,
           })
           .from(aiRunFeedback)
           .where(
@@ -547,13 +583,18 @@ export async function listAutonomyLanes(
       rejected: Number(row?.rejected ?? 0),
       wouldApprove: Number(row?.wouldApprove ?? 0),
       wouldApproveUndone: Number(row?.wouldApproveUndone ?? 0),
+      remembered: Number(row?.remembered ?? 0),
     };
     return {
       lane,
       partyName: partyName ?? null,
       promotedByName: promotedByName ?? null,
       agreement,
-      eligibility: judgeAutonomyEligibility(agreement.labeled, agreement.accepted, LANE_NOUN),
+      eligibility: judgeAutonomyEligibility(
+        Number(row?.jevLabeled ?? 0),
+        Number(row?.jevAccepted ?? 0),
+        LANE_NOUN,
+      ),
       reliability: buildReliabilityTable(samples.get(lane.id) ?? []),
     };
   });

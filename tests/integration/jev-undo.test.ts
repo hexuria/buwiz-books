@@ -10,6 +10,7 @@ import { and, eq, sql as drizzleSql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { db } from "@/db";
 import { aiAutonomyLanes, aiRunFeedback } from "@/db/schema/ai";
+import { classificationMemories } from "@/db/schema/classification-memories";
 import { organization } from "@/db/schema/auth";
 import { bills } from "@/db/schema/bills";
 import {
@@ -23,11 +24,14 @@ import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { currentOrgDate } from "@/lib/org-calendar";
 import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
 import { loadJevEntryApproval } from "@/lib/inbox/jev-approval/entry";
+import { latestJevProposal } from "@/lib/inbox/jev-approval/proposal";
 import { undoJevApproval } from "@/lib/inbox/jev-approval/undo";
 import { approveInboxItem } from "@/lib/inbox/service";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   asOrg,
+  nextRememberedReceipt,
+  rememberVendorReceipts,
   seedLaneLabels,
   setJevApprovalSettings,
   setLaneAuto,
@@ -39,10 +43,15 @@ import {
 
 const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
-type Submitted = Awaited<ReturnType<typeof submitJevExpense>>;
+/** A paper as it stands: its item, its candidate, and the proposal recorded for it. */
+interface Paper {
+  item: { id: string; lockVersion: number };
+  candidate: { id: string; revision: number };
+  proposal: { laneId: string } | null;
+}
 
-/** Approve a submitted paper as Jev, through the system approval path. */
-async function jevApprove(fixture: JevFixture, paper: Submitted) {
+/** Approve a paper as Jev, through the system approval path. */
+async function jevApprove(fixture: JevFixture, paper: Paper) {
   const grant = mintJevApprovalGrant({
     laneId: paper.proposal!.laneId,
     candidateId: paper.candidate.id,
@@ -331,5 +340,69 @@ describeDb("undo a Jev approval", () => {
         loadJevEntryApproval(tx, fixture.orgId, byPerson.journalHeaderId),
       ),
     ).toBeNull();
+  });
+
+  it("counts an undo against the memory whose answer Jev approved, once", async () => {
+    const fixture = await setupJevOrganization("jev-undo-memory");
+    const { memory } = await rememberVendorReceipts(fixture);
+    const paper = await nextRememberedReceipt(fixture, { amount: "52.10", date: "2026-08-25" });
+    const proposal = await asOrg(fixture, (tx) =>
+      latestJevProposal(tx, fixture.orgId, paper.candidate.id),
+    );
+    expect(proposal).toMatchObject({ source: "memory", confidence: 1 });
+    const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, paper.inboxItemId));
+    const [candidate] = await db
+      .select()
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, paper.candidate.id));
+    expect(item.state).toBe("ready_for_review");
+
+    const approved = await jevApprove(fixture, { item, candidate, proposal });
+    // Jev approving the remembered answer unchanged confirms it, as the system actor.
+    const [confirmed] = await db
+      .select()
+      .from(workflowEvents)
+      .where(
+        and(
+          eq(workflowEvents.entityId, paper.candidate.id),
+          eq(workflowEvents.action, "memory_confirmed"),
+        ),
+      );
+    expect(confirmed).toMatchObject({ actorType: "system", actorId: JEV_AUDIT_ACTOR_ID });
+
+    await undo(fixture, approved.journalHeaderId, "Wrong account");
+    const undone = await db
+      .select()
+      .from(workflowEvents)
+      .where(
+        and(
+          eq(workflowEvents.entityId, paper.candidate.id),
+          eq(workflowEvents.action, "memory_undone"),
+        ),
+      );
+    expect(undone).toHaveLength(1);
+    expect(undone[0]).toMatchObject({
+      actorType: "user",
+      actorId: fixture.reviewerId,
+      data: { reason: "jev_approval_undone" },
+    });
+    const [row] = await db
+      .select()
+      .from(classificationMemories)
+      .where(eq(classificationMemories.id, memory.memoryId));
+    expect(row).toMatchObject({ undos: 1, consecutiveUndos: 1, enabled: true });
+    const [label] = await db
+      .select()
+      .from(aiRunFeedback)
+      .where(
+        and(
+          eq(aiRunFeedback.organizationId, fixture.orgId),
+          eq(aiRunFeedback.labelKey, `inbox_approve:${paper.candidate.id}:${candidate.revision}`),
+        ),
+      );
+    expect(label).toMatchObject({
+      verdict: "rejected",
+      laneEvidence: { source: "memory", action: "undo", autoApproved: true },
+    });
   });
 });

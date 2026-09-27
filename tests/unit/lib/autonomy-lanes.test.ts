@@ -22,21 +22,21 @@ const verdicts = (accepted: number, other: number) => [
 
 describe("lane eligibility (AUTONOMY_CRITERIA, shared with per-kind autonomy)", () => {
   it("needs 200 labels before anything else counts", () => {
-    expect(judgeAutonomyEligibility(199, 199, "papers")).toMatchObject({
+    expect(judgeAutonomyEligibility(199, 199, "Jev answers")).toMatchObject({
       eligible: false,
       remaining: 1,
-      reason: "Needs 1 more reviewed papers (199/200).",
+      reason: "Needs 1 more reviewed Jev answers (199/200).",
     });
   });
 
   it("needs at least 98% accepted", () => {
-    expect(judgeAutonomyEligibility(200, 195, "papers")).toMatchObject({
+    expect(judgeAutonomyEligibility(200, 195, "Jev answers")).toMatchObject({
       eligible: false,
       reason: "Acceptance rate 97.5% is below the required 98%.",
     });
-    expect(judgeAutonomyEligibility(200, 196, "papers")).toMatchObject({
+    expect(judgeAutonomyEligibility(200, 196, "Jev answers")).toMatchObject({
       eligible: true,
-      reason: "Eligible: 98.0% accepted across 200 papers.",
+      reason: "Eligible: 98.0% accepted across 200 Jev answers.",
     });
   });
 
