@@ -652,6 +652,28 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Inbox v2 classification memories (classification_memories) — standard tenant
+-- isolation. Written by request code through the server-context wrappers
+-- ("Remember this?", Settings) and read and counted by inbox stage 2 in
+-- withOrgContext(candidate.organization_id, ...). A memory from one
+-- organization must never answer another organization's paper.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'classification_memories'
+  ) THEN
+    ALTER TABLE classification_memories ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_classification_memories ON classification_memories;
+    CREATE POLICY org_isolation_classification_memories ON classification_memories FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for classification_memories';
+  END IF;
+END $$;
+
+-- ============================================================================
 -- AI telemetry (ai_invocations)
 -- Append-only telemetry written OUTSIDE org context on the raw pool connection
 -- (see src/lib/ai/invoke.ts) so rows survive caller-transaction rollback.
