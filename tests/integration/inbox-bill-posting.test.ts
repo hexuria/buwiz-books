@@ -42,6 +42,7 @@ import { postBillAccrualJournal } from "@/lib/bill-journal";
 import {
   approveInboxItem,
   BILL_ALREADY_ACCRUED_MESSAGE,
+  BILL_DELETED_MESSAGE,
   BILL_VOIDED_MESSAGE,
   rejectInboxItem,
   type ApproveInboxResult,
@@ -804,17 +805,7 @@ describe("a bill the Bills page settled while its Inbox item was pending", () =>
     ).toHaveLength(0);
 
     // The person resolves it by rejecting; the ledger and the bill stay put.
-    const rejected = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
-      rejectInboxItem(
-        { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
-        {
-          inboxItemId: submitted.inboxItemId,
-          expectedLockVersion: itemAfter.lockVersion,
-          reason: "Already approved in Bills.",
-        },
-      ),
-    );
-    expect(rejected.state).toBe("rejected");
+    await rejectPendingItem(fixture, submitted.inboxItemId, "Already approved in Bills.");
     expect(await orgJournals(fixture.orgId)).toHaveLength(1);
     const [billAfter] = await orgBills(fixture.orgId);
     expect(billAfter).toMatchObject({ status: "awaiting_payment", journalHeaderId: accrualId });
@@ -834,8 +825,37 @@ describe("a bill the Bills page settled while its Inbox item was pending", () =>
     expect(await orgJournals(fixture.orgId)).toHaveLength(0);
     const [bill] = await orgBills(fixture.orgId);
     expect(bill).toMatchObject({ status: "voided", journalHeaderId: null });
+    await rejectPendingItem(fixture, submitted.inboxItemId, "Voided in Bills.");
+  });
+
+  it("refuses to recreate a bill that was deleted in Bills", async () => {
+    const fixture = await setupOrganization("bill-deleted");
+    await disableRule(fixture, "missing_invoice");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    // Deleted on the Bills page while in review: deleteBill had no accrual to
+    // void, so the row (and its line items, by cascade) is simply gone.
+    await db.delete(bills).where(eq(bills.id, submitted.id));
+
+    await expect(approve(fixture, submitted.inboxItemId)).rejects.toThrow(BILL_DELETED_MESSAGE);
+    expect(await orgJournals(fixture.orgId)).toHaveLength(0);
+    expect(await orgBills(fixture.orgId)).toHaveLength(0);
+    await rejectPendingItem(fixture, submitted.inboxItemId, "Deleted in Bills.");
+    expect(await orgBills(fixture.orgId)).toHaveLength(0);
   });
 });
+
+/** A refused item is still open, and rejecting it is how a person resolves it. */
+async function rejectPendingItem(fixture: Fixture, inboxItemId: string, reason: string) {
+  const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, inboxItemId));
+  expect(item.state).toBe("ready_for_review");
+  const rejected = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+    rejectInboxItem(
+      { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
+      { inboxItemId, expectedLockVersion: item.lockVersion, reason },
+    ),
+  );
+  expect(rejected.state).toBe("rejected");
+}
 
 describe("postTransactionCore", () => {
   const balanced = (fixture: Fixture, amount: string) => [

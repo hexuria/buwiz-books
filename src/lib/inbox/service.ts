@@ -857,6 +857,9 @@ export const BILL_ALREADY_ACCRUED_MESSAGE =
 export const BILL_VOIDED_MESSAGE =
   "This bill was voided in Bills. Reject this Inbox item instead of approving it.";
 
+export const BILL_DELETED_MESSAGE =
+  "This bill was deleted in Bills. Reject this Inbox item instead of approving it.";
+
 export type ApproveInboxResult =
   | {
       approvalOutcome: "approved";
@@ -931,15 +934,18 @@ export async function approveInboxItem(
     }
   }
 
-  // A Bills-editor bill can be approved, scheduled or paid on the Bills page
-  // while its Inbox item is still pending, and each of those posts the
-  // accrual there. Accruing it again here would double the payable and
-  // repoint the bill's journal_header_id, and approving a voided bill would
-  // revive it. Both are refused; the item stays open for a person to reject.
+  // A Bills-editor bill can be approved, scheduled, paid, voided or deleted on
+  // the Bills page while its Inbox item is still pending. Accruing it here
+  // afterwards would double the payable and repoint the bill's
+  // journal_header_id, revive a voided bill, or recreate a deleted one. All
+  // are refused; the item stays open for a person to reject.
   const existingBill =
     row.candidate.candidateType === "bill"
       ? await lockCandidateBill(db, orgId, row.sourceRecordExternalId)
       : null;
+  if (row.candidate.candidateType === "bill" && row.sourceRecordExternalId && !existingBill) {
+    throw new Error(BILL_DELETED_MESSAGE);
+  }
   if (existingBill?.journalHeaderId) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
   if (existingBill?.status === "voided") throw new Error(BILL_VOIDED_MESSAGE);
 
