@@ -224,6 +224,8 @@ async function listed(fixture: Fixture, inboxItemId: string) {
 }
 
 const LOOKALIKES = ["Acme Supply Co", "Acme Supplies Ltd", "Acmex Logistics"];
+/** The uncategorized book rule's message: the fix a classified paper's empty payment side needs. */
+const UNCATEGORIZED_MESSAGE = "Choose a leaf category for every posting line.";
 
 describe("Inbox v2 reasons from stage 2's real output", () => {
   it("names a below-threshold category behind the fix the payment side still needs, until a person settles it", async () => {
@@ -247,10 +249,15 @@ describe("Inbox v2 reasons from stage 2's real output", () => {
       predictionEvidence: { source: "inbox_classification", outcome: "low_confidence" },
     });
     // Stage 2 never picks the payment side, so the entry still needs a fix; the strip also says
-    // what the model was unsure of. No pick was applied, so there is no Jev badge.
+    // what the model was unsure of. No pick was applied, so there is no Jev badge. The same pass
+    // left the dimensions missing too, all first seen at the same instant: the named fix must
+    // not depend on which of those findings happened to get the lowest random id.
     const unsettled = await listed(fixture, inboxItemId);
-    expect(unsettled).toMatchObject({ reason: "needs_fix", sourceBadge: null });
-    expect(unsettled.reasonText).toMatch(/ Jev isn't sure about the category \(41% sure\)\.$/);
+    expect(unsettled).toMatchObject({
+      reason: "needs_fix",
+      sourceBadge: null,
+      reasonText: `${UNCATEGORIZED_MESSAGE} Jev isn't sure about the category (41% sure).`,
+    });
 
     // The reviewer's correction is the answer: the doubt goes with the system's lines.
     const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, inboxItemId));
@@ -301,13 +308,12 @@ describe("Inbox v2 reasons from stage 2's real output", () => {
     expect(result).toMatchObject({ party: { outcome: "unresolved", linkedPartyId: null } });
 
     const row = await listed(fixture, inboxItemId);
-    // The confident category pick is Jev's; the counterparty was not.
+    // The confident category pick is Jev's; the counterparty was not. No category doubt.
     expect(row).toMatchObject({
       reason: "needs_fix",
       sourceBadge: { kind: "jev", confidence: 0.93 },
+      reasonText: `${UNCATEGORIZED_MESSAGE} Jev isn't sure about the vendor or customer (50% sure).`,
     });
-    expect(row.reasonText).toMatch(/ Jev isn't sure about the vendor or customer \(50% sure\)\.$/);
-    expect(row.reasonText).not.toMatch(/category/);
   });
 
   it("names both failures when the model gave no usable answer at all", async () => {
@@ -320,11 +326,10 @@ describe("Inbox v2 reasons from stage 2's real output", () => {
 
     await classify(fixture, candidate, unavailable);
 
-    const row = await listed(fixture, inboxItemId);
-    expect(row.reason).toBe("needs_fix");
-    expect(row.reasonText).toMatch(
-      / Jev couldn't choose a category\. Jev couldn't match the vendor or customer\.$/,
-    );
+    expect(await listed(fixture, inboxItemId)).toMatchObject({
+      reason: "needs_fix",
+      reasonText: `${UNCATEGORIZED_MESSAGE} Jev couldn't choose a category. Jev couldn't match the vendor or customer.`,
+    });
   });
 });
 
@@ -408,7 +413,7 @@ describe("Jev unsure when the model's doubt is all that blocks the entry", () =>
     expect(await listed(fixture, typed.id)).toMatchObject({
       reason: "needs_fix",
       reasonDetail: "blocking_finding",
-      reasonText: "Choose a leaf category for every posting line.",
+      reasonText: UNCATEGORIZED_MESSAGE,
     });
   });
 

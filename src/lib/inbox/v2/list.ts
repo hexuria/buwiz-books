@@ -138,6 +138,8 @@ export async function listInboxV2Items(
                  (tcs.relationship = 'origin') desc
         limit 1
       )`,
+      // One evaluation writes an item's findings together, so first_seen_at ties; the rule key
+      // breaks the tie rather than the random id. deriveInboxV2Reason ranks the fix itself.
       openFindings: sql<unknown>`coalesce((
         select json_agg(
           json_build_object(
@@ -166,7 +168,7 @@ export async function listInboxV2Items(
               )
             )
           )
-          order by rf.first_seen_at, rf.id
+          order by rf.first_seen_at, rf.rule_key, rf.id
         )
         from review_findings rf
         where rf.organization_id = ${inboxItems.organizationId}

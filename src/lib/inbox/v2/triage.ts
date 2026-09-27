@@ -25,6 +25,7 @@
  * Papers still being read (received / processing) need nobody yet: the list counts them instead
  * of giving them a reason.
  */
+import { BOOK_RULE_KEYS } from "../rules";
 import { isVendorBillCandidate } from "../vendor-bill";
 
 /** In filter-chip order. */
@@ -112,6 +113,34 @@ export const LOW_CONFIDENCE_CATEGORY_RULE = "low_confidence_category";
 const UNCATEGORIZED_RULE = "uncategorized";
 const MISSING_PARTY_RULES = new Set(["missing_vendor", "missing_customer"]);
 
+/**
+ * Which blocking check names the fix when several are open. One evaluation writes all of an
+ * item's findings in a single transaction, so they share `first_seen_at`, and ordering by time
+ * left the choice to random ids: two identical papers could name different fixes. The order is
+ * fixed instead — what makes booking the paper unsafe first (payee bank details that changed, a
+ * possible duplicate), then the book rules in the order they are evaluated. Anything else comes
+ * after, in the order the list reads it (first seen, then rule key).
+ */
+const FIX_PRECEDENCE: readonly string[] = [
+  "party_payment_details_changed",
+  "possible_duplicate",
+  ...BOOK_RULE_KEYS,
+];
+
+function fixRank(ruleKey: string): number {
+  const rank = FIX_PRECEDENCE.indexOf(ruleKey);
+  return rank === -1 ? FIX_PRECEDENCE.length : rank;
+}
+
+/** The finding that names the fix: lowest FIX_PRECEDENCE rank, earliest in the given order. */
+function firstFix(findings: readonly InboxV2OpenFinding[]): InboxV2OpenFinding | undefined {
+  let chosen: InboxV2OpenFinding | undefined;
+  for (const finding of findings) {
+    if (!chosen || fixRank(finding.ruleKey) < fixRank(chosen.ruleKey)) chosen = finding;
+  }
+  return chosen;
+}
+
 function result(
   reason: InboxV2Reason,
   detail: InboxV2ReasonDetail,
@@ -164,8 +193,10 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
   );
   const unsureParty = signals.some((signal) => signal.subject === "party");
 
-  const blocking = findings.find(
-    (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
+  const blocking = firstFix(
+    findings.filter(
+      (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
+    ),
   );
   if (blocking) return result("needs_fix", "blocking_finding", signals, blocking);
   // Judged on the entry, not the lifecycle state: stage 2 fills lines without moving an item

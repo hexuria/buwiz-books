@@ -111,6 +111,37 @@ describe("deriveInboxV2Reason", () => {
     expect(describeInboxV2Reason(reason)).toBe("Assign a vendor to this expense transaction.");
   });
 
+  it("names the same fix whatever order the open checks arrive in", () => {
+    // One evaluation writes all of an item's findings at once, so their first_seen_at ties and
+    // the list's order among them is not a meaningful signal. The named fix must not depend on it.
+    const unsafe = [blocking("party_payment_details_changed"), blocking("possible_duplicate")];
+    const bookChecks = [
+      blocking("missing_location"),
+      blocking("missing_invoice"),
+      blocking("uncategorized", UNCATEGORIZED_MESSAGE, [1]),
+      blocking("missing_department"),
+      blocking("a_future_rule"),
+    ];
+    const named = (findings: InboxV2OpenFinding[]) =>
+      [findings, [...findings].reverse()].map(
+        (openFindings) => reasonFor({ openFindings }).ruleKey,
+      );
+
+    // Unsafe to book first: changed payee bank details, then a possible duplicate.
+    expect(named([...bookChecks, ...unsafe])).toEqual([
+      "party_payment_details_changed",
+      "party_payment_details_changed",
+    ]);
+    expect(named([...bookChecks, unsafe[1]])).toEqual(["possible_duplicate", "possible_duplicate"]);
+    // Then the book rules in evaluation order, and only then a rule this code does not know.
+    expect(named(bookChecks)).toEqual(["uncategorized", "uncategorized"]);
+    expect(named(bookChecks.slice(3))).toEqual(["missing_department", "missing_department"]);
+    // Among rules it does not know, the list's order (first seen, then rule key) decides.
+    expect(reasonFor({ openFindings: [blocking("b_rule"), blocking("a_rule")] }).ruleKey).toBe(
+      "b_rule",
+    );
+  });
+
   it("needs a fix while the entry lacks lines or an account, even with no finding open", () => {
     for (const entry of [
       { lineCount: 0, linesWithoutAccount: [] },
