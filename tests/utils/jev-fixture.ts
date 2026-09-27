@@ -14,11 +14,9 @@ import { documents } from "@/db/schema/documents";
 import {
   inboxItems,
   organizationAccountingSettings,
-  reviewFindings,
   reviewRuleConfigs,
   reviewRuleDefinitions,
   sourceRecords,
-  transactionCandidateLines,
   transactionCandidates,
 } from "@/db/schema/inbox";
 import { parties } from "@/db/schema/parties";
@@ -425,54 +423,6 @@ export async function disableRule(orgId: string, key: string) {
       target: [reviewRuleConfigs.organizationId, reviewRuleConfigs.definitionId],
       set: { enabled: false },
     });
-}
-
-/**
- * Stands in for build step 10: a remembered answer fills the payment side
- * stage 2 leaves unpicked, on a new candidate revision, and the `uncategorized`
- * check that blank line tripped is re-evaluated away with it.
- */
-export async function rememberPaymentSide(
-  fixture: JevFixture,
-  input: { candidateId: string; inboxItemId: string; accountId: string },
-) {
-  await asOrg(fixture, async (tx) => {
-    const [candidate] = await tx
-      .select()
-      .from(transactionCandidates)
-      .where(eq(transactionCandidates.id, input.candidateId))
-      .for("update");
-    const lines = await tx
-      .select()
-      .from(transactionCandidateLines)
-      .where(eq(transactionCandidateLines.candidateId, input.candidateId));
-    const blank = lines.find((line) => line.accountId === null);
-    if (!blank) throw new Error("No blank line to remember.");
-    await tx
-      .update(transactionCandidateLines)
-      .set({ accountId: input.accountId, predictionEvidence: { source: "memory" } })
-      .where(eq(transactionCandidateLines.id, blank.id));
-    const next = candidate.revision + 1;
-    await tx
-      .update(transactionCandidates)
-      .set({ revision: next })
-      .where(eq(transactionCandidates.id, input.candidateId));
-    const [item] = await tx.select().from(inboxItems).where(eq(inboxItems.id, input.inboxItemId));
-    await tx
-      .update(inboxItems)
-      .set({ candidateRevision: next, lockVersion: item.lockVersion + 1 })
-      .where(eq(inboxItems.id, input.inboxItemId));
-    await tx
-      .update(reviewFindings)
-      .set({ state: "resolved", resolvedAt: new Date(), resolutionNote: "Remembered answer." })
-      .where(
-        and(
-          eq(reviewFindings.inboxItemId, input.inboxItemId),
-          eq(reviewFindings.ruleKey, "uncategorized"),
-          eq(reviewFindings.state, "open"),
-        ),
-      );
-  });
 }
 
 /**

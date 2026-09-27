@@ -40,10 +40,15 @@ import {
   transactionCandidates,
   workflowEvents,
 } from "@/db/schema/inbox";
-import { journalHeaders } from "@/db/schema/journals";
+import { classificationMemories } from "@/db/schema/classification-memories";
+import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { updateOrgAiConfig } from "@/lib/ai/org-ai-config";
-import { classifyInboxCandidate } from "@/lib/inbox/candidate-classification";
+import {
+  CLASSIFY_INBOX_CANDIDATE_JOB_TYPE,
+  candidateClassificationDedupeKey,
+} from "@/lib/inbox/candidate-classification-job";
 import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
+import { latestJevProposal } from "@/lib/inbox/jev-approval/proposal";
 import { undoJevApproval } from "@/lib/inbox/jev-approval/undo";
 import { approveInboxItem } from "@/lib/inbox/service";
 import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
@@ -52,12 +57,14 @@ import { JEV_AUTO_APPROVE_JOB_TYPE } from "@/lib/inbox/jev-approval/auto-approve
 import { JEV_AUTO_APPROVAL_HELD_ACTION } from "@/lib/inbox/jev-approval/feedback";
 import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
 import { updateJevApprovalSettings } from "@/lib/inbox/jev-approval/settings";
+import { processClassifyInboxCandidateJob } from "@/lib/jobs/handlers/classify-inbox-candidate";
 import { processJevAutoApproveJob } from "@/lib/jobs/handlers/jev-auto-approve";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   asOrg,
+  classifyPaper,
   disableRule,
-  rememberPaymentSide,
+  rememberVendorReceipts,
   setJevApprovalSettings,
   setLaneAuto,
   setupJevOrganization,
@@ -509,58 +516,121 @@ describeDb("Jev approves papers on an auto lane", () => {
     expect(await journalsFor(paper.candidate.id)).toBeNull();
   });
 
-  it("end to end: stage 2 on a stubbed classifier, a remembered payment side, Jev approves, a person undoes", async () => {
-    const { fixture, laneId } = await autoLaneOrganization("jev-auto-e2e");
-    // This organization does not track departments or locations.
+  it("end to end: stage 2 on a stubbed classifier leaves the payment side open, so nothing is queued", async () => {
+    const { fixture, laneId } = await autoLaneOrganization("jev-auto-e2e-open");
     await disableRule(fixture.orgId, "missing_department");
     await disableRule(fixture.orgId, "missing_location");
-    const { candidate, inboxItemId } = await uploadPaper(fixture, {});
-
-    const classified = await classifyInboxCandidate(
-      { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: candidate.revision },
-      {
-        complete: stubbedJevClassifier("67200", 0.97),
-        beforeCommit: async (tx) => {
-          await recordJevProposalAfterClassification(tx, {
-            orgId: fixture.orgId,
-            candidateId: candidate.id,
-          });
-          return true;
-        },
-      },
-    );
+    const { candidate } = await uploadPaper(fixture, {});
+    const classified = await classifyPaper(fixture, candidate, stubbedJevClassifier("67200", 0.97));
     expect(classified).toMatchObject({ status: "classified", party: { outcome: "exact" } });
-    // Stage 2 never picks the payment side: nothing queued yet.
-    expect(await queuedJevJobs(fixture)).toEqual([]);
-
-    await rememberPaymentSide(fixture, {
-      candidateId: candidate.id,
-      inboxItemId,
-      accountId: fixture.bank.id,
-    });
     const proposal = await asOrg(fixture, (tx) =>
-      recordJevProposalAfterClassification(tx, { orgId: fixture.orgId, candidateId: candidate.id }),
+      latestJevProposal(tx, fixture.orgId, candidate.id),
+    );
+    // Jev's pick is confident, but a paper stage 2 alone read is never complete.
+    expect(proposal).toMatchObject({ laneId, source: "jev", confidence: 0.97 });
+    expect(proposal!.evaluation.holds.map((hold) => hold.reason)).toContain("incomplete_entry");
+    expect(await queuedJevJobs(fixture)).toEqual([]);
+  });
+
+  it("end to end: a remembered receipt on an auto lane posts by itself, and an undo counts against lane and memory", async () => {
+    const fixture = await readyOrganization("jev-auto-e2e");
+    // A reviewer settled one receipt from the vendor and asked Jev to remember it.
+    const { first, memory } = await rememberVendorReceipts(fixture);
+    const firstProposal = await asOrg(fixture, (tx) =>
+      latestJevProposal(tx, fixture.orgId, first.candidate.id),
+    );
+    // The vendor's expense lane has earned auto on Jev's own answers.
+    const laneId = firstProposal!.laneId;
+    await setLaneAuto(laneId, { amountCap: "500", confidenceThreshold: "0.95" });
+
+    // The vendor's next receipt: intake queues stage 2, and its real job runs
+    // under AI_MODE=mock — the memory answers, so no model is asked anything.
+    const next = await uploadPaper(fixture, { amount: "52.10", date: "2026-08-25" });
+    const workerId = `test-worker-${randomUUID()}`;
+    const [classifyJob] = await db
+      .update(processingJobs)
+      .set({
+        status: "running",
+        lockedBy: workerId,
+        lockedUntil: new Date(Date.now() + 60_000),
+        attempts: 1,
+      })
+      .where(
+        and(
+          eq(processingJobs.organizationId, fixture.orgId),
+          eq(processingJobs.jobType, CLASSIFY_INBOX_CANDIDATE_JOB_TYPE),
+          eq(
+            processingJobs.dedupeKey,
+            candidateClassificationDedupeKey(next.candidate.id, next.candidate.revision),
+          ),
+        ),
+      )
+      .returning();
+    expect(await processClassifyInboxCandidateJob(classifyJob, { workerId })).toMatchObject({
+      processed: true,
+      memory: { outcome: "hit", matchKind: "party", memoryIds: [memory.memoryId] },
+      readyForReview: true,
+    });
+
+    const proposal = await asOrg(fixture, (tx) =>
+      latestJevProposal(tx, fixture.orgId, next.candidate.id),
     );
     expect(proposal).toMatchObject({
       laneId,
-      source: "jev",
-      confidence: 0.97,
+      source: "memory",
+      confidence: 1,
       evaluation: { approve: true, holds: [] },
     });
-    const { result } = await runQueuedJevJob(fixture, candidate.id, proposal!.candidateRevision);
-    expect(result).toMatchObject({ status: "approved", laneId });
+    const { result } = await runQueuedJevJob(
+      fixture,
+      next.candidate.id,
+      proposal!.candidateRevision,
+    );
+    expect(result).toMatchObject({ processed: true, status: "approved", laneId });
 
+    // Posted as Jev, exactly the remembered entry at this receipt's own amount.
     const [journal] = await db
       .select()
       .from(journalHeaders)
       .where(eq(journalHeaders.id, result.journalHeaderId as string));
     expect(journal).toMatchObject({
+      status: "posted",
       createdBy: JEV_AUDIT_ACTOR_ID,
-      totalAmount: "48.60000000",
-      transactionDate: "2026-08-23",
+      totalAmount: "52.10000000",
+      transactionDate: "2026-08-25",
       partyId: fixture.vendor.id,
     });
+    const posted = await db
+      .select({
+        accountId: journalLines.accountId,
+        debit: journalLines.debit,
+        credit: journalLines.credit,
+      })
+      .from(journalLines)
+      .where(eq(journalLines.journalHeaderId, journal.id));
+    expect(posted).toEqual(
+      expect.arrayContaining([
+        { accountId: fixture.officeSupplies.id, debit: "52.10000000", credit: null },
+        { accountId: fixture.bank.id, debit: null, credit: "52.10000000" },
+      ]),
+    );
+    expect(posted).toHaveLength(2);
+    // The memory's answer, approved unchanged, is confirmed — by Jev.
+    const [confirmed] = await db
+      .select()
+      .from(workflowEvents)
+      .where(
+        and(
+          eq(workflowEvents.entityId, next.candidate.id),
+          eq(workflowEvents.action, "memory_confirmed"),
+        ),
+      );
+    expect(confirmed).toMatchObject({ actorType: "system", actorId: JEV_AUDIT_ACTOR_ID });
+    let list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.some((row) => row.id === next.inboxItemId)).toBe(false);
 
+    // A person disagrees: reversal only, the paper back in the Inbox, and both
+    // the lane and the memory count it.
     const undone = await asOrg(
       fixture,
       (tx) =>
@@ -574,14 +644,23 @@ describeDb("Jev approves papers on an auto lane", () => {
     const [label] = await db
       .select()
       .from(aiRunFeedback)
-      .where(eq(aiRunFeedback.organizationId, fixture.orgId));
+      .where(
+        and(eq(aiRunFeedback.organizationId, fixture.orgId), eq(aiRunFeedback.verdict, "rejected")),
+      );
     expect(label).toMatchObject({
       laneId,
-      verdict: "rejected",
-      laneEvidence: { autoApproved: true, confidence: 0.97 },
+      laneEvidence: { source: "memory", autoApproved: true, confidence: 1 },
     });
-    const list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
-    expect(list.items.find((row) => row.id === inboxItemId)?.reason).toBe("ready");
+    const [remembered] = await db
+      .select()
+      .from(classificationMemories)
+      .where(eq(classificationMemories.id, memory.memoryId));
+    expect(remembered).toMatchObject({ undos: 1, consecutiveUndos: 1 });
+    list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((row) => row.id === next.inboxItemId)).toMatchObject({
+      reason: "ready",
+      reasonDetail: "remembered",
+    });
   });
 });
 
