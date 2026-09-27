@@ -62,13 +62,25 @@ describe("bill mutation wiring", () => {
   const source = readFileSync(join(__dirname, "../..", "src/routes/api/-bills.ts"), "utf-8");
 
   it("createBill validates references before persisting", () => {
+    // createBill delegates to the session-free bill core (Inbox v2 step 3);
+    // the check it pinned now lives there, still ahead of the insert.
     const createBlock = source.slice(
       source.indexOf("export const createBill"),
       source.indexOf("export const updateBill"),
     );
-    expect(createBlock).toContain(
-      "await assertBillReferences(db, orgId, parsed.vendorId, parsed.lineItems)",
-    );
+    expect(createBlock).toContain("submitBillForReviewCore(db, orgId,");
+    const core = readFileSync(join(__dirname, "../..", "src/lib/posting/bill-core.ts"), "utf-8");
+    for (const [start, end] of [
+      ["async function createBillForReview", "async function createPostedBill"],
+      ["async function createPostedBill", "export async function touchesAccountsPayable"],
+    ]) {
+      const block = core.slice(core.indexOf(start), core.indexOf(end));
+      const check = block.indexOf(
+        "await assertBillReferences(db, orgId, draft.vendorId, lineItems)",
+      );
+      expect(check, start).toBeGreaterThan(-1);
+      expect(check, start).toBeLessThan(block.indexOf(".insert(bills)"));
+    }
   });
 
   it("updateBill guards amount edits and derives balanceDue in cents", () => {
