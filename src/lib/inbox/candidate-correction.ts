@@ -1,4 +1,4 @@
-import { and, eq, inArray, notInArray } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { dimensions } from "@/db/schema/dimensions";
@@ -15,6 +15,7 @@ import {
   workflowEvents,
 } from "@/db/schema/inbox";
 import { parties } from "@/db/schema/parties";
+import { mappedAccountFamilyIds } from "@/lib/coa/resolve-mapped-account";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import {
   DUPLICATE_MATCHER_VERSION,
@@ -70,6 +71,11 @@ export interface CandidateCorrectionLineInput {
   lineDescription?: string | null;
   departmentId?: string | null;
   locationId?: string | null;
+  /**
+   * The line's counterparty. `null` clears it. Omitted, the line keeps the party it should have:
+   * see resolveCorrectionLinePartyIds.
+   */
+  partyId?: string | null;
 }
 
 export interface CorrectInboxCandidateInput {
@@ -95,6 +101,71 @@ export function isCandidateEnrichmentFactComplete(fact: DocumentSourceFacts): bo
     fact.direction !== "unknown" &&
     fact.economicEventClass !== "other"
   );
+}
+
+/**
+ * The counterparty each corrected line carries. A correction replaces every line, and until now
+ * wrote none of their parties back, so the vendor fell off a bill's payable line (and any per-line
+ * party off a journal) the moment a reviewer saved an edit.
+ *
+ * An explicit `partyId` (null included) wins. Otherwise a payable or receivable line takes the
+ * entry's party — a payable is owed to the bill's vendor, which is how the Bills editor writes it —
+ * and any other line keeps the party of the line it replaces: the unused previous line on the same
+ * account and side. A line with no such predecessor has no party.
+ */
+export function resolveCorrectionLinePartyIds(
+  lines: ReadonlyArray<{
+    accountId: string;
+    originalDebit: string | null;
+    partyId?: string | null;
+  }>,
+  previousLines: ReadonlyArray<{
+    accountId: string | null;
+    originalDebit: string | null;
+    partyId: string | null;
+  }>,
+  context: { entryPartyId: string | null; counterpartyAccountIds: ReadonlySet<string> },
+): Array<string | null> {
+  const unused = previousLines.map((line) => ({ line, used: false }));
+  return lines.map((line) => {
+    if (line.partyId !== undefined) return line.partyId;
+    if (context.counterpartyAccountIds.has(line.accountId)) return context.entryPartyId;
+    const isDebit = line.originalDebit !== null;
+    const predecessor = unused.find(
+      (entry) =>
+        !entry.used &&
+        entry.line.accountId === line.accountId &&
+        (entry.line.originalDebit !== null) === isDebit,
+    );
+    if (!predecessor) return null;
+    predecessor.used = true;
+    return predecessor.line.partyId;
+  });
+}
+
+/**
+ * Payable and receivable accounts, by the aging reports' definition: the mapped A/P and A/R
+ * accounts with everything under them, plus any account with either subtype.
+ */
+async function counterpartyAccountIds(
+  db: DbExecutor,
+  orgId: string,
+  orgAccounts: ReadonlyArray<{ id: string; subtype: string | null }>,
+): Promise<Set<string>> {
+  const [payables, receivables] = await Promise.all([
+    mappedAccountFamilyIds(db, orgId, "bill", "accounts_payable"),
+    mappedAccountFamilyIds(db, orgId, "invoice", "accounts_receivable"),
+  ]);
+  return new Set([
+    ...payables,
+    ...receivables,
+    ...orgAccounts
+      .filter(
+        (account) =>
+          account.subtype === "accounts_payable" || account.subtype === "account_receivable",
+      )
+      .map((account) => account.id),
+  ]);
 }
 
 type NormalizedCorrectionLine = CandidateCorrectionLineInput & {
@@ -610,6 +681,36 @@ export async function correctInboxCandidate(
   if (input.partyId && !party) {
     throw new Error("The selected vendor or customer does not belong to this organization.");
   }
+  const linePartyIdsGiven = [
+    ...new Set(normalizedLines.flatMap(({ partyId }) => (partyId ? [partyId] : []))),
+  ];
+  if (linePartyIdsGiven.length > 0) {
+    const ownedLineParties = await db
+      .select({ id: parties.id })
+      .from(parties)
+      .where(and(eq(parties.organizationId, orgId), inArray(parties.id, linePartyIdsGiven)));
+    if (ownedLineParties.length !== linePartyIdsGiven.length) {
+      throw new Error("Every line's vendor or customer must belong to this organization.");
+    }
+  }
+  const previousLines = await db
+    .select({
+      accountId: transactionCandidateLines.accountId,
+      originalDebit: transactionCandidateLines.originalDebit,
+      partyId: transactionCandidateLines.partyId,
+    })
+    .from(transactionCandidateLines)
+    .where(
+      and(
+        eq(transactionCandidateLines.organizationId, orgId),
+        eq(transactionCandidateLines.candidateId, row.candidate.id),
+      ),
+    )
+    .orderBy(asc(transactionCandidateLines.sortOrder));
+  const linePartyIds = resolveCorrectionLinePartyIds(normalizedLines, previousLines, {
+    entryPartyId: input.partyId ?? null,
+    counterpartyAccountIds: await counterpartyAccountIds(db, orgId, orgAccounts),
+  });
   const [primarySource] = primarySourceRecordId
     ? await db
         .select({
@@ -666,6 +767,7 @@ export async function correctInboxCandidate(
       originalCurrency,
       exchangeRate: resolvedFx.rate,
       lineDescription: line.lineDescription,
+      partyId: linePartyIds[index],
       departmentId: line.departmentId,
       locationId: line.locationId,
       sortOrder: index,

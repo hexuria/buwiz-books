@@ -69,6 +69,9 @@ the same Inbox items, so switching moves no data and open items carry over.
   into the editor. Shortcuts are ignored while typing.
 - A sales invoice from a paper is booked as an entry; approval does not create
   an invoice record yet.
+- A correction keeps each line's counterparty: payable and receivable lines
+  take the entry's vendor or customer, and other lines keep the party they had
+  unless the correction names one.
 
 ## Review policy
 
