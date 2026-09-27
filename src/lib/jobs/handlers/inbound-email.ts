@@ -956,6 +956,9 @@ export async function processInboundEmailJob(
         actorType: "system",
         idempotencyKey: `resend:${payload.emailId}:processed`,
         data: {
+          // The inbound email routine that received it (null for jobs
+          // queued before routines existed).
+          routineId: job.routineId,
           attachmentCount: emailResponse.data!.attachments.length,
           attachmentSourceRecordIds: processedAttachments.map(
             ({ childSourceRecordId }) => childSourceRecordId,

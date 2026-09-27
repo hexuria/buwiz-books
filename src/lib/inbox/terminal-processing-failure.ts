@@ -61,6 +61,54 @@ async function terminalizeAgentRunFailure(
 }
 
 /**
+ * Terminalize an exhausted `routine_webhook` job.
+ *
+ * The handler creates the Inbox item and completes the job in one
+ * transaction, so an exhausted job has no item to move to "Needs you" — the
+ * payload exists only as its ingestion event. That event is marked failed and
+ * the failure is written to workflow_events, so a stuck webhook delivery is
+ * visible rather than a row that quietly never becomes a paper.
+ */
+async function terminalizeRoutineWebhookFailure(
+  db: DbExecutor,
+  job: TerminalProcessingJob,
+  errorMessage: string,
+  now: Date,
+) {
+  if (!job.ingestionEventId) {
+    return { workflowTerminalized: false, reason: "no_workflow" as const };
+  }
+  await db
+    .update(ingestionEvents)
+    .set({ status: "failed", attempts: job.attempts, lastError: errorMessage, processedAt: now })
+    .where(
+      and(
+        eq(ingestionEvents.organizationId, job.organizationId),
+        eq(ingestionEvents.id, job.ingestionEventId),
+      ),
+    );
+  await db
+    .insert(workflowEvents)
+    .values({
+      organizationId: job.organizationId,
+      entityType: "processing_job",
+      entityId: job.id,
+      action: "source_processing_failed",
+      actorType: "system",
+      idempotencyKey: `inbox-job:${job.id}:terminal-failure`,
+      data: {
+        source: "routine_webhook",
+        ingestionEventId: job.ingestionEventId,
+        attempts: job.attempts,
+        maxAttempts: job.maxAttempts,
+        error: errorMessage,
+      },
+    })
+    .onConflictDoNothing();
+  return { workflowTerminalized: true, reason: "terminalized" as const };
+}
+
+/**
  * Apply the durable workflow side effects for a terminal processing failure.
  *
  * The processing_jobs row is fenced and transitioned by the caller. This
@@ -83,6 +131,9 @@ export async function terminalizeProcessingJobFailure(
   // exhausted statement_ocr job flipped its processing_jobs row to `failed`
   // while its agent_run stayed `running` forever — so the client poller
   // could never observe a terminal state and only ever timed out.
+  if (job.jobType === "routine_webhook") {
+    return terminalizeRoutineWebhookFailure(db, job, errorMessage, now);
+  }
   if (job.jobType !== "process_inbound_email") {
     return terminalizeAgentRunFailure(db, job, errorMessage);
   }
