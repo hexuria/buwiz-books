@@ -212,9 +212,10 @@ describe("Inbox v2 list", () => {
       clean.id,
     ]);
 
+    // Typed by hand with nothing open: ready to approve, not "Jev unsure".
     expect(byId.get(clean.id)).toMatchObject({
-      reason: "jev_unsure",
-      reasonDetail: "awaiting_approval",
+      reason: "ready",
+      reasonDetail: "ready",
       who: "Paper Street Supply",
       kind: "expense",
       originalCurrency: "USD",
@@ -233,8 +234,9 @@ describe("Inbox v2 list", () => {
       reasonDetail: "low_confidence",
       sourceBadge: { kind: "jev", confidence: 0.42 },
     });
+    // A confident, remembered answer is ready too; the badge says where it came from.
     expect(byId.get(remembered.id)).toMatchObject({
-      reason: "jev_unsure",
+      reason: "ready",
       sourceBadge: { kind: "remembered" },
     });
     expect(byId.get(failed.id)).toMatchObject({ state: "failed", reason: "failed" });
@@ -291,8 +293,8 @@ describe("Inbox v2 list", () => {
       .where(and(eq(reviewFindings.inboxItemId, item.id), eq(reviewFindings.state, "open")));
     expect((await list(org)).items[0]).toMatchObject({
       id: item.id,
-      reason: "jev_unsure",
-      reasonDetail: "awaiting_approval",
+      reason: "ready",
+      reasonDetail: "ready",
     });
   });
 });

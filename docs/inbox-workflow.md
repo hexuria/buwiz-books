@@ -55,11 +55,14 @@ the same Inbox items, so switching moves no data and open items carry over.
 
 - The list holds only what needs a person: open items and failed ones, never
   approved, rejected, or dismissed. The sidebar's Inbox badge is its length.
-- Each item carries one reason: **Failed** (the item failed, or its source could
-  not be processed), **Needs a fix** (an open blocking check, or details still
-  missing), **Jev unsure** (a low-confidence category, or — until autonomy lanes
-  exist — any item Jev is not cleared to approve on its own), and **Spot check**
-  (reserved for autonomy hold-back samples; nothing produces it yet).
+- Each item carries one reason, first match wins: **Failed** (the item failed,
+  or its source could not be processed), **Needs a fix** (an open blocking check,
+  or details still missing), **Jev unsure** (a real model-unsure signal, such as
+  a low-confidence category), **Spot check** (reserved for autonomy hold-back
+  samples; nothing produces it yet), and otherwise **Ready to approve** — a clean
+  entry, typed by hand or read confidently. An item still being processed also
+  falls through to Ready to approve; its strip says it is still being read, and
+  Approve stays off until processing finishes.
 - The reading pane is the real editor, prefilled: vendor bills open in the Bills
   editor, everything else in the New transaction editor on its tab. Its Save
   runs the candidate correction and the book checks; Approve first saves any

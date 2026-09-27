@@ -137,7 +137,14 @@ function listItem(
     originalTotal: "42.10000000",
     originalCurrency: "USD",
     reason,
-    reasonDetail: reason === "needs_fix" ? "blocking_finding" : "awaiting_approval",
+    reasonDetail:
+      reason === "needs_fix"
+        ? "blocking_finding"
+        : reason === "jev_unsure"
+          ? "low_confidence"
+          : reason === "failed"
+            ? "processing_failed"
+            : "ready",
     reasonText: `${who} reason`,
     sourceBadge: null,
     ...overrides,
@@ -154,6 +161,11 @@ const UNSURE_B = listItem("item-unsure-b", "Cafe Nero", "jev_unsure", {
   sourceBadge: { kind: "remembered" },
 });
 const FAILED = listItem("item-failed", "Scanned PDF", "failed", { state: "failed" });
+// Typed by hand, nothing open: ready to approve, not "Jev unsure".
+const READY = listItem("item-ready", "Dunder Paper", "ready", {
+  reasonText: "No check blocks it. Review the entry and approve it.",
+});
+const ALL_ITEMS = [FIX, UNSURE_A, UNSURE_B, FAILED, READY];
 
 function detailFor(item: InboxV2ListItem, overrides: Record<string, unknown> = {}) {
   return {
@@ -301,9 +313,9 @@ beforeEach(() => {
   editor.rendered = [];
   Object.assign(access, { approve: true, reject: true, update: true, resolve: true });
   setViewport(true);
-  api.listInboxV2.mockResolvedValue({ items: [FIX, UNSURE_A, UNSURE_B, FAILED], truncated: false });
+  api.listInboxV2.mockResolvedValue({ items: ALL_ITEMS, truncated: false });
   api.getInboxItem.mockImplementation(({ data }: { data: { id: string } }) => {
-    const item = [FIX, UNSURE_A, UNSURE_B, FAILED].find((entry) => entry.id === data.id)!;
+    const item = ALL_ITEMS.find((entry) => entry.id === data.id)!;
     return Promise.resolve(detailFor(item));
   });
   api.getInboxSettings.mockResolvedValue({
@@ -335,7 +347,7 @@ describe("Inbox v2 list", { timeout: 30_000 }, () => {
     expect(first).toHaveTextContent("Paid expense · 2 hours ago");
     expect(first).toHaveTextContent("$42.10");
     expect(within(first).getAllByText("Needs a fix")).toHaveLength(1);
-    expect(screen.getByText("4 need you")).toBeInTheDocument();
+    expect(screen.getByText("5 need you")).toBeInTheDocument();
   });
 
   it("filters by reason chip, with counts, and says when a filter is empty", async () => {
@@ -344,7 +356,7 @@ describe("Inbox v2 list", { timeout: 30_000 }, () => {
     await screen.findByText("Ace Hardware");
     const chips = screen.getByRole("toolbar", { name: "Filter by reason" });
 
-    expect(within(chips).getByRole("button", { name: /All\s*4/ })).toHaveAttribute(
+    expect(within(chips).getByRole("button", { name: /All\s*5/ })).toHaveAttribute(
       "aria-pressed",
       "true",
     );
@@ -358,11 +370,16 @@ describe("Inbox v2 list", { timeout: 30_000 }, () => {
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toHaveTextContent("Scanned PDF");
 
+    await user.click(within(chips).getByRole("button", { name: /Ready to approve\s*1/ }));
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Dunder Paper");
+    expect(within(rows()[0]).getByText("Ready to approve")).toBeInTheDocument();
+
     await user.click(within(chips).getByRole("button", { name: /Spot check\s*0/ }));
     expect(rows()).toHaveLength(0);
     expect(screen.getByText("No spot checks.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show all" }));
-    expect(rows()).toHaveLength(4);
+    expect(rows()).toHaveLength(5);
   });
 
   it('says "Nothing needs you." when the list is empty', async () => {
@@ -404,7 +421,10 @@ describe("Inbox v2 keyboard", { timeout: 30_000 }, () => {
     const user = userEvent.setup();
     api.rejectInbox.mockImplementation(async () => {
       // The server no longer lists a rejected item.
-      api.listInboxV2.mockResolvedValue({ items: [UNSURE_A, UNSURE_B, FAILED], truncated: false });
+      api.listInboxV2.mockResolvedValue({
+        items: [UNSURE_A, UNSURE_B, FAILED, READY],
+        truncated: false,
+      });
       return { rejected: true };
     });
     renderInbox();
@@ -474,7 +494,10 @@ describe("Inbox v2 approval", { timeout: 30_000 }, () => {
       },
     });
 
-    api.listInboxV2.mockResolvedValue({ items: [UNSURE_A, UNSURE_B, FAILED], truncated: false });
+    api.listInboxV2.mockResolvedValue({
+      items: [UNSURE_A, UNSURE_B, FAILED, READY],
+      truncated: false,
+    });
     await act(async () => {
       approval.resolve({
         approvalOutcome: "approved",

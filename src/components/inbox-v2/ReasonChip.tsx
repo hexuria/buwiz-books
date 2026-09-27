@@ -5,6 +5,7 @@ const REASON_CHIP_CLASSES: Record<InboxV2Reason, string> = {
   jev_unsure: "bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-200",
   spot_check: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-200",
   failed: "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
+  ready: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
 };
 
 /** The one chip that says why an Inbox item needs a human. */

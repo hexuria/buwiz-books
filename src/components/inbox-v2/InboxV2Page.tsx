@@ -46,6 +46,7 @@ const EMPTY_FILTER_TEXT: Record<InboxV2Reason, string> = {
   jev_unsure: "Jev is sure about everything here.",
   spot_check: "No spot checks.",
   failed: "Nothing failed.",
+  ready: "Nothing is ready to approve yet.",
 };
 
 const DECISION_KEY = ["inbox-v2", "decision"] as const;

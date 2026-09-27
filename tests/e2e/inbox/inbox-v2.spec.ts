@@ -72,7 +72,14 @@ test.describe("Inbox v2", () => {
     await page.goto("/inbox");
     await expect(page.getByRole("toolbar", { name: "Filter by reason" })).toBeVisible();
     await expect(page.getByText("Review queue")).toHaveCount(0);
-    for (const chip of ["All", "Needs a fix", "Jev unsure", "Spot check", "Failed"]) {
+    for (const chip of [
+      "All",
+      "Needs a fix",
+      "Jev unsure",
+      "Spot check",
+      "Failed",
+      "Ready to approve",
+    ]) {
       await expect(
         page.getByRole("toolbar", { name: "Filter by reason" }).getByRole("button", {
           name: new RegExp(`^${chip}`),

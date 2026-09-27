@@ -9,14 +9,21 @@
  *
  *   failed      the item failed, or its source could not be processed
  *   needs_fix   an open blocking finding, or the entry is still missing details
- *   jev_unsure  the model was not sure (low-confidence category, or a step-7 unsure signal)
+ *   jev_unsure  a real model-unsure signal: a low-confidence category, or a step-7 signal
  *   spot_check  a held-back sample of what Jev would have approved (step 11; never yet)
- *   jev_unsure  otherwise: nothing approves on its own until autonomy lanes exist (step 11),
- *               so a clean item is here because Jev is not cleared to approve it
+ *   ready       nothing above: a clean entry (typed by hand, or a confident paper) waiting for
+ *               approval. Items still being read land here too, with their own sentence.
  */
 import { isVendorBillCandidate } from "../vendor-bill";
 
-export const INBOX_V2_REASONS = ["needs_fix", "jev_unsure", "spot_check", "failed"] as const;
+/** In filter-chip order. */
+export const INBOX_V2_REASONS = [
+  "needs_fix",
+  "jev_unsure",
+  "spot_check",
+  "failed",
+  "ready",
+] as const;
 export type InboxV2Reason = (typeof INBOX_V2_REASONS)[number];
 
 export const INBOX_V2_REASON_LABELS: Record<InboxV2Reason, string> = {
@@ -24,6 +31,7 @@ export const INBOX_V2_REASON_LABELS: Record<InboxV2Reason, string> = {
   jev_unsure: "Jev unsure",
   spot_check: "Spot check",
   failed: "Failed",
+  ready: "Ready to approve",
 };
 
 /** Why the reason was chosen — drives the strip's sentence. */
@@ -35,7 +43,7 @@ export type InboxV2ReasonDetail =
   | "model_unsure"
   | "spot_check"
   | "still_processing"
-  | "awaiting_approval";
+  | "ready";
 
 export interface InboxV2OpenFinding {
   ruleKey: string;
@@ -120,10 +128,7 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
 
   if (input.spotCheck) return result("spot_check", "spot_check");
 
-  return result(
-    "jev_unsure",
-    IN_FLIGHT_STATES.has(input.state) ? "still_processing" : "awaiting_approval",
-  );
+  return result("ready", IN_FLIGHT_STATES.has(input.state) ? "still_processing" : "ready");
 }
 
 const SIGNAL_SUBJECTS: Record<ModelUnsureSignal["subject"], string> = {
@@ -151,9 +156,9 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
     case "spot_check":
       return "Spot check: Jev would have approved this. Your answer keeps its approvals honest.";
     case "still_processing":
-      return "Jev is still reading this paper.";
-    case "awaiting_approval":
-      return "Ready for your approval. Jev does not approve entries on its own yet.";
+      return "Still being read. It can be approved once processing finishes.";
+    case "ready":
+      return "No check blocks it. Review the entry and approve it.";
   }
 }
 

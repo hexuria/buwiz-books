@@ -5,6 +5,7 @@ import {
   deriveInboxV2SourceBadge,
   describeInboxV2Reason,
   formatSourceBadge,
+  INBOX_V2_REASON_LABELS,
   INBOX_V2_REASONS,
   type InboxV2OpenFinding,
 } from "../../../src/lib/inbox/v2/triage";
@@ -12,8 +13,8 @@ import { isInboxV2Enabled } from "../../../src/lib/inbox/v2/flag";
 
 /**
  * Inbox v2 shows only what needs a human, with exactly one reason per item (spec §10). These pin
- * the precedence — a failure outranks a fix, a fix outranks the model's doubt — and the fallback:
- * until autonomy lanes exist nothing approves on its own, so a clean item is "Jev unsure".
+ * the precedence — failed > needs_fix > jev_unsure > spot_check > ready — and that "Jev unsure"
+ * needs a real model-unsure signal: a clean or hand-entered item is "Ready to approve".
  */
 
 const blocking = (ruleKey: string, message = `${ruleKey} message`): InboxV2OpenFinding => ({
@@ -24,10 +25,15 @@ const blocking = (ruleKey: string, message = `${ruleKey} message`): InboxV2OpenF
 const warning = (ruleKey: string): InboxV2OpenFinding => ({ ruleKey, blocking: false });
 
 describe("deriveInboxV2Reason", () => {
-  it("offers exactly the four reason chips of the spec", () => {
-    expect([...INBOX_V2_REASONS].sort()).toEqual(
-      ["failed", "jev_unsure", "needs_fix", "spot_check"].sort(),
-    );
+  it("offers the spec's four reason chips plus Ready to approve, in chip order", () => {
+    expect([...INBOX_V2_REASONS]).toEqual([
+      "needs_fix",
+      "jev_unsure",
+      "spot_check",
+      "failed",
+      "ready",
+    ]);
+    expect(INBOX_V2_REASON_LABELS.ready).toBe("Ready to approve");
   });
 
   it("reports a failed item as failed, whatever else is open", () => {
@@ -85,7 +91,7 @@ describe("deriveInboxV2Reason", () => {
       state: "ready_for_review",
       openFindings: [warning("possible_duplicate"), warning("missing_receipt")],
     });
-    expect(reason).toMatchObject({ reason: "jev_unsure", detail: "awaiting_approval" });
+    expect(reason).toMatchObject({ reason: "ready", detail: "ready" });
   });
 
   it("is Jev unsure on a low-confidence category, blocking or not", () => {
@@ -109,7 +115,7 @@ describe("deriveInboxV2Reason", () => {
     expect(describeInboxV2Reason(reason)).toBe("Jev isn't sure about the vendor or customer.");
   });
 
-  it("marks a held-back sample as a spot check, but never over a real problem", () => {
+  it("marks a held-back sample as a spot check, but never over a real problem or doubt", () => {
     expect(
       deriveInboxV2Reason({ state: "ready_for_review", openFindings: [], spotCheck: true }),
     ).toMatchObject({ reason: "spot_check" });
@@ -120,16 +126,33 @@ describe("deriveInboxV2Reason", () => {
         spotCheck: true,
       }),
     ).toMatchObject({ reason: "needs_fix" });
+    expect(
+      deriveInboxV2Reason({
+        state: "ready_for_review",
+        openFindings: [],
+        modelUnsureSignals: [{ subject: "category", confidence: 0.3 }],
+        spotCheck: true,
+      }),
+    ).toMatchObject({ reason: "jev_unsure" });
   });
 
-  it("falls back to Jev unsure: nothing approves on its own yet", () => {
+  it("falls back to Ready to approve, never to Jev unsure", () => {
     const clean = deriveInboxV2Reason({ state: "ready_for_review", openFindings: [] });
-    expect(clean).toMatchObject({ reason: "jev_unsure", detail: "awaiting_approval" });
-    expect(describeInboxV2Reason(clean)).toMatch(/does not approve entries on its own yet/);
+    expect(clean).toMatchObject({ reason: "ready", detail: "ready" });
+    expect(describeInboxV2Reason(clean)).toBe(
+      "No check blocks it. Review the entry and approve it.",
+    );
+    // No signal at all, however it was entered: not Jev unsure.
+    expect(
+      deriveInboxV2Reason({ state: "ready_for_review", openFindings: [], modelUnsureSignals: [] })
+        .reason,
+    ).toBe("ready");
 
     const inFlight = deriveInboxV2Reason({ state: "processing", openFindings: [] });
-    expect(inFlight).toMatchObject({ reason: "jev_unsure", detail: "still_processing" });
-    expect(describeInboxV2Reason(inFlight)).toBe("Jev is still reading this paper.");
+    expect(inFlight).toMatchObject({ reason: "ready", detail: "still_processing" });
+    expect(describeInboxV2Reason(inFlight)).toBe(
+      "Still being read. It can be approved once processing finishes.",
+    );
   });
 });
 
