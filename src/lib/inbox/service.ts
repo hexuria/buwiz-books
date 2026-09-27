@@ -67,6 +67,8 @@ import type {
 import { resolveFxRate } from "./fx";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
 import { isVendorBillCandidate } from "./vendor-bill";
+import { recordJevLaneFeedback } from "./jev-approval/feedback";
+import { entrySnapshotOf } from "./jev-approval/proposal";
 
 type AccountingSettings = typeof organizationAccountingSettings.$inferSelect;
 
@@ -1346,6 +1348,15 @@ export async function approveInboxItem(
     },
     db,
   );
+  // A person approving a paper Jev proposed labels that proposal for its lane.
+  await recordJevLaneFeedback(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    action: "approve",
+    userId,
+    decided: entrySnapshotOf(row.candidate, lines),
+  });
 
   // A memory's answer approved as-is is an accepted hit; approved with a
   // different answer, an undo (src/lib/inbox/memory/tracking.ts).
@@ -1632,5 +1643,13 @@ export async function rejectInboxItem(
     },
     ctx.db,
   );
+  await recordJevLaneFeedback(ctx.db, {
+    orgId: ctx.orgId,
+    candidateId: candidate.id,
+    inboxItemId: item.id,
+    action: "reject",
+    userId: ctx.userId,
+    note: reason,
+  });
   return { id: item.id, state: "rejected" as const };
 }

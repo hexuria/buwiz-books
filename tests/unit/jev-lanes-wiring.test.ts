@@ -99,4 +99,25 @@ describe("Jev approval lanes wiring", () => {
       "WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id())",
     );
   });
+
+  it("records stage 2's proposal in the classify job's apply transaction, after completion", () => {
+    const handler = read("src/lib/jobs/handlers/classify-inbox-candidate.ts");
+    const completeAt = handler.indexOf("completeProcessingJob(tx, job.id, ctx.workerId)");
+    const recordAt = handler.indexOf("recordJevProposalAfterClassification(tx, {");
+    expect(completeAt).toBeGreaterThan(-1);
+    expect(recordAt).toBeGreaterThan(completeAt);
+    // The hook runs in a savepoint and never fails the classification.
+    const hook = read("src/lib/inbox/jev-approval/after-classification.ts");
+    expect(hook).toContain("tx.transaction((savepoint) => recordJevProposal(savepoint, input))");
+  });
+
+  it("labels every human decision on a proposal: approve, reject, correct", () => {
+    const service = read("src/lib/inbox/service.ts");
+    expect(service).toContain('action: "approve",');
+    expect(service).toContain('action: "reject",');
+    expect(service.match(/recordJevLaneFeedback\(/g)).toHaveLength(2);
+    const correction = read("src/lib/inbox/candidate-correction.ts");
+    expect(correction).toContain('action: "correct",');
+    expect(correction.match(/recordJevLaneFeedback\(/g)).toHaveLength(1);
+  });
 });

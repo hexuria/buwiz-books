@@ -50,6 +50,7 @@ import {
   PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
   raisePaymentDetailsFindingIfChanged,
 } from "./payment-details-check";
+import { recordJevLaneFeedback } from "./jev-approval/feedback";
 
 /**
  * Lines the system wrote and a reviewer never touched: the unselected
@@ -1067,6 +1068,24 @@ export async function correctInboxCandidate(
   for (const sourceRecordId of sourceRecordIds) {
     await runDuplicateMatchingForSource(ctx, sourceRecordId, "source_updated");
   }
+  // Changing what Jev proposed labels the proposal for its lane.
+  await recordJevLaneFeedback(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    action: "correct",
+    userId,
+    decided: {
+      transactionDate: input.transactionDate,
+      currency: originalCurrency,
+      partyId: input.partyId ?? null,
+      lines: normalizedLines.map((line) => ({
+        accountId: line.accountId,
+        debit: line.originalDebit,
+        credit: line.originalCredit,
+      })),
+    },
+  });
   return {
     inboxItem: updatedItem,
     candidateId: row.candidate.id,
