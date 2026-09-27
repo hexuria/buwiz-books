@@ -24,7 +24,9 @@ export type AiTaskName =
   | "txn_prefill"
   | "reflection"
   | "coa_draft"
-  | "category_mapping_suggest";
+  | "category_mapping_suggest"
+  | "categorize_lines"
+  | "match_party";
 
 /** Model-selection category for each task (drives resolveModelForTask). */
 export const AI_TASK_CATEGORY: Record<AiTaskName, AITaskCategory> = {
@@ -37,6 +39,8 @@ export const AI_TASK_CATEGORY: Record<AiTaskName, AITaskCategory> = {
   reflection: "textAnalysis",
   coa_draft: "textAnalysis",
   category_mapping_suggest: "textAnalysis",
+  categorize_lines: "textAnalysis",
+  match_party: "textAnalysis",
   receipt_ocr: "ocr",
   bill_ocr: "ocr",
   statement_ocr: "ocr",

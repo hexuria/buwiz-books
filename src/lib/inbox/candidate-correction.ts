@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, eq, inArray, notInArray } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { dimensions } from "@/db/schema/dimensions";
@@ -42,6 +42,26 @@ import {
 } from "./money";
 import { evaluateBookRules, type BookRuleAccount } from "./rules";
 import type { CandidateLineInput, InboxServiceContext } from "./types";
+import { enqueueCandidateClassification } from "./candidate-classification-job";
+import { collectDocumentFacts, loadCandidateDocuments } from "./candidate-document-facts";
+import {
+  PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
+  raisePaymentDetailsFindingIfChanged,
+} from "./payment-details-check";
+
+/**
+ * Lines the system wrote and a reviewer never touched: the unselected
+ * placeholders enrichment creates, and the lines stage 2 classified from them
+ * (src/lib/inbox/candidate-classification.ts). New facts may replace these;
+ * any other line is a reviewer's and is never overwritten.
+ */
+function isSystemGeneratedLine(line: {
+  accountId: string | null;
+  predictionEvidence: Record<string, unknown> | null;
+}): boolean {
+  if (line.predictionEvidence?.source === "inbox_classification") return true;
+  return line.accountId === null && line.predictionEvidence?.accountSelection === "not_inferred";
+}
 
 export interface CandidateCorrectionLineInput {
   accountId: string;
@@ -239,11 +259,7 @@ export async function enrichCandidateFromExtractedFacts(
   const referenceNumber = facts.normalizedReference ?? row.candidate.referenceNumber;
   const memo = facts.description.trim() || row.candidate.memo || "Extracted transaction";
   const hasSystemPlaceholderLines =
-    existingLines.length === 2 &&
-    existingLines.every(
-      (line) =>
-        line.accountId === null && line.predictionEvidence?.accountSelection === "not_inferred",
-    );
+    existingLines.length === 2 && existingLines.every(isSystemGeneratedLine);
   if (existingLines.length > 0 && !hasSystemPlaceholderLines) {
     return { enriched: false, reason: "reviewer_lines_present" as const };
   }
@@ -344,6 +360,16 @@ export async function enrichCandidateFromExtractedFacts(
       updatedAt: new Date(),
     })
     .where(and(eq(inboxItems.organizationId, ctx.orgId), eq(inboxItems.id, row.item.id)));
+  // Stage 2 picks the category and the counterparty for the fresh
+  // placeholders, in a background job so no model call runs inside this
+  // transaction. Until it lands, the draft blocks on `uncategorized`.
+  if (existingLines.length === 0 || hasSystemPlaceholderLines) {
+    await enqueueCandidateClassification(ctx.db, {
+      orgId: ctx.orgId,
+      candidateId: row.candidate.id,
+      candidateRevision: nextRevision,
+    });
+  }
   await ctx.db
     .insert(workflowEvents)
     .values({
@@ -706,6 +732,8 @@ export async function correctInboxCandidate(
       );
   }
 
+  // A changed payee bank account is never cleared by an edit: a reviewer
+  // resolves it explicitly, with a note, like a possible duplicate.
   await db
     .update(reviewFindings)
     .set({
@@ -719,7 +747,10 @@ export async function correctInboxCandidate(
         eq(reviewFindings.organizationId, orgId),
         eq(reviewFindings.inboxItemId, row.item.id),
         eq(reviewFindings.state, "open"),
-        ne(reviewFindings.ruleKey, "possible_duplicate"),
+        notInArray(reviewFindings.ruleKey, [
+          "possible_duplicate",
+          PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
+        ]),
       ),
     );
 
@@ -825,6 +856,20 @@ export async function correctInboxCandidate(
         evidence: finding.evidence,
       })),
     );
+  }
+  // However the payee got linked, a document asking to be paid somewhere
+  // other than the payee's stored bank account needs a human.
+  if (party && ["vendor", "both", "employee"].includes(party.partyType)) {
+    await raisePaymentDetailsFindingIfChanged(db, {
+      orgId,
+      inboxItemId: row.item.id,
+      candidateId: row.candidate.id,
+      partyId: party.id,
+      facts: collectDocumentFacts(
+        await loadCandidateDocuments(db, orgId, row.candidate.id, primarySourceRecordId),
+        { from: null },
+      ),
+    });
   }
 
   const title =

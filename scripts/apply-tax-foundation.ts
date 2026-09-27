@@ -48,6 +48,7 @@ try {
     // exist long before this runs, and creates `routines` itself so push
     // finds nothing left to prompt about.
     "0054_routines.sql",
+    "0058_party_name_trigram.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

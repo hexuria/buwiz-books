@@ -13,6 +13,7 @@ import * as health from "./provider-health";
 import { resolveChain } from "./router";
 import { getOrgAiSettings, isTaskAllowed } from "./settings";
 import { assertWithinSpendCap } from "./spend";
+import { zodToGeminiSchema } from "./zod-to-gemini-schema";
 
 async function loadOrgMetadata(executor: DbExecutor, orgId: string): Promise<string | null> {
   try {
@@ -67,7 +68,12 @@ async function invokeHop<TOut>(
       return await generateStructured({
         task: args.task,
         promptText: String(args.prompt),
-        geminiSchema: entry.geminiSchema,
+        // A caller-supplied schema (the closed per-request enums of
+        // categorize_lines / match_party) must constrain Gemini's decoding
+        // too, not only the app-side parse — the other adapters already send
+        // args.schema. Without an override this is the precomputed schema.
+        geminiSchema:
+          args.schema === entry.schema ? entry.geminiSchema : zodToGeminiSchema(args.schema),
         ctx,
         media: args.media,
         modelOverride: hop.model,

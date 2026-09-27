@@ -221,6 +221,17 @@ export const REVIEW_RULE_CATALOG: readonly ReviewRuleSeed[] = [
     description:
       "Raised when an inbound email arrives without the attachments needed to book it. Supply the missing evidence or document an exception.",
   },
+  {
+    // Raised by inbox stage 2 and by corrections (src/lib/inbox/payment-details-check.ts).
+    key: "party_payment_details_changed",
+    name: "Party Payment Details Changed",
+    group: "system",
+    evaluatorKey: "party_payment_details_changed",
+    formulaVersion: 1,
+    defaultConfig: {},
+    description:
+      "Raised when a document asks for payment to bank details that differ from the ones on file for a known payee. Confirm the change through a trusted contact, then resolve it with a note.",
+  },
 ];
 
 export const REVIEW_RULE_BY_KEY: ReadonlyMap<string, ReviewRuleSeed> = new Map(

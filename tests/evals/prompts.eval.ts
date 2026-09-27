@@ -48,7 +48,10 @@ describe(`recorded extraction cases (mode: ${MODE})`, () => {
   for (const testCase of RECORDED_CASES) {
     it(`${testCase.task}: ${testCase.name}`, () => {
       const entry = getTaskEntry(testCase.task);
-      const parsed = parseModelJson(entry.schema, testCase.recordedResponse);
+      const parsed = parseModelJson(
+        testCase.requestSchema ?? entry.schema,
+        testCase.recordedResponse,
+      );
 
       expect(parsed.ok, `output failed schema validation: ${JSON.stringify(parsed)}`).toBe(true);
       if (!parsed.ok) return;
@@ -111,6 +114,8 @@ describe(`recorded Jev wire replay (mode: ${MODE})`, () => {
     it(`${testCase.task}: ${testCase.name}`, async () => {
       expect(testCase.recordedWire, "a Jev case must carry its wire body").toBeDefined();
       const entry = getTaskEntry(testCase.task);
+      // Closed-list tasks send their per-request enum, not the static twin.
+      const schema = testCase.requestSchema ?? entry.schema;
       const { prompt } = toRedactedPrompt(entry.prompt.build(testCase.input as never));
       const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
 
@@ -119,7 +124,7 @@ describe(`recorded Jev wire replay (mode: ${MODE})`, () => {
         baseURL: "https://jev.recorded.invalid/v1",
         model: JEV_MODEL,
         prompt,
-        schema: entry.schema,
+        schema,
         schemaName: entry.prompt.id.replace(/-/g, "_"),
         temperature: entry.generation?.temperature,
         fetch: async (url, init) => {
@@ -142,7 +147,7 @@ describe(`recorded Jev wire replay (mode: ${MODE})`, () => {
         json_schema: {
           name: entry.prompt.id.replace(/-/g, "_"),
           strict: true,
-          schema: toStrictJsonSchema(entry.schema),
+          schema: toStrictJsonSchema(schema),
         },
       });
 
@@ -154,9 +159,18 @@ describe(`recorded Jev wire replay (mode: ${MODE})`, () => {
       expect(result.usageEstimated).toBe(
         (testCase.recordedWire as { usage?: unknown }).usage === undefined,
       );
-      expect(parseModelJson(entry.schema, result.text).ok).toBe(true);
+      expect(parseModelJson(schema, result.text).ok).toBe(true);
     });
   }
+
+  it("closed-list tasks put their per-request enum on the wire", () => {
+    for (const testCase of JEV_CASES.filter((c) => c.requestSchema)) {
+      const wire = JSON.stringify(toStrictJsonSchema(testCase.requestSchema!));
+      expect(wire, testCase.name).toMatch(/"enum":\[/);
+      // "none" / "new" is always offered, so the model can always decline.
+      expect(wire, testCase.name).toMatch(/"(none|new)"/);
+    }
+  });
 });
 
 describe("grader sanity", () => {

@@ -1,6 +1,19 @@
 import type { CandidateLineInput, CreateCandidateInput, ReviewFindingDraft } from "./types";
 import { compareMoney, multiplyMoney, sumMoney } from "./money";
 
+/** Every rule key evaluateBookRules can emit. Re-evaluation resolves exactly these. */
+export const BOOK_RULE_KEYS = [
+  "uncategorized",
+  "low_confidence_category",
+  "missing_vendor",
+  "missing_customer",
+  "missing_department",
+  "missing_location",
+  "transaction_in_parent_category",
+  "missing_receipt",
+  "missing_invoice",
+] as const;
+
 export interface BookRuleAccount {
   id: string;
   accountType: string;

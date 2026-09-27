@@ -55,7 +55,40 @@ const MINIMAL_TASK_INPUTS: Record<AiTaskName, unknown> = {
     maxAccounts: 10,
   },
   category_mapping_suggest: { rows: [], accounts: [] },
+  categorize_lines: {
+    document: {
+      kind: "receipt",
+      event: "purchase",
+      counterparty: "Staples",
+      description: "Office supplies",
+      currency: "USD",
+    },
+    lines: [],
+    lineItems: [],
+    accounts: [],
+  },
+  match_party: {
+    counterparty: { name: "Staples", role: "vendor", description: "" },
+    candidates: [],
+  },
 };
+
+/**
+ * Closed-list tasks ground their answer against a per-request set (see
+ * TASK_GROUNDING). The canned answers pick the one value that is always in
+ * it, so a caller supplying just that value gets them back unchanged.
+ */
+const ALLOWED_IDS: Partial<Record<AiTaskName, Record<string, Set<string>>>> = {
+  categorize_lines: { accountCodes: new Set(["none"]) },
+  match_party: { partyRefs: new Set(["new"]) },
+};
+
+/** Every confidence in a parsed answer: top-level, or one per line. */
+function confidencesOf(data: unknown): number[] {
+  const record = data as { confidence?: unknown; lines?: Array<{ confidence?: unknown }> };
+  const values = [record.confidence, ...(record.lines ?? []).map((line) => line.confidence)];
+  return values.filter((value): value is number => typeof value === "number");
+}
 
 function hopInvocation(task: AiTaskName): AiHopInvocation<unknown> {
   const entry = getTaskEntry(task);
@@ -163,10 +196,13 @@ describe("mock Jev responses (AI_MODE=mock)", () => {
       const parsed = parseModelJson(getTaskEntry(task).schema, JEV_MOCK_RESPONSES[task]!);
       expect(parsed.ok, task).toBe(true);
       if (!parsed.ok) continue;
-      const confidence = (parsed.data as { confidence: number }).confidence;
-      expect(confidence).toBeGreaterThanOrEqual(0);
-      expect(confidence).toBeLessThanOrEqual(1);
-      expect(normalizeConfidence(confidence, { scaleHint: "unit" })).toBe(confidence);
+      const confidences = confidencesOf(parsed.data);
+      expect(confidences.length, task).toBeGreaterThan(0);
+      for (const confidence of confidences) {
+        expect(confidence).toBeGreaterThanOrEqual(0);
+        expect(confidence).toBeLessThanOrEqual(1);
+        expect(normalizeConfidence(confidence, { scaleHint: "unit" })).toBe(confidence);
+      }
     }
   });
 
@@ -213,7 +249,12 @@ describe("mock Jev responses (AI_MODE=mock)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const aiComplete = createAiComplete(optedIn);
     for (const task of JEV_TASKS) {
-      const result = await aiComplete({ task, input: MINIMAL_TASK_INPUTS[task], ctx: CTX });
+      const result = await aiComplete({
+        task,
+        input: MINIMAL_TASK_INPUTS[task],
+        ctx: CTX,
+        allowedIds: ALLOWED_IDS[task],
+      });
       expect(result).toMatchObject({
         ok: true,
         model: "jev-mock",
@@ -230,7 +271,12 @@ describe("mock Jev responses (AI_MODE=mock)", () => {
   it("the default runtime (never opted in) keeps answering JEV_TASKS from the shared fixtures", async () => {
     const aiComplete = createAiComplete(mockAiCompletionRuntime);
     for (const task of JEV_TASKS) {
-      const result = await aiComplete({ task, input: MINIMAL_TASK_INPUTS[task], ctx: CTX });
+      const result = await aiComplete({
+        task,
+        input: MINIMAL_TASK_INPUTS[task],
+        ctx: CTX,
+        allowedIds: ALLOWED_IDS[task],
+      });
       expect(result).toMatchObject({ ok: true, model: "mock" });
       if (result.ok) expect(result.data).toEqual(JSON.parse(MOCK_RESPONSES[task]));
     }

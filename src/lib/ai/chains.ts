@@ -17,8 +17,9 @@
 //     test, not just documented.
 //
 // Jev (TypeSafe AI) is NOT in DEFAULT_CHAINS. It is an opt-in data processor
-// that applyJevPolicy places first for the two classification tasks only, so
-// an org that has not opted in resolves exactly these chains.
+// that applyJevPolicy places first for the redacted-text classification tasks
+// in JEV_TASKS only, so an org that has not opted in resolves exactly these
+// chains.
 // ============================================================================
 
 import type { AiTaskName } from "./types";
@@ -120,6 +121,18 @@ export const DEFAULT_CHAINS: Record<AiTaskName, ChainEntry[]> = {
     { provider: "gemini", model: GEMINI_TEXT },
     { provider: "anthropic", model: CLAUDE_TEXT },
   ],
+  // Inbox stage 2 and entity matching: a pick from a CLOSED list the caller
+  // builds per request (the org's own leaf accounts; five look-alike parties).
+  // Cheap classification like the two tasks above, and every answer is
+  // re-checked server-side, so it stays on Gemini with no new egress.
+  categorize_lines: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
+  match_party: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
 };
 
 export class OcrEgressPolicyError extends Error {
@@ -156,10 +169,18 @@ export function assertOcrPolicy(task: AiTaskName, chain: ChainEntry[]): void {
 // never document bytes: no DOCUMENT_TASK is in JEV_TASKS, and the OCR policy
 // runs after Jev placement in both the router and the settings view.
 
-/** The only tasks Jev may serve: redacted-text document classification. */
+/**
+ * The only tasks Jev may serve: redacted-text classification. Stage 1 picks
+ * the document kind (ingest_triage, classify_document); stage 2 picks each
+ * line's account from the org's closed code list (categorize_lines) and the
+ * counterparty from five look-alikes or "new" (match_party). None of them
+ * sends document bytes.
+ */
 export const JEV_TASKS: ReadonlySet<AiTaskName> = new Set<AiTaskName>([
   "ingest_triage",
   "classify_document",
+  "categorize_lines",
+  "match_party",
 ]);
 
 /** ASSUMPTION A7 in adapters/jev.ts: model id unverified with TypeSafe AI. */

@@ -122,4 +122,9 @@ export const TASK_GROUNDING: Record<string, GroundingRule[]> = {
   // structurally in TypeScript instead.
   coa_draft: [{ path: "accounts[].parentKey", set: "coaKeys" }],
   category_mapping_suggest: [{ path: "assignments[].targetKey", set: "coaKeys" }],
+  // Per-call code/ref namespaces, like coaKeys. The response schema already
+  // makes these enums; grounding is the second wall for any caller that
+  // parses with the static registry schema instead.
+  categorize_lines: [{ path: "lines[].accountCode", set: "accountCodes" }],
+  match_party: [{ path: "choice", set: "partyRefs" }],
 };

@@ -67,6 +67,17 @@ describe("default chains", () => {
     expect(DEFAULT_CHAINS.classify_document.every((h) => h.provider === "gemini")).toBe(true);
   });
 
+  it("inbox stage 2 and entity matching are cheap Gemini-only picks from a closed list", () => {
+    const cheapThenFlash = [
+      { provider: "gemini", model: "gemini-3.1-flash-lite-preview" },
+      { provider: "gemini", model: "gemini-3-flash-preview" },
+    ];
+    expect(DEFAULT_CHAINS.categorize_lines).toEqual(cheapThenFlash);
+    expect(DEFAULT_CHAINS.match_party).toEqual(cheapThenFlash);
+    expect(DOCUMENT_TASKS.has("categorize_lines")).toBe(false);
+    expect(DOCUMENT_TASKS.has("match_party")).toBe(false);
+  });
+
   it("other text tasks still start on gemini-3-flash-preview", () => {
     const otherTextTasks: AiTaskName[] = [
       "date_parse",
@@ -181,8 +192,13 @@ describe("Jev chain policy", () => {
     }
   });
 
-  it("Jev serves exactly the two classification tasks, neither of which sends document bytes", () => {
-    expect([...JEV_TASKS].sort()).toEqual(["classify_document", "ingest_triage"]);
+  it("Jev serves exactly the four redacted-text classification tasks, none of which sends document bytes", () => {
+    expect([...JEV_TASKS].sort()).toEqual([
+      "categorize_lines",
+      "classify_document",
+      "ingest_triage",
+      "match_party",
+    ]);
     for (const task of JEV_TASKS) {
       expect(DOCUMENT_TASKS.has(task), `${task} is a document task`).toBe(false);
       expect(AI_TASK_CATEGORY[task]).toBe("textAnalysis");

@@ -13,6 +13,8 @@ import { documents } from "@/db/schema/documents";
 import { downloadFromR2, isR2Configured } from "@/lib/storage";
 import { ensureDocumentMatchingExtraction } from "@/lib/inbox/email-attachment-extraction";
 import { intakeStandaloneDocument } from "@/lib/inbox/document-intake";
+import { CLASSIFY_INBOX_CANDIDATE_JOB_TYPE } from "@/lib/inbox/candidate-classification-job";
+import { triggerWorker } from "../trigger";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
 export async function processStandaloneDocumentJob(
@@ -103,6 +105,11 @@ export async function processStandaloneDocumentJob(
       return { processed: false, reason: "lease_lost", jobId: job.id };
     }
     throw err;
+  }
+  // A cached extraction enriched the candidate and queued stage 2 in the
+  // transaction that just committed.
+  if (intake.candidate && intake.extractionStatus === "cached") {
+    triggerWorker([CLASSIFY_INBOX_CANDIDATE_JOB_TYPE]);
   }
   return {
     processed: true,
