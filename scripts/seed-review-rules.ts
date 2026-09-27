@@ -7,8 +7,9 @@
  * Its 14 original rows only ever shipped inside drizzle/0019_inbox_review_foundation.sql, a
  * hand-applied migration that `drizzle-kit` does not run (0019 is absent from
  * drizzle/meta/_journal.json). `db:fresh`, `make migrate` and the CI deploy all create the
- * table from the Drizzle schema and leave it empty, which is why `/review-agents` renders
- * "No review agents are configured." on an otherwise healthy database.
+ * table from the Drizzle schema and leave it empty, which is why the review-rule screen (then
+ * `/review-agents`, now Settings → Review Rules) reported "No review agents are configured." on an
+ * otherwise healthy database.
  *
  * Idempotent and additive: ON CONFLICT (key) DO NOTHING. Existing rows are never modified —
  * 0020 already changed `possible_duplicate`'s defaults, and re-asserting a TypeScript constant
