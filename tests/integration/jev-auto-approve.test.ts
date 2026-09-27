@@ -62,9 +62,11 @@ import { processJevAutoApproveJob } from "@/lib/jobs/handlers/jev-auto-approve";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   asOrg,
+  attachInboundMessage,
   classifyPaper,
   disableRule,
   rememberVendorReceipts,
+  senderVerdict,
   setJevApprovalSettings,
   setLaneAuto,
   setupJevOrganization,
@@ -225,6 +227,19 @@ describeDb("Jev approves papers on an auto lane", () => {
     );
     expect(proposal).toMatchObject({ kind: "vendor_bill", evaluation: { approve: true } });
 
+    // The same bill from a message whose sender was never verified stays with a person.
+    const unverified = await submitJevBill(fixture, { amount: "64.30", day: 6, sender: null });
+    expect(unverified.proposal!.evaluation).toMatchObject({
+      approve: false,
+      holds: [
+        {
+          reason: "sender_unverified",
+          scope: "paper",
+          detail: "it was not checked when it arrived",
+        },
+      ],
+    });
+
     const { result } = await runQueuedJevJob(fixture, paper.candidate.id, paper.candidate.revision);
     expect(result).toMatchObject({ status: "approved" });
     const [bill] = await db
@@ -275,6 +290,22 @@ describeDb("Jev approves papers on an auto lane", () => {
         });
       },
       "payment_details_changed",
+    ],
+    [
+      "it turns out to have come in an email whose sender could not be verified",
+      async ({ fixture, paper }) => {
+        await attachInboundMessage(
+          fixture,
+          paper.candidate.id,
+          senderVerdict({
+            passed: false,
+            reason: "failed",
+            method: null,
+            results: { dmarc: "fail", dkim: "none", spf: "fail" },
+          }),
+        );
+      },
+      "sender_unverified",
     ],
     [
       "it may be a duplicate",

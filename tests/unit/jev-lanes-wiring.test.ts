@@ -203,6 +203,20 @@ describe("Jev approval lanes wiring", () => {
     expect(list).toContain("we.data->'evaluation'->>'heldForSpotCheck' = 'true'");
   });
 
+  it("judges every emailed paper's sender in the approval loader, and the Inbox reads the hold", () => {
+    const proposal = read("src/lib/inbox/jev-approval/proposal.ts");
+    expect(proposal).toContain(
+      "const sender = await loadJevSender(db, orgId, { candidate, sourceIds });",
+    );
+    const predicate = read("src/lib/inbox/jev-approval/predicate.ts");
+    expect(predicate).toContain('hold("sender_unverified", paper.sender.detail ?? undefined);');
+    const list = read("src/lib/inbox/v2/list.ts");
+    expect(list).toContain("senderUnverified: row.senderUnverified === true,");
+    expect(list).toContain(
+      `we.data->'evaluation'->'holds' @> '[{"reason":"sender_unverified"}]'::jsonb`,
+    );
+  });
+
   it("keeps remembered answers out of eligibility and calibration, but not demotion", () => {
     const lanes = read("src/lib/ai/autonomy-lanes.ts");
     expect(lanes).toContain(

@@ -298,6 +298,18 @@ describe("deriveInboxV2Reason", () => {
     ).toBe("needs_fix");
     expect(reasonFor({ spotCheck: true, jevWouldApprove: true }).reason).toBe("spot_check");
   });
+
+  it("says when Jev held an emailed paper because its sender could not be verified", () => {
+    const held = reasonFor({ senderUnverified: true, remembered: true });
+    expect(held).toMatchObject({ reason: "ready", detail: "sender_unverified" });
+    expect(describeInboxV2Reason(held)).toBe(
+      "Sender could not be verified — Jev won't approve this on its own. Check who sent it before you approve it.",
+    );
+    // A fix to make still comes first.
+    expect(
+      reasonFor({ openFindings: [blocking("missing_vendor")], senderUnverified: true }).reason,
+    ).toBe("needs_fix");
+  });
 });
 
 describe("deriveInboxV2Kind", () => {

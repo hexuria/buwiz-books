@@ -31,7 +31,21 @@ describe("inbound email hardening wiring", () => {
     const doc = read("docs/inbox-workflow.md");
     expect(doc).toContain("Sender authentication (recorded decision)");
     expect(doc).toContain("delivered to every matched organization");
+    expect(doc).toContain("Emailed papers: a verified sender, always.");
     const backlog = read("docs/audit-backlog.md");
     expect(backlog).toContain("Per-organization sender allowlists");
+  });
+
+  it("records the sender verdict from the raw header section, bounded, never the parsed map", () => {
+    const source = read("src/lib/jobs/handlers/inbound-email.ts");
+    expect(source).toContain("const senderAuthentication = evaluateSenderAuthentication({");
+    expect(source).toContain("readRawHeaderSection(emailResponse.data.raw?.download_url");
+    expect(source).toContain("AbortSignal.timeout(RAW_HEADER_DOWNLOAD_TIMEOUT_MS)");
+    expect(source).toContain("MAX_RAW_HEADER_BYTES = 256 * 1024");
+    const rawDataAt = source.indexOf("const processedRawData = {");
+    const processedRawData = source.slice(rawDataAt, source.indexOf("\n    };", rawDataAt));
+    expect(processedRawData).toContain("\n      senderAuthentication,");
+    // Resend's parsed map keeps one value per name: which header came first is lost.
+    expect(source).not.toContain(".data.headers");
   });
 });
