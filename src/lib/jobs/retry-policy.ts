@@ -61,6 +61,9 @@ const POLICIES: Record<string, RetryPolicy> = {
   // Inbox stage 2. Model failures degrade the draft instead of throwing, so
   // only a database error retries — and nobody is waiting on it.
   classify_inbox_candidate: BACKGROUND,
+  // Jev approving a paper through its lane. A paper that no longer qualifies
+  // completes the job and stays in Needs you; only a database error retries.
+  jev_auto_approve: BACKGROUND,
   ai_reflection: BACKGROUND,
   business_group_projection_refresh: BACKGROUND,
   // Inbox v2 routines: nobody watches a spinner for a webhook delivery.

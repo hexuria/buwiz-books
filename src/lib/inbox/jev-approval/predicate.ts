@@ -67,7 +67,9 @@ export type JevHoldReason =
   | "unbalanced"
   | "no_amount"
   | "over_cap"
-  | "spot_check";
+  | "spot_check"
+  /** Not the predicate's: the approval itself refused the paper (./auto-approve.ts). */
+  | "approval_refused";
 
 export interface JevHold {
   reason: JevHoldReason;
@@ -253,6 +255,7 @@ const HOLD_TEXT: Record<JevHoldReason, string> = {
   no_amount: "Its total is unknown.",
   over_cap: "It is over the lane's amount cap.",
   spot_check: "Jev would approve this — spot check.",
+  approval_refused: "The approval refused it.",
 };
 
 /** One sentence per hold, in order. */

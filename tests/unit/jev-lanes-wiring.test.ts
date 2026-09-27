@@ -5,13 +5,28 @@
  * that fail silently when they break — a migration no build path runs, a table
  * with no RLS policy, an auto lane the database would accept without limits.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 import { getTableConfig } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 import { aiAutonomyLanes, aiRunFeedback, organizationAiSettings } from "@/db/schema/ai";
 
-const read = (rel: string) => readFileSync(join(__dirname, "../..", rel), "utf-8");
+const ROOT = join(__dirname, "../..");
+const read = (rel: string) => readFileSync(join(ROOT, rel), "utf-8");
+
+/** Every TypeScript source file under the given roots, as repo-relative paths. */
+function sourceFiles(...roots: string[]): string[] {
+  const files: string[] = [];
+  const walk = (dir: string) => {
+    for (const name of readdirSync(dir)) {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path);
+      else if (/\.(ts|tsx)$/.test(name)) files.push(relative(ROOT, path));
+    }
+  };
+  for (const root of roots) walk(join(ROOT, root));
+  return files;
+}
 
 describe("Jev approval lanes wiring", () => {
   it("runs 0060 in the foundation runner, after 0059", () => {
@@ -106,9 +121,57 @@ describe("Jev approval lanes wiring", () => {
     const recordAt = handler.indexOf("recordJevProposalAfterClassification(tx, {");
     expect(completeAt).toBeGreaterThan(-1);
     expect(recordAt).toBeGreaterThan(completeAt);
-    // The hook runs in a savepoint and never fails the classification.
+    // The hook runs in a savepoint and never fails the classification; it
+    // queues Jev's approval only when the proposal already passed every check.
     const hook = read("src/lib/inbox/jev-approval/after-classification.ts");
-    expect(hook).toContain("tx.transaction((savepoint) => recordJevProposal(savepoint, input))");
+    expect(hook).toContain("return await tx.transaction(async (savepoint) => {");
+    expect(hook).toContain("if (proposal?.evaluation.approve) {");
+    expect(hook).toContain("await enqueueJevAutoApproval(savepoint, {");
+  });
+
+  it("registers the jev_auto_approve job and runs it in the job row's organization", () => {
+    const registry = read("src/lib/jobs/registry.ts");
+    expect(registry).toContain("[JEV_AUTO_APPROVE_JOB_TYPE]: processJevAutoApproveJob");
+    expect(read("src/lib/jobs/retry-policy.ts")).toContain("jev_auto_approve: BACKGROUND");
+    const handler = read("src/lib/jobs/handlers/jev-auto-approve.ts");
+    expect(handler).toMatch(/withOrgContext\(\s*job\.organizationId,/);
+    // Completion commits with the approval: a lost lease rolls both back.
+    const runAt = handler.indexOf("await runJevAutoApproval(tx, {");
+    const completeAt = handler.indexOf("completeProcessingJob(tx, job.id, ctx.workerId)");
+    expect(runAt).toBeGreaterThan(-1);
+    expect(completeAt).toBeGreaterThan(runAt);
+  });
+
+  it("mints lane grants in the approval job only, after the lifecycle lock and the decision", () => {
+    const minters = sourceFiles("src", "server").filter((file) =>
+      read(file).includes("mintJevApprovalGrant("),
+    );
+    expect(minters.sort()).toEqual(
+      [
+        "src/lib/inbox/jev-approval/auto-approve.ts",
+        "src/lib/posting/system-approval-grant.ts",
+      ].sort(),
+    );
+    const job = read("src/lib/inbox/jev-approval/auto-approve.ts");
+    const lockAt = job.indexOf("await lockInboxCandidateLifecycle(tx, orgId, identity.id)");
+    const decideAt = job.indexOf("const decision = evaluateJevApproval(approvalInput);");
+    const holdAt = job.indexOf(
+      "if (!decision.approve || !lane || facts.answer.confidence === null)",
+    );
+    const mintAt = job.indexOf("const grant = mintJevApprovalGrant({");
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(decideAt).toBeGreaterThan(lockAt);
+    expect(holdAt).toBeGreaterThan(decideAt);
+    expect(mintAt).toBeGreaterThan(holdAt);
+    // The lane and the org switch are share-locked for the decision.
+    expect(job).toContain('{ lock: "share" }');
+  });
+
+  it("builds the posting system actor in approveInboxItem only", () => {
+    const builders = sourceFiles("src", "server").filter((file) =>
+      /type: "system", key: "jev", grant/.test(read(file)),
+    );
+    expect(builders).toEqual(["src/lib/inbox/service.ts"]);
   });
 
   it("labels every human decision on a proposal: approve, reject, correct", () => {

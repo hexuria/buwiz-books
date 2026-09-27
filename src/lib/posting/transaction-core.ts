@@ -6,8 +6,8 @@
  * function submits a candidate to Inbox review (maker-checker), and the
  * journal is written only when that item is approved. The posting itself
  * lived inline in approveInboxItem. It is extracted here unchanged so every
- * poster (Inbox approval today, the bill core for accruals, Jev once its
- * autonomy lane exists) runs the same invariants:
+ * poster (Inbox approval by a person or by Jev through its autonomy lane, and
+ * the bill core for accruals) runs the same invariants:
  *
  *   - at least two lines, each on an account, debits = credits exactly
  *   - the transaction date is not in a locked period
@@ -23,7 +23,7 @@ import type { DbExecutor } from "@/db";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
-import { requireUserActor, type PostingActor } from "./actor";
+import { postingAuditActorId, type PostingActor } from "./actor";
 import { assertPostableLines, type PostingLineDraft } from "./posting-lines";
 
 type JournalInsert = typeof journalHeaders.$inferInsert;
@@ -60,7 +60,8 @@ export async function postTransactionCore(
   actor: PostingActor,
   draft: PostTransactionDraft,
 ): Promise<PostedTransaction> {
-  const createdBy = requireUserActor(actor, "postTransactionCore");
+  // A person, or Jev carrying its lane's grant (created_by: "system:jev").
+  const createdBy = postingAuditActorId(actor, "postTransactionCore");
   if (!draft.idempotencyKey.trim()) {
     throw new Error("A posting idempotency key is required.");
   }

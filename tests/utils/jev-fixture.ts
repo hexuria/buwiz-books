@@ -11,7 +11,16 @@ import { aiAutonomyLanes, aiRunFeedback, organizationAiSettings } from "@/db/sch
 import { member, organization, user } from "@/db/schema/auth";
 import { dimensions } from "@/db/schema/dimensions";
 import { documents } from "@/db/schema/documents";
-import { organizationAccountingSettings, transactionCandidates } from "@/db/schema/inbox";
+import {
+  inboxItems,
+  organizationAccountingSettings,
+  reviewFindings,
+  reviewRuleConfigs,
+  reviewRuleDefinitions,
+  sourceRecords,
+  transactionCandidateLines,
+  transactionCandidates,
+} from "@/db/schema/inbox";
 import { parties } from "@/db/schema/parties";
 import { createAiComplete, type AiCompletionRuntime } from "@/lib/ai/facade-core";
 import { executeCoaPlan } from "@/lib/coa/execute-plan";
@@ -305,4 +314,152 @@ export function stubbedJevClassifier(accountCode: string, confidence: number) {
     async recordValidationOutcome() {},
   };
   return createAiComplete(runtime) as AiCompleteFn;
+}
+
+/** An invoice document, so an A/P credit is not missing its invoice. */
+async function invoiceDocument(fixture: JevFixture) {
+  const [document] = await db
+    .insert(documents)
+    .values({
+      organizationId: fixture.orgId,
+      originalFilename: `invoice-${randomUUID()}.pdf`,
+      storagePath: `r2://test/${fixture.suffix}/invoice.pdf`,
+      documentType: "invoice",
+      fileType: "pdf",
+      mimeType: "application/pdf",
+      contentHash: hashDocumentContent(Buffer.from(`invoice-${randomUUID()}`)),
+      uploadedById: fixture.userId,
+    })
+    .returning();
+  return document;
+}
+
+/**
+ * An emailed vendor bill as the pipeline would propose it: the expense line Jev
+ * picked, the A/P credit remembered (build step 10), the invoice attached, and
+ * the source classified as an unpaid vendor bill (bill_accrual) the way
+ * extraction classifies one. The proposal is recorded like stage 2's job does.
+ */
+export async function submitJevBill(
+  fixture: JevFixture,
+  input: { amount: string; day: number; confidence?: number },
+) {
+  const dims = { departmentId: fixture.department.id, locationId: fixture.location.id };
+  const confidence = input.confidence ?? 0.97;
+  const document = await invoiceDocument(fixture);
+  const created = await asOrg(fixture, (tx) =>
+    createTransactionCandidate(
+      { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
+      {
+        transactionDate: `2026-08-${String(input.day).padStart(2, "0")}`,
+        transactionType: "journal",
+        memo: `Supplies invoice ${input.day}`,
+        referenceNumber: `INV-${input.day}-${randomUUID().slice(0, 8)}`,
+        partyId: fixture.vendor.id,
+        sourceChannel: "email",
+        sourceProvider: "jev-fixture",
+        candidateType: "email_transaction",
+        documentIds: [document.id],
+        lines: [
+          {
+            accountId: fixture.officeSupplies.id,
+            debit: input.amount,
+            categoryConfidence: confidence.toFixed(4),
+            predictionEvidence: {
+              source: "inbox_classification",
+              selection: "model",
+              outcome: "picked",
+              confidence,
+            },
+            ...dims,
+          },
+          {
+            accountId: fixture.payables.id,
+            credit: input.amount,
+            partyId: fixture.vendor.id,
+            predictionEvidence: { source: "memory" },
+            ...dims,
+          },
+        ],
+      },
+    ),
+  );
+  await db
+    .update(sourceRecords)
+    .set({ economicEventClass: "bill_accrual", direction: "outflow" })
+    .where(eq(sourceRecords.id, created.candidate.sourceRecordId!));
+  const proposal = await asOrg(fixture, (tx) =>
+    recordJevProposal(tx, { orgId: fixture.orgId, candidateId: created.candidate.id }),
+  );
+  return { item: created.inboxItem, candidate: created.candidate, proposal, document };
+}
+
+/** Turn a book rule off for the organization, as Settings → Review Rules does. */
+export async function disableRule(orgId: string, key: string) {
+  const [definition] = await db
+    .select()
+    .from(reviewRuleDefinitions)
+    .where(eq(reviewRuleDefinitions.key, key));
+  if (!definition) throw new Error(`Review rule ${key} is not seeded.`);
+  await db
+    .insert(reviewRuleConfigs)
+    .values({
+      organizationId: orgId,
+      definitionId: definition.id,
+      enabled: false,
+      impact: "blocking",
+      config: {},
+    })
+    .onConflictDoUpdate({
+      target: [reviewRuleConfigs.organizationId, reviewRuleConfigs.definitionId],
+      set: { enabled: false },
+    });
+}
+
+/**
+ * Stands in for build step 10: a remembered answer fills the payment side
+ * stage 2 leaves unpicked, on a new candidate revision, and the `uncategorized`
+ * check that blank line tripped is re-evaluated away with it.
+ */
+export async function rememberPaymentSide(
+  fixture: JevFixture,
+  input: { candidateId: string; inboxItemId: string; accountId: string },
+) {
+  await asOrg(fixture, async (tx) => {
+    const [candidate] = await tx
+      .select()
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, input.candidateId))
+      .for("update");
+    const lines = await tx
+      .select()
+      .from(transactionCandidateLines)
+      .where(eq(transactionCandidateLines.candidateId, input.candidateId));
+    const blank = lines.find((line) => line.accountId === null);
+    if (!blank) throw new Error("No blank line to remember.");
+    await tx
+      .update(transactionCandidateLines)
+      .set({ accountId: input.accountId, predictionEvidence: { source: "memory" } })
+      .where(eq(transactionCandidateLines.id, blank.id));
+    const next = candidate.revision + 1;
+    await tx
+      .update(transactionCandidates)
+      .set({ revision: next })
+      .where(eq(transactionCandidates.id, input.candidateId));
+    const [item] = await tx.select().from(inboxItems).where(eq(inboxItems.id, input.inboxItemId));
+    await tx
+      .update(inboxItems)
+      .set({ candidateRevision: next, lockVersion: item.lockVersion + 1 })
+      .where(eq(inboxItems.id, input.inboxItemId));
+    await tx
+      .update(reviewFindings)
+      .set({ state: "resolved", resolvedAt: new Date(), resolutionNote: "Remembered answer." })
+      .where(
+        and(
+          eq(reviewFindings.inboxItemId, input.inboxItemId),
+          eq(reviewFindings.ruleKey, "uncategorized"),
+          eq(reviewFindings.state, "open"),
+        ),
+      );
+  });
 }
