@@ -25,7 +25,8 @@ Or set `AI_MODE=mock` in `.env` (see `.env.example`). Unset it, or set
 
 You do **not** need org API keys in Settings → AI Credentials for mock mode.
 `prepare()` always returns a synthetic hop so callers never hit
-`AiNoCredentialsError`.
+`AiNoCredentialsError`. The only org setting it reads is the Jev opt-in (see
+[Jev](#jev) below).
 
 ## What it covers
 
@@ -40,6 +41,21 @@ Every `AiTaskName` in `src/lib/ai/types.ts` has a canned JSON string in
 The façade still redacts the prompt, parses with the live Zod schema, and
 applies grounding. IDs in canned payloads that are not in the caller's
 `allowedIds` are blanked the same way live output would be.
+
+### Jev
+
+Jev (TypeSafe AI) has its own canned answers for the two tasks it serves,
+`ingest_triage` and `classify_document`, in `JEV_MOCK_RESPONSES` (seeded from
+the Jev cases in the recorded eval corpus). They deliberately differ from the
+shared answers so you can tell which hop replied: the result's `model` is
+`jev-mock` and its `invocationId` is `mock:jev:<task>`.
+
+The mock mirrors the org's real opt-in. `prepare()` reads only the org's
+provider allowlist (Settings → AI Providers & Guardrails → Jev). When `jev` is
+on it, those two tasks get a Jev mock hop first, with the shared mock hop as
+the fallback, like the live chain. Every other task, OCR included, never gets
+a Jev hop. A failed settings read counts as not opted in. Credentials, the
+`JEV_BASE_URL` endpoint, and spend are never consulted in mock mode.
 
 ## Flip back to live
 

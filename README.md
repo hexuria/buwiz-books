@@ -34,6 +34,12 @@ bun preview          # Preview production build locally
 AI features normally call live providers. `AI_MODE=mock` returns schema-valid
 canned JSON in-process (including OCR). See [docs/ai-mock.md](./docs/ai-mock.md).
 
+Jev (TypeSafe AI) is an opt-in classifier, off for every org by default. It
+runs only when the deployment sets `JEV_BASE_URL` (https) and an org admin both
+adds a Jev key and allows Jev under Settings → AI Providers & Guardrails. Its
+wire format is unverified; read the header of `src/lib/ai/adapters/jev.ts`
+before enabling it anywhere.
+
 ### Database
 
 ```bash
