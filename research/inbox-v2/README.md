@@ -6,6 +6,10 @@ Date: 2026-09-27.
 `visual.html` in this folder is the plain-language picture of the same plan (open it in a
 browser). This file is the version an agent builds from.
 
+Hosted version of the visual: https://claude.ai/artifact/BBTTrkBY51kpdRTEyRkvib (private;
+the owner shares it from the page's Share menu). If the two copies differ, the hosted page is the
+newer one.
+
 ## Principle
 
 The ledger works without the Inbox. The Inbox only automates typing. What it saves must equal
