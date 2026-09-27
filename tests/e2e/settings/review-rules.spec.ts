@@ -58,8 +58,10 @@ test.describe("Settings Review Rules", () => {
   test("holds the ledger scan and its findings next to the ledger checks", async ({ page }) => {
     const scan = page.getByRole("region", { name: "Scan books" });
     await expect(scan.getByRole("button", { name: "Scan books", exact: true })).toBeEnabled();
-    await expect(scan.getByText("Ledger findings", { exact: true })).toBeVisible();
-    await expect(scan.getByRole("button", { name: /Unusual Spend/ })).toBeVisible();
+    // One line per check from its own last run, and the findings of the selected check.
+    await expect(scan.getByRole("list", { name: "Ledger check runs" })).toBeVisible();
+    await expect(scan.getByRole("button", { name: /^Unusual Spend, \d+ open$/ })).toBeVisible();
+    await expect(scan.getByText(/^Ledger findings · /)).toBeVisible();
     await expect(scan.getByRole("button", { name: "Open", exact: true })).toBeVisible();
     await expect(scan.getByRole("button", { name: "All", exact: true })).toBeVisible();
   });
