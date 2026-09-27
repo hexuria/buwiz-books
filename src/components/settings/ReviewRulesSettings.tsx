@@ -6,10 +6,15 @@
  * Stop approval or only Warn, and tunes thresholds and lookback. It edits exactly what the Review
  * Agents page edits, through the same server functions (src/routes/api/-review-agents.ts) — the
  * permission checks, bounds and optimistic versioning live there, not here.
+ *
+ * Unsaved drafts are guarded in two places. A route change (Back to app, browser back, any link
+ * out) is held here with an in-page prompt. Settings sections are local state on the page, which
+ * no router blocker sees, so this component reports `onUnsavedChange` and the page asks before it
+ * switches sections.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useBlocker } from "@tanstack/react-router";
-import { useCallback, useId, useMemo, useState } from "react";
+import { useBlocker, type ShouldBlockFn } from "@tanstack/react-router";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { EmptyCatalogNotice } from "@/components/review-agents/EmptyCatalogNotice";
 import { LockIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
@@ -23,7 +28,9 @@ import {
   ReviewRuleConfigForm,
   ruleImpact,
   type ReviewRule,
+  type ReviewRuleDraft,
 } from "./ReviewRuleConfigForm";
+import { UnsavedChangesBar } from "./UnsavedChangesBar";
 
 const GROUPS = ["book", "review", "system"] as const;
 type Group = (typeof GROUPS)[number];
@@ -50,7 +57,18 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-export function ReviewRulesSettings() {
+/** Only a change of route leaves this page; a search-param update on the same route does not. */
+const leavesThisRoute: ShouldBlockFn = ({ current, next }) => next.routeId !== current.routeId;
+
+export function ReviewRulesSettings({
+  onUnsavedChange,
+}: {
+  /**
+   * Told whether any rule has an unsaved draft, and `false` on unmount. The Settings page uses it
+   * to confirm a section switch. Must be referentially stable: it is an effect dependency.
+   */
+  onUnsavedChange?: (unsaved: boolean) => void;
+} = {}) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { canAccess: canConfigure, isLoading: permissionLoading } = usePermission(
@@ -82,11 +100,17 @@ export function ReviewRulesSettings() {
       return next;
     });
   }, []);
-  const shouldBlockFn = useCallback(
-    () => !window.confirm("You have unsaved review rule changes. Leave and discard them?"),
-    [],
-  );
-  useBlocker({ shouldBlockFn, disabled: dirtyKeys.size === 0 });
+  const unsaved = dirtyKeys.size > 0;
+  useEffect(() => {
+    onUnsavedChange?.(unsaved);
+  }, [unsaved, onUnsavedChange]);
+  useEffect(() => () => onUnsavedChange?.(false), [onUnsavedChange]);
+
+  const blocker = useBlocker({
+    shouldBlockFn: leavesThisRoute,
+    disabled: !unsaved,
+    withResolver: true,
+  });
 
   const onSaved = useCallback(
     async (rule: ReviewRule) => {
@@ -105,10 +129,21 @@ export function ReviewRulesSettings() {
       <h2 className="text-xl font-semibold text-[#1e293b] dark:text-white mb-1">Review Rules</h2>
       <p className="text-sm text-[#64748b] dark:text-white/50 mb-6">
         Deterministic checks that read your transactions and raise findings for a person to clear. A
-        check never edits a transaction. <strong className="font-semibold">Stop</strong> holds
-        approval until someone resolves the finding; <strong className="font-semibold">Warn</strong>{" "}
-        shows it and lets approval through.
+        check never edits a transaction. What <strong className="font-semibold">Stop</strong> holds
+        depends on the check: on an Inbox check it holds the transaction in the Inbox until someone
+        resolves the finding; on a Ledger check it marks the finding as must-fix before the period
+        can be closed. <strong className="font-semibold">Warn</strong> keeps the finding visible
+        without holding anything.
       </p>
+
+      {blocker.status === "blocked" && (
+        <UnsavedChangesBar
+          message="You have unsaved review rule changes. Leave this page and discard them?"
+          confirmLabel="Discard and leave"
+          onConfirm={blocker.proceed}
+          onCancel={blocker.reset}
+        />
+      )}
 
       {!permissionLoading && !canConfigure && (
         <div
@@ -226,9 +261,14 @@ function RuleRow({
   const panelId = useId();
   const editable = canConfigure && rule.configurable;
   const toggleLabel = open ? "Close" : editable ? "Edit" : "View";
+  // The unsaved draft, if any, so a collapsed row reads what will be saved, not what is stored.
+  const [draft, setDraft] = useState<ReviewRuleDraft | null>(null);
   const { key } = rule;
-  const handleDirtyChange = useCallback(
-    (dirty: boolean) => onDirtyChange(key, dirty),
+  const handleDraftChange = useCallback(
+    (next: ReviewRuleDraft | null) => {
+      setDraft(next);
+      onDirtyChange(key, next !== null);
+    },
     [onDirtyChange, key],
   );
 
@@ -244,7 +284,7 @@ function RuleRow({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <RuleStateChips rule={rule} />
+          <RuleStateChips rule={rule} draft={draft} />
           {rule.configurable ? (
             <button
               type="button"
@@ -281,7 +321,7 @@ function RuleRow({
             key={`${rule.key}:${rule.version}`}
             rule={rule}
             editable={editable}
-            onDirtyChange={handleDirtyChange}
+            onDraftChange={handleDraftChange}
             onSaved={() => onSaved(rule)}
             onError={onError}
           />
@@ -307,7 +347,7 @@ function RuleCadence({ rule }: { rule: ReviewRule }) {
 
 const CHIP = "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide";
 
-function RuleStateChips({ rule }: { rule: ReviewRule }) {
+function RuleStateChips({ rule, draft }: { rule: ReviewRule; draft: ReviewRuleDraft | null }) {
   if (!rule.configurable) {
     return (
       <>
@@ -322,20 +362,29 @@ function RuleStateChips({ rule }: { rule: ReviewRule }) {
       </>
     );
   }
-  const impact = ruleImpact(rule);
+  const enabled = draft?.enabled ?? rule.enabled;
+  const impact = draft?.impact ?? ruleImpact(rule);
   return (
     <>
+      {draft && (
+        <span
+          title="Changed here but not saved yet"
+          className={`${CHIP} bg-[#fef3c7] dark:bg-amber-900/30 text-[#92400e] dark:text-amber-200`}
+        >
+          Unsaved
+        </span>
+      )}
       <span
         className={`${CHIP} ${
-          rule.enabled
+          enabled
             ? "bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0d9488] dark:text-teal-400"
             : "bg-[#f1f5f9] dark:bg-white/5 text-[#64748b] dark:text-white/50"
         }`}
       >
-        {rule.enabled ? "On" : "Off"}
+        {enabled ? "On" : "Off"}
       </span>
       <span
-        className={`${CHIP} ${rule.enabled ? "" : "opacity-50"} ${
+        className={`${CHIP} ${enabled ? "" : "opacity-50"} ${
           impact === "blocking"
             ? "bg-[#fef2f2] dark:bg-red-900/20 text-[#b91c1c] dark:text-red-300"
             : "bg-[#fffbeb] dark:bg-amber-900/20 text-[#b45309] dark:text-amber-300"

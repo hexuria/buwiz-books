@@ -35,6 +35,12 @@ export const IMPACT_LABEL: Record<ReviewRuleImpact, string> = {
   warning: "Warn",
 };
 
+/**
+ * An unsaved draft's headline state, reported to the caller so a collapsed row can show what
+ * will be saved rather than what is stored. `null` means there is no unsaved draft.
+ */
+export type ReviewRuleDraft = { enabled: boolean; impact: ReviewRuleImpact };
+
 /** Anything that is not explicitly a warning is treated as blocking, as the page always did. */
 export function ruleImpact(rule: Pick<ReviewRule, "impact">): ReviewRuleImpact {
   return rule.impact === "warning" ? "warning" : "blocking";
@@ -58,18 +64,30 @@ const ERROR_CLASS = "mt-1 text-[11px] leading-5 text-[#ef4444] dark:text-red-400
 
 type ConfirmState = { copy: AgentConfirmCopy; apply: () => void } | null;
 
+/** Everything the form edits, as form state. */
+type FormSnapshot = {
+  enabled: boolean;
+  impact: ReviewRuleImpact;
+  lookback: string;
+  values: Record<string, string>;
+};
+
 export function ReviewRuleConfigForm({
   rule,
   editable,
-  onDirtyChange,
+  onDraftChange,
   onSaved,
   onError,
 }: {
   rule: ReviewRule;
   /** Callers pass `canConfigure && rule.configurable`; the server enforces it either way. */
   editable: boolean;
-  /** Must be referentially stable — it is an effect dependency. */
-  onDirtyChange?: (dirty: boolean) => void;
+  /**
+   * Called with the draft whenever it changes, and with `null` once nothing is unsaved — after a
+   * Discard, the moment a save succeeds, and on unmount. Must be referentially stable: it is an
+   * effect dependency.
+   */
+  onDraftChange?: (draft: ReviewRuleDraft | null) => void;
   onSaved: () => void | Promise<void>;
   onError: (message: string) => void;
 }) {
@@ -87,29 +105,36 @@ export function ReviewRuleConfigForm({
     passthrough,
     hiddenAdvanced,
   } = useMemo(() => splitStoredConfig(schema, parsed), [parsed, schema]);
-  const initialImpact = ruleImpact(rule);
-  const initialLookback = String(rule.lookbackMonths);
 
-  const [enabled, setEnabled] = useState(rule.enabled);
-  const [impact, setImpact] = useState<ReviewRuleImpact>(initialImpact);
-  const [lookback, setLookback] = useState(initialLookback);
-  const [values, setValues] = useState<Record<string, string>>(initialValues);
+  // What "unsaved" is measured against. It starts as the stored rule and moves to the submitted
+  // values the moment a save succeeds, not when the list refetch later remounts this form — so a
+  // saved edit is never reported as unsaved in between.
+  const [baseline, setBaseline] = useState<FormSnapshot>(() => ({
+    enabled: rule.enabled,
+    impact: ruleImpact(rule),
+    lookback: String(rule.lookbackMonths),
+    values: initialValues,
+  }));
+  const [enabled, setEnabled] = useState(baseline.enabled);
+  const [impact, setImpact] = useState<ReviewRuleImpact>(baseline.impact);
+  const [lookback, setLookback] = useState(baseline.lookback);
+  const [values, setValues] = useState<Record<string, string>>(baseline.values);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const impactName = useId();
   const lookbackId = useId();
 
   const dirty =
-    enabled !== rule.enabled ||
-    impact !== initialImpact ||
-    lookback !== initialLookback ||
-    Object.keys(initialValues).some((key) => values[key] !== initialValues[key]);
+    enabled !== baseline.enabled ||
+    impact !== baseline.impact ||
+    lookback !== baseline.lookback ||
+    Object.keys(baseline.values).some((key) => values[key] !== baseline.values[key]);
 
   useEffect(() => {
-    onDirtyChange?.(dirty);
-  }, [dirty, onDirtyChange]);
+    onDraftChange?.(dirty ? { enabled, impact } : null);
+  }, [dirty, enabled, impact, onDraftChange]);
   // A remount (the caller keys this form by version) or an unmount must not leave the caller
   // believing there are unsaved edits it can no longer reach.
-  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  useEffect(() => () => onDraftChange?.(null), [onDraftChange]);
 
   const errors = useMemo(
     () =>
@@ -118,29 +143,32 @@ export function ReviewRuleConfigForm({
   );
   const hasErrors = Object.keys(errors).length > 0;
 
+  // The snapshot is taken when Save is pressed, so an edit made while the request is in flight is
+  // neither sent nor mistaken for saved.
   const saveMutation = useMutation({
-    mutationFn: () =>
+    mutationFn: (draft: FormSnapshot) =>
       callServerFn(updateReviewAgent, {
         data: {
           definitionId: rule.definitionId,
-          enabled,
-          impact,
-          lookbackMonths: Number(lookback),
-          config: buildAgentConfigPayload(schema, values, passthrough),
+          enabled: draft.enabled,
+          impact: draft.impact,
+          lookbackMonths: Number(draft.lookback),
+          config: buildAgentConfigPayload(schema, draft.values, passthrough),
           expectedVersion: rule.version,
         },
       }),
-    onSuccess: async () => {
+    onSuccess: async (_saved, draft) => {
+      setBaseline(draft);
       await onSaved();
     },
     onError: (error) => onError(errorMessage(error, `${rule.name} settings could not be saved.`)),
   });
 
   const discard = () => {
-    setEnabled(rule.enabled);
-    setImpact(initialImpact);
-    setLookback(initialLookback);
-    setValues(initialValues);
+    setEnabled(baseline.enabled);
+    setImpact(baseline.impact);
+    setLookback(baseline.lookback);
+    setValues(baseline.values);
     setConfirm(null);
   };
 
@@ -345,7 +373,7 @@ export function ReviewRuleConfigForm({
             )}
             <button
               type="button"
-              onClick={() => saveMutation.mutate()}
+              onClick={() => saveMutation.mutate({ enabled, impact, lookback, values })}
               disabled={saveMutation.isPending || hasErrors || !dirty}
               title={hasErrors ? "Fix the highlighted settings first." : undefined}
               className="min-h-11 lg:min-h-0 rounded-lg bg-[#0d9488] px-4 py-2 text-sm font-medium text-white transition-all hover:bg-[#0f766e] disabled:opacity-40"

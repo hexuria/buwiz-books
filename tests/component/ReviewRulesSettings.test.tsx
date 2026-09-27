@@ -14,6 +14,10 @@ import type { ReviewRule } from "../../src/components/settings/ReviewRuleConfigF
  * check runs and whether its finding stops approval. The section must save through the existing
  * `updateReviewAgent` server function with the stored settings carried through untouched — the
  * server functions are mocked here, so the assertions are on exactly what would be sent.
+ *
+ * Unsaved drafts are guarded: a route change is held by the router blocker, answered in the page,
+ * and only while something is unsaved. The router has no runtime in jsdom, so `useBlocker` is
+ * replaced by a recorder and the assertions are on the options the section hands it.
  */
 
 const api = vi.hoisted(() => ({
@@ -30,11 +34,33 @@ vi.mock("../../src/lib/use-permission", () => ({
   }),
 }));
 
-// The section guards unsaved edits with the router's blocker; there is no router in jsdom.
+type BlockerOptions = {
+  shouldBlockFn: (args: { current: { routeId: string }; next: { routeId: string } }) => boolean;
+  disabled?: boolean;
+  withResolver?: boolean;
+};
+type BlockerResolver =
+  | { status: "idle" }
+  | { status: "blocked"; proceed: () => void; reset: () => void };
+
+const blocker = vi.hoisted(() => ({
+  calls: [] as BlockerOptions[],
+  resolver: { status: "idle" } as BlockerResolver,
+}));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
-  useBlocker: vi.fn(() => ({ status: "idle" })),
+  useBlocker: (options: BlockerOptions) => {
+    blocker.calls.push(options);
+    return blocker.resolver;
+  },
 }));
+
+/** The options from the section's most recent render. */
+function blockerOptions() {
+  const last = blocker.calls.at(-1);
+  if (!last) throw new Error("useBlocker was never called");
+  return last;
+}
 
 function rule(overrides: Partial<ReviewRule> & Pick<ReviewRule, "key" | "name" | "group">) {
   return {
@@ -101,17 +127,21 @@ const SOURCE_FAILED = rule({
 
 const RULES = [MISSING_VENDOR, DUPLICATE, UNUSUAL_SPEND, SOURCE_FAILED];
 
-function renderSection() {
+function renderSection(props: { onUnsavedChange?: (unsaved: boolean) => void } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   return render(
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ReviewRulesSettings />
+        <ReviewRulesSettings {...props} />
       </ToastProvider>
     </QueryClientProvider>,
   );
+}
+
+function rowOf(name: string) {
+  return screen.getByText(name, { selector: "p" }).closest("li")!;
 }
 
 async function openRule(user: ReturnType<typeof userEvent.setup>, name: string) {
@@ -119,6 +149,8 @@ async function openRule(user: ReturnType<typeof userEvent.setup>, name: string) 
 }
 
 beforeEach(() => {
+  blocker.calls = [];
+  blocker.resolver = { status: "idle" };
   permission.configure = true;
   api.listReviewAgents.mockReset().mockResolvedValue(RULES);
   api.updateReviewAgent.mockReset().mockResolvedValue({
@@ -301,5 +333,107 @@ describe("ReviewRulesSettings", () => {
     expect(screen.getByRole("switch", { name: "Enable Missing Vendor" })).toBeDisabled();
     expect(screen.getByRole("radio", { name: "Stop" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
+  });
+});
+
+describe("ReviewRulesSettings — unsaved drafts", () => {
+  it("shows a collapsed row's draft, not its stored state", async () => {
+    const user = userEvent.setup();
+    renderSection();
+
+    await openRule(user, "Missing Vendor");
+    await user.click(screen.getByRole("switch", { name: "Enable Missing Vendor" }));
+    await user.click(screen.getByRole("radio", { name: "Warn" }));
+    await user.click(screen.getByRole("button", { name: "Close Missing Vendor" }));
+
+    // The chips are spans; the editor's own labels are still in the (hidden) panel.
+    const chip = { selector: "span" };
+    const row = rowOf("Missing Vendor");
+    expect(within(row).getByText("Unsaved", chip)).toBeVisible();
+    expect(within(row).getByText("Off", chip)).toBeVisible();
+    expect(within(row).getByText("Warn", chip)).toBeVisible();
+    expect(within(row).queryByText("On", chip)).toBeNull();
+    expect(within(row).queryByText("Stop", chip)).toBeNull();
+  });
+
+  it("holds a route change only while something is unsaved", async () => {
+    const onUnsavedChange = vi.fn();
+    const user = userEvent.setup();
+    renderSection({ onUnsavedChange });
+
+    await openRule(user, "Missing Vendor");
+    expect(blockerOptions()).toMatchObject({ disabled: true, withResolver: true });
+
+    await user.click(screen.getByRole("switch", { name: "Enable Missing Vendor" }));
+    await waitFor(() => expect(blockerOptions().disabled).toBe(false));
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(true);
+
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(blockerOptions().disabled).toBe(true));
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
+    expect(within(rowOf("Missing Vendor")).queryByText("Unsaved")).toBeNull();
+  });
+
+  it("stops guarding the moment a save succeeds, before the list is re-read", async () => {
+    let finishRefetch: (rules: ReviewRule[]) => void = () => {};
+    api.listReviewAgents.mockReset();
+    api.listReviewAgents.mockResolvedValueOnce(RULES).mockImplementationOnce(
+      () =>
+        new Promise<ReviewRule[]>((resolve) => {
+          finishRefetch = resolve;
+        }),
+    );
+    const onUnsavedChange = vi.fn();
+    const user = userEvent.setup();
+    renderSection({ onUnsavedChange });
+
+    await openRule(user, "Missing Vendor");
+    await user.click(screen.getByRole("switch", { name: "Enable Missing Vendor" }));
+    await waitFor(() => expect(blockerOptions().disabled).toBe(false));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(api.updateReviewAgent).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.listReviewAgents).toHaveBeenCalledTimes(2));
+    // The refetch is still in flight, and the saved edit is no longer "unsaved".
+    await waitFor(() => expect(blockerOptions().disabled).toBe(true));
+    expect(onUnsavedChange).toHaveBeenLastCalledWith(false);
+
+    finishRefetch(
+      RULES.map((entry) =>
+        entry.key === "missing_vendor" ? { ...entry, enabled: false, version: 3 } : entry,
+      ),
+    );
+    await waitFor(() =>
+      expect(within(rowOf("Missing Vendor")).getByText("Off", { selector: "span" })).toBeVisible(),
+    );
+    expect(blockerOptions().disabled).toBe(true);
+  });
+
+  it("never holds a navigation that stays on this route", async () => {
+    renderSection();
+    await screen.findByRole("region", { name: "Inbox checks" });
+    const { shouldBlockFn } = blockerOptions();
+
+    const settings = { routeId: "/organization/$orgId/settings" };
+    expect(shouldBlockFn({ current: settings, next: settings })).toBe(false);
+    expect(shouldBlockFn({ current: settings, next: { routeId: "/inbox" } })).toBe(true);
+  });
+
+  it("asks in the page when a route change is held, not with window.confirm", async () => {
+    const proceed = vi.fn();
+    const reset = vi.fn();
+    const confirm = vi.spyOn(window, "confirm");
+    blocker.resolver = { status: "blocked", proceed, reset };
+    const user = userEvent.setup();
+    renderSection();
+
+    const prompt = await screen.findByRole("alertdialog");
+    expect(prompt).toHaveTextContent(/unsaved review rule changes/i);
+    await user.click(within(prompt).getByRole("button", { name: "Keep editing" }));
+    expect(reset).toHaveBeenCalledTimes(1);
+    await user.click(within(prompt).getByRole("button", { name: "Discard and leave" }));
+    expect(proceed).toHaveBeenCalledTimes(1);
+    expect(confirm).not.toHaveBeenCalled();
+    confirm.mockRestore();
   });
 });

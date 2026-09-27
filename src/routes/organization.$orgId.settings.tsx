@@ -39,6 +39,7 @@ import type {
 } from "./api/-org-settings";
 import { ExportImportSection } from "../components/settings/ExportImportSection";
 import { ReviewRulesSettings } from "../components/settings/ReviewRulesSettings";
+import { UnsavedChangesBar } from "../components/settings/UnsavedChangesBar";
 import { CURRENCIES } from "@/lib/constants";
 import Combobox from "@/components/ui/Combobox";
 import { AI_MODEL_OPTIONS, AI_MODEL_DEFAULTS, AI_TASK_LABELS } from "@/lib/ai-models";
@@ -213,6 +214,20 @@ function SettingsPage() {
   const { orgId } = Route.useParams();
   const queryClient = useQueryClient();
   const [section, setSection] = useState<SettingsSection>("general");
+  // Sections are local state, not routes, so leaving one unmounts it and no router blocker sees
+  // it. Review Rules reports unsaved drafts here, and the switch is confirmed before it happens.
+  const [reviewRulesUnsaved, setReviewRulesUnsaved] = useState(false);
+  const [pendingSection, setPendingSection] = useState<SettingsSection | null>(null);
+
+  const selectSection = (next: SettingsSection) => {
+    if (next === section) return;
+    if (section === "review-rules" && reviewRulesUnsaved) {
+      setPendingSection(next);
+      return;
+    }
+    setPendingSection(null);
+    setSection(next);
+  };
 
   // Fetch settings
   const { data: settings, isLoading } = useQuery({
@@ -269,7 +284,8 @@ function SettingsPage() {
               <button
                 key={s.key}
                 type="button"
-                onClick={() => setSection(s.key)}
+                aria-current={section === s.key ? "page" : undefined}
+                onClick={() => selectSection(s.key)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                   section === s.key
                     ? "bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0d9488] dark:text-teal-400"
@@ -282,6 +298,21 @@ function SettingsPage() {
             ))}
           </nav>
         </aside>
+
+        {pendingSection && (
+          <UnsavedChangesBar
+            message={`You have unsaved review rule changes. Discard them and open ${
+              SECTIONS.find((entry) => entry.key === pendingSection)?.label ?? "that section"
+            }?`}
+            confirmLabel="Discard changes"
+            onConfirm={() => {
+              setPendingSection(null);
+              setReviewRulesUnsaved(false);
+              setSection(pendingSection);
+            }}
+            onCancel={() => setPendingSection(null)}
+          />
+        )}
 
         {/* Main Content */}
         <main className="flex-1 min-w-0">
@@ -302,7 +333,9 @@ function SettingsPage() {
               {section === "email" && (
                 <EmailSection settings={settings} orgId={orgId} queryClient={queryClient} />
               )}
-              {section === "review-rules" && <ReviewRulesSettings />}
+              {section === "review-rules" && (
+                <ReviewRulesSettings onUnsavedChange={setReviewRulesUnsaved} />
+              )}
               {section === "ai-credentials" && (
                 <AICredentialsSection settings={settings} orgId={orgId} queryClient={queryClient} />
               )}

@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AppErrorBoundary } from "@/components/error/AppErrorBoundary";
 import { EmptyCatalogNotice } from "@/components/review-agents/EmptyCatalogNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -19,7 +19,10 @@ import { keys } from "@/lib/query-keys";
 import { CADENCE_COPY, getAgentSchema } from "@/lib/review-agents/agent-config-schema";
 import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
-import { ReviewRuleConfigForm } from "@/components/settings/ReviewRuleConfigForm";
+import {
+  ReviewRuleConfigForm,
+  type ReviewRuleDraft,
+} from "@/components/settings/ReviewRuleConfigForm";
 import {
   listReviewAgents,
   listReviewFindings,
@@ -612,6 +615,10 @@ function AgentDetail({
   const schema = getAgentSchema(agent.key);
   const editable = canConfigure && agent.configurable;
   const cadence = schema?.cadence ?? (agent.group === "review" ? "on_demand" : "ingest");
+  const onDraftChange = useCallback(
+    (draft: ReviewRuleDraft | null) => onDirtyChange(draft !== null),
+    [onDirtyChange],
+  );
   const runnable = cadence === "on_demand" || cadence === "ingest_and_on_demand";
 
   return (
@@ -680,7 +687,7 @@ function AgentDetail({
             <ReviewRuleConfigForm
               rule={agent}
               editable={editable}
-              onDirtyChange={onDirtyChange}
+              onDraftChange={onDraftChange}
               onSaved={onSaved}
               onError={onError}
             />
