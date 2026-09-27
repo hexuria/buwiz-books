@@ -44,6 +44,25 @@ describe("routines wiring", () => {
     expect(retry).toContain("routine_webhook: BACKGROUND");
   });
 
+  it("fires due schedule routines from the drain, before the claim loop", () => {
+    const registry = read("src/lib/jobs/registry.ts");
+    expect(registry).toContain("[ROUTINE_SCHEDULE_RUN_JOB_TYPE]: processRoutineScheduleRunJob");
+    const fireAt = registry.indexOf(
+      "if (jobTypes.includes(ROUTINE_SCHEDULE_RUN_JOB_TYPE)) await fireDueScheduleRoutines();",
+    );
+    const claimAt = registry.indexOf("const job = await claimNextProcessingJob(db, {");
+    expect(fireAt).toBeGreaterThan(-1);
+    expect(claimAt).toBeGreaterThan(fireAt);
+    expect(read("src/lib/jobs/retry-policy.ts")).toContain("routine_schedule_run: BACKGROUND");
+
+    const scheduler = read("src/lib/routines/scheduler.ts");
+    expect(scheduler).toContain('.for("update", { skipLocked: true })');
+    // Every write for a due routine happens in THAT routine's org context.
+    expect(scheduler).toMatch(
+      /withOrgContext\(\s*candidate\.organizationId,\s*"system",\s*"admin",/,
+    );
+  });
+
   it("routes inbound email through the organization's email routine", () => {
     const source = read("server/routes/api/inbound-email/resend.post.ts");
     expect(source).toContain("ensureInboundEmailRoutine(tx, settings.organizationId)");

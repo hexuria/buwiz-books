@@ -8,12 +8,14 @@ import {
   transactionCandidates,
   workflowEvents,
 } from "@/db/schema/inbox";
+import { routines } from "@/db/schema/routines";
 import { failRun } from "@/lib/ai/agent-run";
 
 interface TerminalProcessingJob {
   id: string;
   organizationId: string;
   ingestionEventId: string | null;
+  routineId?: string | null;
   jobType: string;
   payload: Record<string, unknown>;
   attempts: number;
@@ -109,6 +111,45 @@ async function terminalizeRoutineWebhookFailure(
 }
 
 /**
+ * Terminalize an exhausted `routine_schedule_run` job: the schedule source
+ * kept failing. The routine keeps its schedule (the next slot still fires),
+ * but carries the error and the failure is written to workflow_events.
+ */
+async function terminalizeRoutineScheduleFailure(
+  db: DbExecutor,
+  job: TerminalProcessingJob,
+  errorMessage: string,
+  now: Date,
+) {
+  if (!job.routineId) {
+    return { workflowTerminalized: false, reason: "no_workflow" as const };
+  }
+  await db
+    .update(routines)
+    .set({ lastError: errorMessage, updatedAt: now })
+    .where(and(eq(routines.organizationId, job.organizationId), eq(routines.id, job.routineId)));
+  await db
+    .insert(workflowEvents)
+    .values({
+      organizationId: job.organizationId,
+      entityType: "routine",
+      entityId: job.routineId,
+      action: "routine_schedule_failed",
+      actorType: "system",
+      idempotencyKey: `inbox-job:${job.id}:terminal-failure`,
+      data: {
+        jobId: job.id,
+        scheduledFor: (job.payload as { scheduledFor?: unknown }).scheduledFor ?? null,
+        attempts: job.attempts,
+        maxAttempts: job.maxAttempts,
+        error: errorMessage,
+      },
+    })
+    .onConflictDoNothing();
+  return { workflowTerminalized: true, reason: "terminalized" as const };
+}
+
+/**
  * Apply the durable workflow side effects for a terminal processing failure.
  *
  * The processing_jobs row is fenced and transitioned by the caller. This
@@ -133,6 +174,9 @@ export async function terminalizeProcessingJobFailure(
   // could never observe a terminal state and only ever timed out.
   if (job.jobType === "routine_webhook") {
     return terminalizeRoutineWebhookFailure(db, job, errorMessage, now);
+  }
+  if (job.jobType === "routine_schedule_run") {
+    return terminalizeRoutineScheduleFailure(db, job, errorMessage, now);
   }
   if (job.jobType !== "process_inbound_email") {
     return terminalizeAgentRunFailure(db, job, errorMessage);

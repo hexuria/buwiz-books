@@ -11,8 +11,13 @@
  *
  * `secret_ref` names a `routine_secrets` row. The secret itself is never part
  * of the config, so no routine read (and no future export) can carry it.
+ *
+ * Schedule routines store a preset plus the schedule source they run:
+ * `{ preset, at?, weekday?, timezone, source }` (see ./schedule.ts and
+ * ./schedule-sources.ts).
  */
 import { z } from "zod";
+import { refineSchedule, scheduleShape } from "./schedule";
 
 export const INBOUND_EMAIL_PROVIDER = "resend";
 export const INBOUND_EMAIL_ROUTINE_NAME = "Inbound email";
@@ -23,6 +28,7 @@ export const WEBHOOK_TOLERANCE_SECONDS = 300;
 export const WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 
 export const ROUTINE_WEBHOOK_JOB_TYPE = "routine_webhook";
+export const ROUTINE_SCHEDULE_RUN_JOB_TYPE = "routine_schedule_run";
 
 /** `integration_sources.provider` for the per-routine webhook source. */
 export const ROUTINE_WEBHOOK_SOURCE_PROVIDER = "routine_webhook";
@@ -85,4 +91,16 @@ export function isInboundEmailRoutine(routine: {
  */
 export function routineWebhookEventProvider(routineId: string): string {
   return `routine:${routineId}`;
+}
+
+const scheduleTriggerConfigSchema = scheduleShape
+  .extend({ source: z.string().min(1).max(64) })
+  .superRefine(refineSchedule);
+
+export type ScheduleTriggerConfig = z.output<typeof scheduleTriggerConfigSchema>;
+
+/** The schedule config, or null when it is not a valid schedule config. */
+export function parseScheduleTriggerConfig(config: unknown): ScheduleTriggerConfig | null {
+  const parsed = scheduleTriggerConfigSchema.safeParse(config);
+  return parsed.success ? parsed.data : null;
 }
