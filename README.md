@@ -56,8 +56,8 @@ pre-schema migrations that exist to keep it non-interactive.
 **Review agents.** The rule catalog (`review_rule_definitions`) is a global table seeded from
 `src/lib/inbox/review-rule-catalog.ts`. It is wired into the local `db:fresh` and
 `db:test:fresh` rebuilds. Production seeding belongs to the unattached canonical deployment
-repository. If `/review-agents` ever renders "No review agents are set up yet", this is the first
-thing to check:
+repository. If Settings → Review Rules ever shows "No review agents are set up yet", this is the
+first thing to check:
 
 ```bash
 bun db:review-rules:status      # read-only: catalog state, drift, unresolved findings

@@ -116,7 +116,7 @@ async function reportStatus() {
   if (!(await catalogTableExists("review_findings"))) return;
 
   // Findings written by the pre-fix engine, which never set inbox_item_id. Their only resolution
-  // path is the /review-agents findings panel.
+  // path is Ledger findings under Settings -> Review Rules.
   const orphaned = await query(sql`
     SELECT rule_key, state, count(*)::int AS n
     FROM review_findings WHERE inbox_item_id IS NULL
@@ -127,7 +127,7 @@ async function reportStatus() {
     console.log("   none — the on-demand run has never produced findings here.");
   } else {
     for (const row of orphaned) console.log(`   ${row.rule_key} (${row.state}): ${row.n}`);
-    console.log("   Resolve these from the /review-agents findings panel.");
+    console.log("   Resolve these from Ledger findings under Settings → Review Rules.");
   }
 
   // Calibration evidence for the enforce-vs-shadow decision.
