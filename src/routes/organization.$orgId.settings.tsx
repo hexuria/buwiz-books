@@ -1,7 +1,7 @@
 /**
  * Organization Settings — /organization/$orgId/settings
  * Linear-style full-page settings with sidebar navigation.
- * Sections: General, AI Credentials, Members
+ * Sections: General, Business Profile, Email, Review Rules, AI Credentials, Members, Export / Import
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -38,6 +38,8 @@ import type {
   OrgAiCredentialView,
 } from "./api/-org-settings";
 import { ExportImportSection } from "../components/settings/ExportImportSection";
+import { ReviewRulesSettings } from "../components/settings/ReviewRulesSettings";
+import { UnsavedChangesBar } from "../components/settings/UnsavedChangesBar";
 import { CURRENCIES } from "@/lib/constants";
 import Combobox from "@/components/ui/Combobox";
 import { AI_MODEL_OPTIONS, AI_MODEL_DEFAULTS, AI_TASK_LABELS } from "@/lib/ai-models";
@@ -59,6 +61,7 @@ type SettingsSection =
   | "general"
   | "business"
   | "email"
+  | "review-rules"
   | "ai-credentials"
   | "members"
   | "export-import";
@@ -118,6 +121,25 @@ const SECTIONS: { key: SettingsSection; label: string; icon: React.ReactNode }[]
       >
         <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
         <polyline points="22,6 12,13 2,6" />
+      </svg>
+    ),
+  },
+  {
+    key: "review-rules",
+    label: "Review Rules",
+    icon: (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
       </svg>
     ),
   },
@@ -192,6 +214,20 @@ function SettingsPage() {
   const { orgId } = Route.useParams();
   const queryClient = useQueryClient();
   const [section, setSection] = useState<SettingsSection>("general");
+  // Sections are local state, not routes, so leaving one unmounts it and no router blocker sees
+  // it. Review Rules reports unsaved drafts here, and the switch is confirmed before it happens.
+  const [reviewRulesUnsaved, setReviewRulesUnsaved] = useState(false);
+  const [pendingSection, setPendingSection] = useState<SettingsSection | null>(null);
+
+  const selectSection = (next: SettingsSection) => {
+    if (next === section) return;
+    if (section === "review-rules" && reviewRulesUnsaved) {
+      setPendingSection(next);
+      return;
+    }
+    setPendingSection(null);
+    setSection(next);
+  };
 
   // Fetch settings
   const { data: settings, isLoading } = useQuery({
@@ -248,7 +284,8 @@ function SettingsPage() {
               <button
                 key={s.key}
                 type="button"
-                onClick={() => setSection(s.key)}
+                aria-current={section === s.key ? "page" : undefined}
+                onClick={() => selectSection(s.key)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                   section === s.key
                     ? "bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0d9488] dark:text-teal-400"
@@ -261,6 +298,21 @@ function SettingsPage() {
             ))}
           </nav>
         </aside>
+
+        {pendingSection && (
+          <UnsavedChangesBar
+            message={`You have unsaved review rule changes. Discard them and open ${
+              SECTIONS.find((entry) => entry.key === pendingSection)?.label ?? "that section"
+            }?`}
+            confirmLabel="Discard changes"
+            onConfirm={() => {
+              setPendingSection(null);
+              setReviewRulesUnsaved(false);
+              setSection(pendingSection);
+            }}
+            onCancel={() => setPendingSection(null)}
+          />
+        )}
 
         {/* Main Content */}
         <main className="flex-1 min-w-0">
@@ -280,6 +332,9 @@ function SettingsPage() {
               )}
               {section === "email" && (
                 <EmailSection settings={settings} orgId={orgId} queryClient={queryClient} />
+              )}
+              {section === "review-rules" && (
+                <ReviewRulesSettings onUnsavedChange={setReviewRulesUnsaved} />
               )}
               {section === "ai-credentials" && (
                 <AICredentialsSection settings={settings} orgId={orgId} queryClient={queryClient} />
