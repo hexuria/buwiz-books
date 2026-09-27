@@ -145,7 +145,7 @@ export const REVIEW_AGENT_SCHEMAS: Record<string, AgentConfigSchema> = {
     usesLookback: false,
     method: [
       INGEST_ONLY_METHOD,
-      "Converts the transaction total into the threshold currency at the entry's exchange rate.",
+      "Converts the expense total into your books' currency at the entry's exchange rate, and the threshold too when it is set in the entry's currency.",
       "Raises a finding when it exceeds the threshold and no receipt is attached.",
     ],
     fields: [

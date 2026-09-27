@@ -112,6 +112,11 @@ describe("P8 wiring", () => {
   it("rules total money exactly and only convert thresholds with the right pair", () => {
     const source = read("src/lib/inbox/rules.ts");
     expect(source).toContain("sumMoney(");
-    expect(source).toContain("settings.missingReceiptCurrency === candidate.originalCurrency");
+    // The threshold converts only when its currency is the paper's own, and
+    // the expense total converts into the functional currency before the
+    // comparison (behavior: tests/unit/inbox-rules.test.ts).
+    expect(source).toContain("thresholdCurrency === originalCurrency");
+    expect(source).toContain("multiplyMoney(expenseTotalOriginal, candidate.exchangeRate");
+    expect(source).not.toContain("Number(expenseTotalMoney)");
   });
 });
