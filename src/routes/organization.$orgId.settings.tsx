@@ -41,7 +41,7 @@ import type {
 import { ExportImportSection } from "../components/settings/ExportImportSection";
 import { ReviewRulesSettings } from "../components/settings/ReviewRulesSettings";
 import { UnsavedChangesBar } from "../components/settings/UnsavedChangesBar";
-import { InboxV2Setting } from "../components/settings/InboxV2Setting";
+import { InboundEmailSettings } from "../components/settings/InboundEmailSettings";
 import { JevLanesSettings } from "../components/settings/JevLanesSettings";
 import { CURRENCIES } from "@/lib/constants";
 import Combobox from "@/components/ui/Combobox";
@@ -499,8 +499,6 @@ function GeneralSection({
           <CountrySection queryClient={queryClient} />
         </div>
       </section>
-
-      <InboxV2Setting orgId={orgId} enabled={settings.inboxV2} />
     </div>
   );
 }
@@ -999,7 +997,8 @@ function EmailSection({
     <div>
       <h2 className="text-xl font-semibold text-[#1e293b] dark:text-white mb-1">Email</h2>
       <p className="text-sm text-[#64748b] dark:text-white/50 mb-6">
-        Configure sender identity and email delivery for invoices and notifications.
+        Configure sender identity and email delivery for invoices and notifications, and the address
+        papers are emailed to for the Inbox.
       </p>
 
       {/* Sender Identity */}
@@ -1185,6 +1184,9 @@ function EmailSection({
           </span>
         )}
       </div>
+
+      {/* Inbound email — saves on its own; not part of the sender settings above. */}
+      <InboundEmailSettings />
     </div>
   );
 }

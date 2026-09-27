@@ -716,7 +716,7 @@ export default function AppSidebar({ collapsed, onToggleCollapse, children }: Ap
     staleTime: 60_000,
     enabled: phTaxFilingEnabled,
   });
-  // Inbox v2 orgs see how many items need a human; the count is the Inbox list's own length.
+  // How many items need a human; the count is the Inbox list's own length.
   const inboxBadge = useInboxV2Badge();
   const navItems = applyPhTaxGate(NAV_ITEMS, effectivePhTaxUiState(phTaxStatus)).map((item) =>
     item.href === "/inbox" && inboxBadge !== undefined ? { ...item, badge: inboxBadge } : item,

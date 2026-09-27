@@ -65,12 +65,21 @@ vi.mock("../../src/routes/api/-org-settings", () => ({
   getOwnerEmail: vi.fn(),
   updateOrgBusinessInfo: vi.fn(),
   updateOrgImageGenerationSetting: vi.fn(),
-  updateOrgInboxV2Setting: vi.fn(),
   getOrgAiCredentials: vi.fn(),
   addOrgAiCredential: vi.fn(),
   revokeOrgAiCredential: vi.fn(),
   getOrgAiSettingsForUi: vi.fn(),
   updateOrgAiSettings: vi.fn(),
+}));
+// Email closes with the inbound address card, which reads and saves these.
+vi.mock("../../src/routes/api/-inbox-settings", () => ({
+  getInboxSettings: vi.fn(async () => ({
+    inboundEmailAddress: null,
+    requireDifferentApprover: true,
+    allowOwnerOverride: true,
+  })),
+  updateInboxSettings: vi.fn(),
+  generateInboundEmailAddress: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-tax-module-state", () => ({
   getTaxModuleState: vi.fn(async () => ({
@@ -97,7 +106,6 @@ vi.mock("../../src/lib/auth-client", () => ({
 }));
 vi.mock("../../src/lib/use-permission", () => ({
   usePermission: () => ({ canAccess: true, isLoading: false }),
-  // General's New Inbox switch is admin-only.
   useRole: () => ({ role: "owner", isLoading: false }),
 }));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({

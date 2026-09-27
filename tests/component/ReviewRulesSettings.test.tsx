@@ -813,7 +813,7 @@ describe("ReviewRulesSettings — Scan books", () => {
     expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
     expect(within(list).getByRole("link", { name: /Open in Inbox/ })).toHaveAttribute(
       "href",
-      `/inbox?selected=${INBOX_BOUND_FINDING.inboxItemId}&state=all`,
+      `/inbox?selected=${INBOX_BOUND_FINDING.inboxItemId}`,
     );
   });
 

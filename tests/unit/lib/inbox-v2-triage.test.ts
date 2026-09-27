@@ -12,7 +12,6 @@ import {
   type InboxV2ReasonInput,
   type ModelUnsureSignal,
 } from "../../../src/lib/inbox/v2/triage";
-import { isInboxV2Enabled } from "../../../src/lib/inbox/v2/flag";
 
 /**
  * Inbox v2 shows only what needs a human, with exactly one reason per item (spec §10). These pin
@@ -359,14 +358,6 @@ describe("deriveInboxV2SourceBadge", () => {
     expect(
       deriveInboxV2SourceBadge({ remembered: false, minCategoryConfidence: "1.5" }),
     ).toBeNull();
-  });
-});
-
-describe("isInboxV2Enabled", () => {
-  it("is off unless the organization turned it on", () => {
-    expect(isInboxV2Enabled({})).toBe(false);
-    expect(isInboxV2Enabled({ inboxV2: false })).toBe(false);
-    expect(isInboxV2Enabled({ inboxV2: true })).toBe(true);
   });
 });
 

@@ -67,10 +67,17 @@ describe("Org Metadata", () => {
       expect(() => orgMetadataSchema.parse({ paypalMode: "test" })).toThrow();
     });
 
-    it("should keep the inboxV2 rollout flag so other metadata writers preserve it", () => {
-      expect(orgMetadataSchema.parse({ inboxV2: true }).inboxV2).toBe(true);
-      expect(orgMetadataSchema.parse({ inboxV2: false }).inboxV2).toBe(false);
-      expect(orgMetadataSchema.parse({}).inboxV2).toBeUndefined();
+    // The Inbox v2 rollout flag retired at the cutover. Organizations that flipped it still carry
+    // the key; it must never break a read, whatever its value, and nothing may act on it.
+    it("ignores a retired inboxV2 key without losing the rest of the metadata", () => {
+      for (const legacy of [true, false, "yes", null, { nested: 1 }]) {
+        const result = orgMetadataSchema.parse({ inboxV2: legacy, currency: "PHP" });
+        expect(result).toEqual({ currency: "PHP" });
+        expect(result as Record<string, unknown>).not.toHaveProperty("inboxV2");
+      }
+      expect(parseOrgMetadata(JSON.stringify({ inboxV2: true, taxId: "123" }))).toEqual({
+        taxId: "123",
+      });
     });
 
     it("should strip unknown and secret keys", () => {

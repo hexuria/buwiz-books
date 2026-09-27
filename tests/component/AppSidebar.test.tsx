@@ -98,7 +98,7 @@ describe("AppSidebar without Review Agents", () => {
 });
 
 describe("AppSidebar Inbox badge", () => {
-  it("shows how many items need a human when the org is on Inbox v2", () => {
+  it("shows how many items need a human", () => {
     inbox.badge = 7;
     const { container } = renderSidebar();
     expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent("Inbox7");
@@ -110,7 +110,7 @@ describe("AppSidebar Inbox badge", () => {
     expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent("Inbox250+");
   });
 
-  it("shows no badge on the classic Inbox or when nothing needs a human", () => {
+  it("shows no badge while the list loads or when nothing needs a human", () => {
     const { container, unmount } = renderSidebar();
     expect(container.querySelector('a[href="/inbox"]')).toHaveTextContent(/^Inbox$/);
     unmount();

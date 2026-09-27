@@ -33,16 +33,13 @@ export const keys = {
   },
   inbox: {
     all: () => ["inbox"] as const,
-    list: (params?: Params) => ["inbox", params ?? null] as const,
     detail: (id: string) => ["inbox", "detail", id] as const,
     duplicateCase: (id: string) => ["inbox", "duplicate-case", id] as const,
     // Was a top-level ["inbox-settings"], so it sat outside the `all()` prefix and never
     // invalidated with the rest of the Inbox. One cheap read; folding it in is the right default.
     settings: () => ["inbox", "settings"] as const,
-    /** Inbox v2: the needs-a-human list. The sidebar badge reads the same entry. */
+    /** The needs-a-human list. The sidebar badge reads the same entry. */
     v2List: () => ["inbox", "v2", "list"] as const,
-    /** Inbox v2: the per-org rollout flag that picks the /inbox screen. */
-    v2Enabled: () => ["inbox", "v2", "enabled"] as const,
     // Classification memories (Inbox v2 §7). Under the Inbox prefix, so an Inbox-wide
     // invalidation also refreshes the memory list and the scope previews.
     memories: () => ["inbox", "memories"] as const,
