@@ -67,9 +67,10 @@ the same Inbox items, so switching moves no data and open items carry over.
 - Each item carries one reason, first match wins: **Failed** (the item failed,
   or its source could not be processed), **Needs a fix** (an open blocking check,
   or an entry still missing lines or accounts), **Jev unsure** (a real
-  model-unsure signal), **Spot check** (reserved for autonomy hold-back samples;
-  nothing produces it yet), and otherwise **Ready to approve** — a clean entry,
-  typed by hand or read confidently.
+  model-unsure signal), **Spot check** (a paper Jev would have approved, held
+  back for a person — see Jev approval lanes below), and otherwise **Ready to
+  approve** — a clean entry, typed by hand or read confidently. On a lane at
+  suggest, a ready paper Jev would approve says so.
 - Jev is unsure when a line carries a low-confidence category, or when stage 2
   could not use its answer: a category below the threshold or with no usable
   answer (kept in the line's prediction evidence), or a counterparty it left
@@ -108,6 +109,68 @@ the same Inbox items, so switching moves no data and open items carry over.
   paper), the pane offers **Remember this?** above the editor; approving with
   such a change offers it in a corner card once the approval lands. Both are
   optional and block nothing. Settings → Review Rules lists the memories.
+
+## Jev approval lanes
+
+Jev may approve Inbox papers itself once it has earned it, one **lane** at a
+time: one vendor or customer and one kind of paper (`ai_autonomy_lanes`,
+migration 0060). Settings → **Jev approval** lists the lanes; admins change it.
+
+- **Levels.** A lane is created at **watch** the first time Jev proposes a paper
+  for it. Admins promote it to **suggest** (the Inbox says when Jev would
+  approve) and then to **auto** (Jev approves), one step at a time. Each
+  promotion re-checks, at that moment, that the lane has 200 reviewed papers
+  with at least 98% accepted unchanged (`AUTONOMY_CRITERIA`, counted over the
+  lane's own labels). Auto also needs the lane's vendor or customer (the lane
+  for papers with no known party can never approve), an amount cap, and a
+  confidence threshold the lane's calibration supports. After every new label,
+  an auto lane whose last 50 labels fall below 95% drops back to suggest by
+  itself.
+- **Labels.** A proposal is a draft stage 2 answered (a category it picked at
+  or above the threshold) or a remembered answer. It is recorded with its lane
+  after classification (`jev_proposal_recorded`), and the first person's
+  decision on it becomes the lane's label (`ai_run_feedback.lane_id`):
+  approved unchanged — date, currency, counterparty, and every line's account,
+  side and amount that Jev answered — is **accepted**; any change is
+  **corrected**; a rejection, or an undo of Jev's own approval, is
+  **rejected**. Filling what Jev left blank (the payment side) is not a
+  correction. Each label records whether Jev _would_ have approved the paper, so
+  Settings and the scorecard show agreement per lane.
+- **Calibration.** Labels are bucketed by Jev's confidence. The threshold may not
+  sit below the lowest bucket from which every observed bucket up was accepted
+  at least 98% of the time on at least 30 labels.
+- **When Jev approves.** Only when every condition holds: the lane at auto; the
+  organization's switch on (**Let Jev approve Inbox papers**, off by default);
+  the AI kill switch off; maker-checker (`requireDifferentApprover`) off, or an
+  admin opted Jev in; confidence at or above the lane's threshold; no open
+  blocking check or warning; no duplicate case; a known counterparty and none
+  being created; no change to a payee's bank details, ever; an open period;
+  every line on an account and balanced; the total at or under the lane's cap;
+  and the paper not sampled as a spot check. Anything else leaves it in the
+  Inbox, and a `jev_auto_approval_held` event says why.
+- **Spot checks.** A share of what Jev would approve (10% by default, set in
+  Settings) is decided before posting — a hash of the candidate id and the
+  organization's salt — and left in the Inbox as **Spot check**. The person's
+  decision is an unbiased label.
+- **How it posts.** The `jev_auto_approve` job decides again under the paper's
+  lifecycle lock and approves through the same approval and posting cores as a
+  person. Jev is recorded as the system actor: `review_decisions.actor_type` is
+  `system` with `actor_key` `jev` and no `actor_id`; `inbox_items.resolved_by`
+  stays empty (a user column never borrows a person); the journal's
+  `created_by`, the bill's `approver_id` and the activity rows say
+  `system:jev`, and the activity log names the lane, the confidence and the rule
+  snapshot. Entries Jev approved show a **by Jev** tag in Bills and
+  Transactions.
+- **Undo.** On the entry screen, **Undo Jev approval** (needs Inbox approve)
+  posts a reversal — never a delete — dated like the original, or today when
+  that period is closed; voids the bill it created (refused once anything was
+  paid); returns the paper to the Inbox on a new revision; and counts as a
+  disagreement for the lane.
+- **Not yet.** `categorize` is structurally manual (`STRUCTURAL_MANUAL_KINDS`),
+  so while it is walled for the lane nothing Jev approves is posted — lanes
+  still learn and can be promoted. Stage 2 never picks the payment side, so a
+  paper stage 2 alone read is never complete enough to approve; a remembered
+  answer (build step 10) can make it so.
 
 ## Review policy
 
@@ -400,8 +463,9 @@ configs, list, get, pin, unpin; writes need `agentRule:configure`, reads
 `bun eval:scorecard` replays a pile of papers under a rule set and prints the
 metrics: `cases`, `real_problems_caught` (of `real_problems_total`),
 `false_alarms`, `approved_zero_edits`, `locked_cases_passing` of
-`locked_cases_total`, and `memory_hit_rate` / `cost_per_100` (null until
-memory lands, and always null in recorded mode).
+`locked_cases_total`, Jev approvals a human would undo (`jev_approvals_undone`,
+with per-lane agreement in `jev_lanes`), and `memory_hit_rate` / `cost_per_100`
+(null until memory lands, and always null in recorded mode).
 
 ```text
 bun eval:scorecard --pile golden --json                     # no network, no database
@@ -424,7 +488,15 @@ bun eval:scorecard --pile org:<orgId> --rules live --limit 500
   posted rows, for `material_expense`), `paymentDetails` (the payee's stored
   and printed bank details, for `party_payment_details_changed`), `expected`
   (`problems` — the rule keys of the paper's real problems — and optional
-  `blocked`), and `outcome` (`decision`, `edits`).
+  `blocked`), `outcome` (`decision`, `edits`), and for a paper Jev proposed,
+  `jev` (`kind`, and the lane's `threshold` and `amountCap` when it has them).
+- **Jev lanes.** Each `jev` case is replayed through the approval checks for its
+  lane (the case's party and `kind`; confidence is the weakest line
+  `categoryConfidence`). `jev_lanes` gives each lane's agreement (approved
+  unchanged / decided) and `jev_approvals_undone` counts papers Jev would
+  approve that a person changed or rejected. Organization piles replay decided
+  papers, not proposals, so they leave these empty: a lane's real agreement is
+  in Settings → Jev approval.
 - Organization piles take labels from `ai_eval_cases` rows with task
   `inbox_rules`, `input_ref.candidateId`, and `expected = { problems, blocked?,
 locked? }`; unlabeled cases count toward `cases` and `approved_zero_edits`

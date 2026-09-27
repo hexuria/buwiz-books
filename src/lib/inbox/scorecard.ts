@@ -17,10 +17,21 @@
  * LOCKED CASES must reproduce exactly — every expected problem flagged, nothing
  * else flagged, and the blocked state matching when stated. The CI gate fails
  * unless `locked_cases_passing === locked_cases_total`.
+ *
+ * JEV LANES (build step 11). A case with a `jev` block is a paper Jev proposed
+ * on a lane (the case's party and the block's kind). Its confidence is the
+ * weakest category confidence on its lines. Replaying it through the Jev
+ * approval predicate's paper checks (src/lib/inbox/jev-approval/predicate.ts)
+ * says whether Jev WOULD approve it; the recorded outcome says whether a person
+ * agreed (approved it unchanged). Per lane the report gives agreement, and
+ * "Jev approvals a human would undo": papers Jev would approve that a person
+ * changed or rejected.
  */
 import { z } from "zod";
 import type { RuleSnapshotEntry } from "@/db/schema/rule-snapshots";
 import { ECONOMIC_EVENT_CLASSES } from "./duplicate-matcher";
+import { evaluateJevApproval, PAYMENT_DETAILS_RULE_KEY } from "./jev-approval/predicate";
+import { multiplyMoney, sumMoney } from "./money";
 import { REVIEW_RULE_CATALOG } from "./review-rule-catalog";
 import { replayRules, type ReplayCaseResult } from "./rule-replay";
 import {
@@ -156,6 +167,21 @@ export const scorecardCaseSchema = z
       .strict()
       .nullable()
       .default(null),
+    /**
+     * A paper Jev proposed (step 11): its lane's kind, and the lane's limits when
+     * the lane has them (absent: the provisional threshold and no cap).
+     */
+    jev: z
+      .object({
+        kind: z.string().min(1).max(32),
+        threshold: decimalString.nullable().optional(),
+        amountCap: decimalString.nullable().optional(),
+        /** Jev proposed creating a party for this paper. */
+        newParty: z.boolean().default(false),
+      })
+      .strict()
+      .nullable()
+      .default(null),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -262,8 +288,13 @@ export interface ScorecardReport {
   locked_cases_passing: number;
   /** Null until classification memory lands (build step 10). */
   memory_hit_rate: number | null;
-  /** Null until Jev approval lanes land (build step 11). */
+  /**
+   * Jev approvals a human would undo: papers Jev would approve that a person
+   * changed or rejected. Null when no case in the pile is a Jev proposal.
+   */
   jev_approvals_undone: number | null;
+  /** Per lane: human agreement, and how Jev's would-approve decisions held up. */
+  jev_lanes: ScorecardJevLane[];
   /** Null in recorded mode: nothing is spent replaying stored responses. */
   cost_per_100: number | null;
   failing_locked_cases: Array<{
@@ -312,11 +343,141 @@ export function scoreCase(
   };
 }
 
+export interface ScorecardJevOutcome {
+  id: string;
+  /** "party-acme · expense"; a paper with no party is on the "(no party)" lane. */
+  lane: string;
+  party: string | null;
+  kind: string;
+  wouldApprove: boolean;
+  /** The paper checks that held it, when Jev would not approve it. */
+  holds: string[];
+  /** A person approved it unchanged (true), changed or rejected it (false), or not yet (null). */
+  agreed: boolean | null;
+}
+
+export interface ScorecardJevLane {
+  lane: string;
+  party: string | null;
+  kind: string;
+  proposals: number;
+  /** Proposals a person decided. */
+  labeled: number;
+  agreed: number;
+  /** agreed / labeled; null with nothing decided. */
+  agreement: number | null;
+  would_approve: number;
+  /** Would-approve papers a person changed or rejected. */
+  would_approve_undone: number;
+}
+
+const NO_PARTY_LANE = "(no party)";
+
+/**
+ * Replay one Jev proposal through the approval predicate's paper checks, as its
+ * lane would judge it. Pure. Null for a case with no `jev` block.
+ */
+export function scoreJevCase(
+  scorecardCase: Pick<ScorecardCase, "id" | "candidate" | "lines" | "party" | "outcome" | "jev">,
+  result: ReplayCaseResult,
+): ScorecardJevOutcome | null {
+  const jev = scorecardCase.jev;
+  if (!jev) return null;
+  const rate = scorecardCase.candidate.exchangeRate;
+  const confidences = scorecardCase.lines.flatMap((line) =>
+    line.categoryConfidence ? [Number(line.categoryConfidence)] : [],
+  );
+  const functional = (amount: string | null | undefined) =>
+    amount == null || amount === "" ? null : multiplyMoney(amount, rate);
+  const lines = scorecardCase.lines.map((line) => ({
+    accountId: line.accountId ?? null,
+    debit: functional(line.debit),
+    credit: functional(line.credit),
+  }));
+  const party = scorecardCase.party?.id ?? null;
+  const decision = evaluateJevApproval({
+    lane: {
+      level: "watch",
+      amountCap: jev.amountCap ?? null,
+      confidenceThreshold: jev.threshold ?? null,
+      partyId: party,
+    },
+    // Organization switches do not change what Jev would do with the paper.
+    org: {
+      autoApproveEnabled: true,
+      aiKillSwitch: false,
+      requireDifferentApprover: false,
+      makerCheckerOptIn: false,
+    },
+    walledKinds: [],
+    paper: {
+      itemState: "ready_for_review",
+      candidateStatus: "current",
+      confidence: confidences.length > 0 ? Math.min(...confidences) : null,
+      partyId: party,
+      newPartyPending: jev.newParty,
+      openFindings: result.findings.map((finding) => ({
+        ruleKey: finding.ruleKey,
+        impact: finding.impact,
+      })),
+      paymentDetailsFlagged: result.findings.some(
+        (finding) => finding.ruleKey === PAYMENT_DETAILS_RULE_KEY,
+      ),
+      duplicateCaseOpen: false,
+      periodLocked: false,
+      functionalTotal: sumMoney(lines.map((line) => line.debit)),
+      lines,
+    },
+    sampled: false,
+  });
+  const outcome = scorecardCase.outcome;
+  return {
+    id: scorecardCase.id,
+    lane: `${party ?? NO_PARTY_LANE} · ${jev.kind}`,
+    party,
+    kind: jev.kind,
+    wouldApprove: decision.wouldApprove,
+    holds: decision.holds.filter((hold) => hold.scope === "paper").map((hold) => hold.reason),
+    agreed:
+      !outcome || outcome.decision === "pending"
+        ? null
+        : outcome.decision === "approved" && outcome.edits === 0,
+  };
+}
+
+/** Per-lane agreement over Jev outcomes, sorted by lane. */
+export function summarizeJevLanes(outcomes: readonly ScorecardJevOutcome[]): ScorecardJevLane[] {
+  const lanes = new Map<string, ScorecardJevLane>();
+  for (const outcome of outcomes) {
+    const lane = lanes.get(outcome.lane) ?? {
+      lane: outcome.lane,
+      party: outcome.party,
+      kind: outcome.kind,
+      proposals: 0,
+      labeled: 0,
+      agreed: 0,
+      agreement: null,
+      would_approve: 0,
+      would_approve_undone: 0,
+    };
+    lane.proposals += 1;
+    if (outcome.agreed !== null) lane.labeled += 1;
+    if (outcome.agreed === true) lane.agreed += 1;
+    if (outcome.wouldApprove) lane.would_approve += 1;
+    if (outcome.wouldApprove && outcome.agreed === false) lane.would_approve_undone += 1;
+    lanes.set(outcome.lane, lane);
+  }
+  return [...lanes.values()]
+    .map((lane) => ({ ...lane, agreement: lane.labeled > 0 ? lane.agreed / lane.labeled : null }))
+    .sort((left, right) => (left.lane < right.lane ? -1 : left.lane > right.lane ? 1 : 0));
+}
+
 /** Aggregate per-case outcomes into the report's metrics. */
 export function summarizeScorecard(
   cases: readonly Pick<ScorecardCase, "id" | "category" | "locked" | "expected" | "outcome">[],
   outcomes: readonly ScorecardCaseOutcome[],
   meta: { pile: string; rules: string; chain: ScorecardChain },
+  jevOutcomes: readonly ScorecardJevOutcome[] = [],
 ): ScorecardReport {
   if (cases.length !== outcomes.length) {
     throw new Error("Every case needs exactly one outcome.");
@@ -341,7 +502,11 @@ export function summarizeScorecard(
     locked_cases_total: locked.length,
     locked_cases_passing: locked.filter((outcome) => outcome.exact === true).length,
     memory_hit_rate: null,
-    jev_approvals_undone: null,
+    jev_approvals_undone:
+      jevOutcomes.length === 0
+        ? null
+        : jevOutcomes.filter((outcome) => outcome.wouldApprove && outcome.agreed === false).length,
+    jev_lanes: summarizeJevLanes(jevOutcomes),
     cost_per_100: null,
     failing_locked_cases: locked
       .filter((outcome) => outcome.exact !== true)
@@ -377,12 +542,17 @@ export function runScorecard(input: {
     rules: { entries: input.entries, fallbacks: input.fallbacks },
   });
   const outcomes = input.cases.map((item, index) => scoreCase(item, results[index]));
+  const jevOutcomes = input.cases.flatMap((item, index) => {
+    const outcome = scoreJevCase(item, results[index]);
+    return outcome ? [outcome] : [];
+  });
   return {
-    report: summarizeScorecard(input.cases, outcomes, {
-      pile: input.pile,
-      rules: input.rules,
-      chain: input.chain,
-    }),
+    report: summarizeScorecard(
+      input.cases,
+      outcomes,
+      { pile: input.pile, rules: input.rules, chain: input.chain },
+      jevOutcomes,
+    ),
     outcomes,
   };
 }
@@ -400,6 +570,15 @@ export function formatScorecardReport(report: ScorecardReport): string {
       report.memory_hit_rate === null ? "n/a (build step 10)" : String(report.memory_hit_rate),
     ],
     [
+      "Jev approvals a human would undo",
+      report.jev_approvals_undone === null
+        ? "n/a (no Jev proposals in the pile)"
+        : `${report.jev_approvals_undone} of ${report.jev_lanes.reduce(
+            (total, lane) => total + lane.would_approve,
+            0,
+          )} Jev would approve`,
+    ],
+    [
       "cost per 100 papers",
       report.cost_per_100 === null ? "n/a (recorded mode)" : String(report.cost_per_100),
     ],
@@ -409,6 +588,15 @@ export function formatScorecardReport(report: ScorecardReport): string {
     `Rule scorecard — pile: ${report.pile} · rules: ${report.rules} · chain: ${report.chain}`,
     ...rows.map(([label, value]) => `  ${label.padEnd(width)}  ${value}`),
   ];
+  for (const lane of report.jev_lanes) {
+    const agreement =
+      lane.agreement === null
+        ? "no decisions yet"
+        : `agreement ${Math.round(lane.agreement * 1000) / 10}% (${lane.agreed}/${lane.labeled})`;
+    lines.push(
+      `  lane ${lane.lane}: ${agreement}; Jev would approve ${lane.would_approve}, a human would undo ${lane.would_approve_undone}`,
+    );
+  }
   for (const failure of report.failing_locked_cases) {
     const parts = [
       failure.missed.length > 0 ? `missed ${failure.missed.join(", ")}` : null,

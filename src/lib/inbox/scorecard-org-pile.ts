@@ -280,6 +280,9 @@ export async function loadOrgScorecardPile(
         decision: item.state === "approved" ? "approved" : "rejected",
         edits: editsByCandidate.get(candidate.id) ?? 0,
       },
+      // Decided papers replay as decided, not as Jev proposed them; a lane's
+      // real agreement is its labels (Settings → Jev approval), not a replay.
+      jev: null,
     });
   }
   return { cases, skipped };
