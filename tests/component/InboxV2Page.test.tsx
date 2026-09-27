@@ -313,7 +313,7 @@ beforeEach(() => {
   editor.rendered = [];
   Object.assign(access, { approve: true, reject: true, update: true, resolve: true });
   setViewport(true);
-  api.listInboxV2.mockResolvedValue({ items: ALL_ITEMS, truncated: false });
+  api.listInboxV2.mockResolvedValue({ items: ALL_ITEMS, truncated: false, beingRead: 0 });
   api.getInboxItem.mockImplementation(({ data }: { data: { id: string } }) => {
     const item = ALL_ITEMS.find((entry) => entry.id === data.id)!;
     return Promise.resolve(detailFor(item));
@@ -383,10 +383,25 @@ describe("Inbox v2 list", { timeout: 30_000 }, () => {
   });
 
   it('says "Nothing needs you." when the list is empty', async () => {
-    api.listInboxV2.mockResolvedValue({ items: [], truncated: false });
+    api.listInboxV2.mockResolvedValue({ items: [], truncated: false, beingRead: 0 });
     renderInbox();
     expect(await screen.findAllByText("Nothing needs you.")).not.toHaveLength(0);
     expect(rows()).toHaveLength(0);
+    expect(screen.queryByText(/being read/)).not.toBeInTheDocument();
+  });
+
+  it("counts papers still being read in a quiet line, outside the list", async () => {
+    api.listInboxV2.mockResolvedValue({ items: [FIX], truncated: false, beingRead: 3 });
+    const { unmount } = renderInbox();
+    expect(await screen.findByRole("status")).toHaveTextContent("3 papers being read");
+    expect(rows()).toHaveLength(1);
+    expect(screen.getByText("1 needs you")).toBeInTheDocument();
+    unmount();
+
+    api.listInboxV2.mockResolvedValue({ items: [], truncated: false, beingRead: 1 });
+    renderInbox();
+    expect(await screen.findByRole("status")).toHaveTextContent("1 paper being read");
+    expect(screen.getAllByText("Nothing needs you.")).not.toHaveLength(0);
   });
 });
 

@@ -147,12 +147,6 @@ describe("deriveInboxV2Reason", () => {
       deriveInboxV2Reason({ state: "ready_for_review", openFindings: [], modelUnsureSignals: [] })
         .reason,
     ).toBe("ready");
-
-    const inFlight = deriveInboxV2Reason({ state: "processing", openFindings: [] });
-    expect(inFlight).toMatchObject({ reason: "ready", detail: "still_processing" });
-    expect(describeInboxV2Reason(inFlight)).toBe(
-      "Still being read. It can be approved once processing finishes.",
-    );
   });
 });
 

@@ -12,7 +12,10 @@
  *   jev_unsure  a real model-unsure signal: a low-confidence category, or a step-7 signal
  *   spot_check  a held-back sample of what Jev would have approved (step 11; never yet)
  *   ready       nothing above: a clean entry (typed by hand, or a confident paper) waiting for
- *               approval. Items still being read land here too, with their own sentence.
+ *               approval
+ *
+ * Papers still being read (received / processing) need nobody yet: the list counts them instead
+ * of giving them a reason.
  */
 import { isVendorBillCandidate } from "../vendor-bill";
 
@@ -42,7 +45,6 @@ export type InboxV2ReasonDetail =
   | "low_confidence"
   | "model_unsure"
   | "spot_check"
-  | "still_processing"
   | "ready";
 
 export interface InboxV2OpenFinding {
@@ -83,8 +85,6 @@ export interface InboxV2ReasonResult {
 
 export const SOURCE_PROCESSING_FAILED_RULE = "source_processing_failed";
 export const LOW_CONFIDENCE_CATEGORY_RULE = "low_confidence_category";
-
-const IN_FLIGHT_STATES = new Set(["received", "processing"]);
 
 function result(
   reason: InboxV2Reason,
@@ -128,7 +128,7 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
 
   if (input.spotCheck) return result("spot_check", "spot_check");
 
-  return result("ready", IN_FLIGHT_STATES.has(input.state) ? "still_processing" : "ready");
+  return result("ready", "ready");
 }
 
 const SIGNAL_SUBJECTS: Record<ModelUnsureSignal["subject"], string> = {
@@ -155,8 +155,6 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
       return `Jev isn't sure about the ${SIGNAL_SUBJECTS[reason.signal?.subject ?? "category"]}.`;
     case "spot_check":
       return "Spot check: Jev would have approved this. Your answer keeps its approvals honest.";
-    case "still_processing":
-      return "Still being read. It can be approved once processing finishes.";
     case "ready":
       return "No check blocks it. Review the entry and approve it.";
   }

@@ -1,8 +1,10 @@
 /**
  * The Inbox v2 list: everything that needs a human, and why (spec §10).
  *
- * Open states plus `failed`, never approved / rejected / dismissed — there is no Done folder. The
- * sidebar badge is this list's length, so both read the same query.
+ * Items that need a person — details to fill in, or ready for review — plus `failed`; never
+ * approved / rejected / dismissed, since there is no Done folder. Papers still being read
+ * (received / processing) do not need anyone yet, so they are only counted. The sidebar badge is
+ * the list's length, so both read the same query.
  */
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
@@ -10,7 +12,6 @@ import { inboxItems, sourceRecords, transactionCandidates } from "@/db/schema/in
 import { parties } from "@/db/schema/parties";
 import { loadDuplicateEngineConfig } from "../duplicate-engine";
 import { DUPLICATE_MATCHER_VERSION } from "../duplicate-matcher";
-import { INBOX_OPEN_STATES } from "../types";
 import {
   deriveInboxV2Kind,
   deriveInboxV2Reason,
@@ -25,7 +26,10 @@ import {
   type ModelUnsureSignal,
 } from "./triage";
 
-export const INBOX_V2_LISTED_STATES = [...INBOX_OPEN_STATES, "failed"] as const;
+export const INBOX_V2_LISTED_STATES = ["needs_information", "ready_for_review", "failed"] as const;
+
+/** Open, but still with the machine: counted as "being read", never listed. */
+export const INBOX_V2_READING_STATES = ["received", "processing"] as const;
 
 /** Same ceiling as the classic list. Past it the badge reads "250+". */
 export const INBOX_V2_LIST_LIMIT = 250;
@@ -53,6 +57,8 @@ export interface InboxV2List {
   items: InboxV2ListItem[];
   /** More items need a human than the list returned. */
   truncated: boolean;
+  /** Papers still being read (received / processing): not listed, not in the badge. */
+  beingRead: number;
 }
 
 /**
@@ -238,5 +244,15 @@ export async function listInboxV2Items(
     };
   });
 
-  return { items, truncated: rows.length > limit };
+  const [reading] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(inboxItems)
+    .where(
+      and(
+        eq(inboxItems.organizationId, orgId),
+        inArray(inboxItems.state, [...INBOX_V2_READING_STATES]),
+      ),
+    );
+
+  return { items, truncated: rows.length > limit, beingRead: reading?.count ?? 0 };
 }

@@ -130,7 +130,7 @@ function list(fixture: Fixture, options?: { limit?: number }) {
 }
 
 describe("Inbox v2 list", () => {
-  it("lists open and failed items with one reason each, and never a decided one", async () => {
+  it("lists what needs a person and failed items, one reason each, never a decided one", async () => {
     const org = await setupOrganization("inbox-v2-list");
 
     const clean = await submit(org, { amount: "42.10", day: 3, memo: "Printer paper" });
@@ -161,6 +161,8 @@ describe("Inbox v2 list", () => {
     const approved = await submit(org, { amount: "56.20", day: 15, memo: "Approved stock" });
     const rejected = await submit(org, { amount: "61.05", day: 17, memo: "Rejected stock" });
     const dismissed = await submit(org, { amount: "66.90", day: 19, memo: "Dismissed stock" });
+    const beingProcessed = await submit(org, { amount: "71.30", day: 20, memo: "Email in flight" });
+    const justReceived = await submit(org, { amount: "72.45", day: 21, memo: "Upload in flight" });
 
     await withOrgContext(org.orgId, org.userId, "owner", async (tx) => {
       const ctx = { db: tx, orgId: org.orgId, userId: org.userId, role: "owner" };
@@ -177,6 +179,14 @@ describe("Inbox v2 list", () => {
       });
     });
     await db.update(inboxItems).set({ state: "dismissed" }).where(eq(inboxItems.id, dismissed.id));
+    await db
+      .update(inboxItems)
+      .set({ state: "processing" })
+      .where(eq(inboxItems.id, beingProcessed.id));
+    await db
+      .update(inboxItems)
+      .set({ state: "received" })
+      .where(eq(inboxItems.id, justReceived.id));
     await db.update(inboxItems).set({ state: "failed" }).where(eq(inboxItems.id, failed.id));
     await db
       .update(inboxItems)
@@ -195,8 +205,13 @@ describe("Inbox v2 list", () => {
       evidence: { source: "resend", emailId: "email-fixture" },
     });
 
-    const { items, truncated } = await list(org);
+    const { items, truncated, beingRead } = await list(org);
     expect(truncated).toBe(false);
+    // Papers still being read need nobody yet: counted, never listed.
+    expect(beingRead).toBe(2);
+    for (const inFlight of [beingProcessed, justReceived]) {
+      expect(items.some((item) => item.id === inFlight.id)).toBe(false);
+    }
     const byId = new Map(items.map((item) => [item.id, item]));
 
     // Terminal states never come back: no Done folder.
@@ -250,15 +265,20 @@ describe("Inbox v2 list", () => {
     const capped = await list(org, { limit: 2 });
     expect(capped.items.map((item) => item.id)).toEqual([processingFailed.id, failed.id]);
     expect(capped.truncated).toBe(true);
+    expect(capped.beingRead).toBe(2);
   });
 
   it("returns only the organization's own items, and RLS hides them from another org", async () => {
     const orgA = await setupOrganization("inbox-v2-iso-a");
     const orgB = await setupOrganization("inbox-v2-iso-b");
     const itemA = await submit(orgA, { amount: "14.60", day: 21, memo: "Org A paper" });
+    const readingA = await submit(orgA, { amount: "15.10", day: 23, memo: "Org A in flight" });
+    await db.update(inboxItems).set({ state: "processing" }).where(eq(inboxItems.id, readingA.id));
     const itemB = await submit(orgB, { amount: "18.25", day: 22, memo: "Org B paper" });
 
+    expect(await list(orgA)).toMatchObject({ beingRead: 1 });
     expect((await list(orgA)).items.map((item) => item.id)).toEqual([itemA.id]);
+    expect(await list(orgB)).toMatchObject({ beingRead: 0 });
     expect((await list(orgB)).items.map((item) => item.id)).toEqual([itemB.id]);
 
     // Under the non-owner runtime role, org B's session cannot read org A's rows even when the
@@ -274,7 +294,7 @@ describe("Inbox v2 list", () => {
         return listInboxV2Items(tx, target.orgId);
       });
     expect((await listAsRuntimeRole(orgA, orgA)).items.map((item) => item.id)).toEqual([itemA.id]);
-    expect((await listAsRuntimeRole(orgB, orgA)).items).toEqual([]);
+    expect(await listAsRuntimeRole(orgB, orgA)).toMatchObject({ items: [], beingRead: 0 });
   });
 
   it("keeps an item listed with its fix reason until the blocking finding is resolved", async () => {

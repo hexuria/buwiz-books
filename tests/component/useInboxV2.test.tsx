@@ -46,13 +46,17 @@ describe("useInboxV2Badge", () => {
     expect(api.listInboxV2).not.toHaveBeenCalled();
   });
 
-  it("is the list's length, with a plus past its ceiling", async () => {
+  it("is the list's length, with a plus past its ceiling, never the papers being read", async () => {
     api.getInboxV2Enabled.mockResolvedValue({ enabled: true });
-    api.listInboxV2.mockResolvedValue({ items: [{ id: "a" }, { id: "b" }], truncated: false });
+    api.listInboxV2.mockResolvedValue({
+      items: [{ id: "a" }, { id: "b" }],
+      truncated: false,
+      beingRead: 4,
+    });
     const first = renderHook(() => useInboxV2Badge(), { wrapper });
     await waitFor(() => expect(first.result.current).toBe(2));
 
-    api.listInboxV2.mockResolvedValue({ items: [{ id: "a" }], truncated: true });
+    api.listInboxV2.mockResolvedValue({ items: [{ id: "a" }], truncated: true, beingRead: 0 });
     const second = renderHook(() => useInboxV2Badge(), { wrapper });
     await waitFor(() => expect(second.result.current).toBe("1+"));
   });

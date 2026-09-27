@@ -235,6 +235,7 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
   ) : null;
 
   const needYou = items.length;
+  const beingRead = listQuery.data?.beingRead ?? 0;
   return (
     <main className="h-full overflow-hidden bg-slate-100 p-0 text-slate-900 sm:p-4 dark:bg-slate-950 dark:text-slate-100">
       <section className="mx-auto flex h-full max-w-[1680px] overflow-hidden border-slate-200 bg-white shadow-sm sm:rounded-xl sm:border dark:border-slate-800 dark:bg-slate-900">
@@ -285,6 +286,15 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {listQuery.isPending && <ListSkeleton />}
+            {beingRead > 0 && (
+              // Not listed and not in the badge: nothing to do yet, but not silently missing.
+              <p
+                role="status"
+                className="border-b border-slate-100 px-4 py-2 text-xs text-slate-400 dark:border-slate-800 dark:text-slate-500"
+              >
+                {beingRead === 1 ? "1 paper being read" : `${beingRead} papers being read`}
+              </p>
+            )}
             {listQuery.isError && (
               <div className="p-6">
                 <EmptyState
