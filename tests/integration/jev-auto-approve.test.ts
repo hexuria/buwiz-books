@@ -6,8 +6,9 @@
  * the job mints only after every check passed under the lifecycle lock. What
  * it writes names Jev everywhere and borrows no user.
  *
- * While `categorize` stays structurally manual for the inbox_approve lane, a
- * lane at auto with every other check passing still posts nothing.
+ * `categorize` stays structurally manual everywhere except the inbox_approve
+ * lane (INBOX_APPROVE_LANE_EXCEPTIONS): a lane at auto approves a paper only
+ * when every check passes, and every "always human" condition holds it.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -16,21 +17,13 @@ import { db } from "@/db";
 import { aiRunFeedback } from "@/db/schema/ai";
 import { activityLogs } from "@/db/schema/activity-logs";
 import { bills } from "@/db/schema/bills";
-import {
-  inboxItems,
-  processingJobs,
-  reviewDecisions,
-  transactionCandidates,
-  workflowEvents,
-} from "@/db/schema/inbox";
+import { inboxItems, processingJobs, reviewDecisions, workflowEvents } from "@/db/schema/inbox";
 import { journalHeaders } from "@/db/schema/journals";
+import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
 import { approveInboxItem } from "@/lib/inbox/service";
 import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
 import { listInboxV2Items } from "@/lib/inbox/v2/list";
-import {
-  JEV_AUTO_APPROVE_JOB_TYPE,
-  enqueueJevAutoApproval,
-} from "@/lib/inbox/jev-approval/auto-approve";
+import { JEV_AUTO_APPROVE_JOB_TYPE } from "@/lib/inbox/jev-approval/auto-approve";
 import { JEV_AUTO_APPROVAL_HELD_ACTION } from "@/lib/inbox/jev-approval/feedback";
 import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
 import { updateJevApprovalSettings } from "@/lib/inbox/jev-approval/settings";
@@ -74,69 +67,131 @@ async function runQueuedJevJob(fixture: JevFixture, candidateId: string, revisio
   return { result, job: after };
 }
 
-/** An org whose lane for the fixture vendor is at auto and whose Jev switch is on. */
+/** An org whose Jev switch is on, with no spot checks unless a test asks for them. */
 async function readyOrganization(prefix: string) {
   const fixture = await setupJevOrganization(prefix);
-  await setJevApprovalSettings(fixture.orgId, { inboxAutoapproveEnabled: true });
+  await setJevApprovalSettings(fixture.orgId, {
+    inboxAutoapproveEnabled: true,
+    inboxSpotCheckRate: "0",
+  });
   return fixture;
 }
 
-describeDb("Jev auto-approval while categorize is walled", () => {
-  it("holds a paper that passes every other check, and posts nothing", async () => {
-    const fixture = await readyOrganization("jev-auto-walled");
-    // The first paper creates the vendor's lane; an admin then promotes it.
-    const earlier = await submitJevExpense(fixture, { amount: "43.10", day: 2 });
-    await setLaneAuto(earlier.proposal!.laneId, { amountCap: "500", confidenceThreshold: "0.95" });
+/**
+ * A ready org whose lane for the fixture vendor's expenses is at auto (cap 500,
+ * threshold 0.95): the first paper creates the lane, an admin promoted it.
+ */
+async function autoLaneOrganization(prefix: string) {
+  const fixture = await readyOrganization(prefix);
+  const first = await submitJevExpense(fixture, { amount: "43.10", day: 1 });
+  await setLaneAuto(first.proposal!.laneId, { amountCap: "500", confidenceThreshold: "0.95" });
+  return { fixture, laneId: first.proposal!.laneId };
+}
 
-    const { item, candidate, proposal } = await submitJevExpense(fixture, {
+/** Submit a paper Jev proposed and record it the way stage 2's job does, queueing approval. */
+async function proposeOnLane(
+  fixture: JevFixture,
+  input: Omit<Parameters<typeof submitJevExpense>[1], "record">,
+) {
+  const paper = await submitJevExpense(fixture, { ...input, record: false });
+  const proposal = await asOrg(fixture, (tx) =>
+    recordJevProposalAfterClassification(tx, {
+      orgId: fixture.orgId,
+      candidateId: paper.candidate.id,
+    }),
+  );
+  return { ...paper, proposal };
+}
+
+async function queuedJevJobs(fixture: JevFixture) {
+  return db
+    .select()
+    .from(processingJobs)
+    .where(
+      and(
+        eq(processingJobs.organizationId, fixture.orgId),
+        eq(processingJobs.jobType, JEV_AUTO_APPROVE_JOB_TYPE),
+        eq(processingJobs.status, "queued"),
+      ),
+    );
+}
+
+describeDb("Jev approves papers on an auto lane", () => {
+  it("approves a paper that passes every check, through the path a person's approval takes", async () => {
+    const { fixture, laneId } = await autoLaneOrganization("jev-auto-approves");
+    const { item, candidate, proposal } = await proposeOnLane(fixture, {
       amount: "42.10",
       day: 3,
     });
-    expect(proposal!.laneId).toBe(earlier.proposal!.laneId);
-    expect(proposal!.evaluation).toMatchObject({ approve: false, wouldApprove: true });
-    expect(proposal!.evaluation.holds.map((hold) => hold.reason)).toEqual(["walled_kind"]);
-
-    // Even run directly, the job decides again and holds it for the same reason.
-    await asOrg(fixture, (tx) =>
-      enqueueJevAutoApproval(tx, {
-        orgId: fixture.orgId,
-        candidateId: candidate.id,
-        candidateRevision: candidate.revision,
-      }),
-    );
-    const { result, job } = await runQueuedJevJob(fixture, candidate.id, candidate.revision);
-    expect(result).toMatchObject({ processed: true, status: "held", heldForSpotCheck: false });
-    expect((result.holds as Array<{ reason: string }>).map((hold) => hold.reason)).toEqual([
-      "walled_kind",
+    expect(proposal!.laneId).toBe(laneId);
+    expect(proposal!.evaluation).toMatchObject({
+      approve: true,
+      wouldApprove: true,
+      heldForSpotCheck: false,
+      holds: [],
+    });
+    // Stage 2's hook queued Jev's approval for this revision.
+    expect((await queuedJevJobs(fixture)).map((job) => job.payload)).toEqual([
+      { candidateId: candidate.id, candidateRevision: candidate.revision },
     ]);
+
+    const { result, job } = await runQueuedJevJob(fixture, candidate.id, candidate.revision);
+    expect(result).toMatchObject({ processed: true, status: "approved", laneId });
     expect(job.status).toBe("completed");
 
-    const [unchanged] = await db
+    const [journal] = await db
       .select()
-      .from(transactionCandidates)
-      .where(eq(transactionCandidates.id, candidate.id));
-    expect(unchanged).toMatchObject({ status: "current", postedJournalHeaderId: null });
-    const [stillOpen] = await db.select().from(inboxItems).where(eq(inboxItems.id, item.id));
-    expect(stillOpen.state).toBe("ready_for_review");
-    expect(
-      await db
-        .select()
-        .from(journalHeaders)
-        .where(eq(journalHeaders.organizationId, fixture.orgId)),
-    ).toEqual([]);
-    const [held] = await db
+      .from(journalHeaders)
+      .where(eq(journalHeaders.id, result.journalHeaderId as string));
+    expect(journal).toMatchObject({ status: "posted", createdBy: JEV_AUDIT_ACTOR_ID });
+    const [approved] = await db.select().from(inboxItems).where(eq(inboxItems.id, item.id));
+    expect(approved).toMatchObject({ state: "approved", resolvedBy: null });
+    const [decision] = await db
       .select()
-      .from(workflowEvents)
+      .from(reviewDecisions)
+      .where(eq(reviewDecisions.inboxItemId, item.id));
+    expect(decision).toMatchObject({ actorType: "system", actorKey: "jev", actorId: null });
+    const [activity] = await db
+      .select()
+      .from(activityLogs)
       .where(
-        and(
-          eq(workflowEvents.entityId, candidate.id),
-          eq(workflowEvents.action, JEV_AUTO_APPROVAL_HELD_ACTION),
-        ),
+        and(eq(activityLogs.entityId, journal.id), eq(activityLogs.action, "approved_from_inbox")),
       );
-    expect(held).toMatchObject({
-      actorType: "system",
-      actorId: JEV_AUDIT_ACTOR_ID,
-      data: { evaluation: { approve: false, heldForSpotCheck: false } },
+    expect(activity.changes).toMatchObject({
+      jevApproval: { laneId, confidence: 0.97, ruleSnapshotId: null },
+    });
+    // Jev's approval is not a label, and the paper has left the Inbox.
+    expect(
+      await db.select().from(aiRunFeedback).where(eq(aiRunFeedback.organizationId, fixture.orgId)),
+    ).toEqual([]);
+    const list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.some((row) => row.id === item.id)).toBe(false);
+  });
+
+  it("creates the vendor bill when it approves an emailed bill", async () => {
+    const fixture = await readyOrganization("jev-auto-bill-lane");
+    const first = await submitJevBill(fixture, { amount: "20.00", day: 2 });
+    await setLaneAuto(first.proposal!.laneId, { amountCap: "500", confidenceThreshold: "0.95" });
+    const paper = await submitJevBill(fixture, { amount: "64.20", day: 5, record: false });
+    const proposal = await asOrg(fixture, (tx) =>
+      recordJevProposalAfterClassification(tx, {
+        orgId: fixture.orgId,
+        candidateId: paper.candidate.id,
+      }),
+    );
+    expect(proposal).toMatchObject({ kind: "vendor_bill", evaluation: { approve: true } });
+
+    const { result } = await runQueuedJevJob(fixture, paper.candidate.id, paper.candidate.revision);
+    expect(result).toMatchObject({ status: "approved" });
+    const [bill] = await db
+      .select()
+      .from(bills)
+      .where(eq(bills.id, result.billId as string));
+    expect(bill).toMatchObject({
+      status: "awaiting_payment",
+      amount: "64.20",
+      approverId: JEV_AUDIT_ACTOR_ID,
+      vendorId: fixture.vendor.id,
     });
   });
 });

@@ -350,7 +350,7 @@ async function invoiceDocument(fixture: JevFixture) {
  */
 export async function submitJevBill(
   fixture: JevFixture,
-  input: { amount: string; day: number; confidence?: number },
+  input: { amount: string; day: number; confidence?: number; record?: boolean },
 ) {
   const dims = { departmentId: fixture.department.id, locationId: fixture.location.id };
   const confidence = input.confidence ?? 0.97;
@@ -396,9 +396,12 @@ export async function submitJevBill(
     .update(sourceRecords)
     .set({ economicEventClass: "bill_accrual", direction: "outflow" })
     .where(eq(sourceRecords.id, created.candidate.sourceRecordId!));
-  const proposal = await asOrg(fixture, (tx) =>
-    recordJevProposal(tx, { orgId: fixture.orgId, candidateId: created.candidate.id }),
-  );
+  const proposal =
+    input.record === false
+      ? null
+      : await asOrg(fixture, (tx) =>
+          recordJevProposal(tx, { orgId: fixture.orgId, candidateId: created.candidate.id }),
+        );
   return { item: created.inboxItem, candidate: created.candidate, proposal, document };
 }
 

@@ -240,4 +240,26 @@ describe("Jev approval lanes wiring", () => {
     expect(resetAt).toBeGreaterThan(amendAt);
     expect(undo.slice(noteAt, amendAt)).toContain("reason: JEV_APPROVAL_UNDONE,");
   });
+
+  it("lifts categorize for the inbox_approve lane only, by one named, documented exception", () => {
+    const autonomy = read("src/lib/ai/autonomy.ts");
+    expect(autonomy).toMatch(
+      /export const INBOX_APPROVE_LANE_EXCEPTIONS: ReadonlySet<AiProposalKind> = new Set<AiProposalKind>\(\[\s*"categorize",\s*\]\);/,
+    );
+    // The comment says why, what keeps it safe, and that the owner approved it.
+    for (const heading of ["WHY.", "OWNER-APPROVED.", "SCOPE.", "GUARDS."]) {
+      expect(autonomy).toContain(heading);
+    }
+    // categorize is still in the structural wall itself.
+    const wall = autonomy.slice(
+      autonomy.indexOf("export const STRUCTURAL_MANUAL_KINDS"),
+      autonomy.indexOf("]);", autonomy.indexOf("export const STRUCTURAL_MANUAL_KINDS")),
+    );
+    expect(wall).toContain('"categorize"');
+    // Nothing outside autonomy.ts may consult the exception directly.
+    const readers = sourceFiles("src", "server").filter((file) =>
+      read(file).includes("INBOX_APPROVE_LANE_EXCEPTIONS"),
+    );
+    expect(readers).toEqual(["src/lib/ai/autonomy.ts"]);
+  });
 });

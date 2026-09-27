@@ -42,7 +42,9 @@ export const STRUCTURAL_MANUAL_KINDS: ReadonlySet<AiProposalKind> = new Set<AiPr
   // `create_party` mints counterparties (the identity ledger rows hang off);
   // `date_fix` moves a transaction across period and aging boundaries;
   // `categorize` re-points P&L lines. All three stay human-applied at any
-  // accuracy; the two-key appliers still gate WHO may apply them.
+  // accuracy; the two-key appliers still gate WHO may apply them. The one
+  // exception is reviewed below: the inbox_approve lane may apply the category
+  // of a paper Jev approves (INBOX_APPROVE_LANE_EXCEPTIONS) — nothing else may.
   "create_party",
   "date_fix",
   "categorize",
@@ -240,10 +242,70 @@ export const LANE_APPLIED_KINDS: Readonly<Record<AutonomyLaneKey, readonly AiPro
 };
 
 /**
+ * INBOX_APPROVE_LANE_EXCEPTIONS — the only structurally manual kind a lane may
+ * apply on Jev's behalf, and only the inbox_approve lane.
+ *
+ * WHY. For an Inbox paper, approving IS applying the category Jev chose: the
+ * category line is what posts. With `categorize` walled, an inbox_approve lane
+ * could earn `auto` and never approve anything.
+ *
+ * OWNER-APPROVED. This is a product decision, not an engineering shortcut. The
+ * Inbox v2 spec's owner-confirmed decisions say Jev may approve, through earned
+ * autonomy, and that Jev handles category choice and entity matching; its §8
+ * and build step 11 require lifting this wall for the inbox_approve lane only,
+ * in its own reviewed change, with tests. The seven-angle review settled the
+ * principle: the wall governs AI AUTHORITY — who may press the button — not a
+ * ledger rule; the posting that follows is identical to a person's
+ * (research/inbox-v2/review-findings.md, "Clarified").
+ *
+ * SCOPE. This set is read by laneWalledKinds("inbox_approve") and nothing else.
+ * `categorize` STAYS in STRUCTURAL_MANUAL_KINDS, so every other path still
+ * refuses it at any accuracy: per-kind autonomy (organization_ai_settings
+ * .autonomy — sanitizeAutonomy throws), canAutoApply and
+ * createProposalWithAutonomy (never auto-apply a categorize proposal),
+ * computeAutonomyEligibility (never eligible), and any future lane, which
+ * gets no exception unless it is added here in a reviewed change of its own.
+ *
+ * GUARDS. A paper is approved only when all of these hold
+ * (src/lib/inbox/jev-approval/predicate.ts, decided again under the paper's
+ * lifecycle lock by the approval job):
+ *   - EARNED, per vendor and kind of paper: 200 reviewed papers at ≥ 98%
+ *     accepted unchanged on this lane alone; two admin promotions, each
+ *     re-verified at the moment of the flip; a confidence threshold the lane's
+ *     own reliability table supports (≥ 98% observed at and above it); an
+ *     amount cap; automatic demotion when the last 50 labels fall below 95%;
+ *     the organization's switch (off by default) and the AI kill switch.
+ *   - ALWAYS HUMAN, whatever the lane: an open blocking check or warning
+ *     (`uncategorized` included, so a category Jev could not choose never
+ *     posts), a possible duplicate, a new or unknown counterparty, any change
+ *     to a payee's bank details, a closed period, an unbalanced or incomplete
+ *     entry, a total over the cap, maker-checker without an admin's opt-in.
+ *   - CLOSED LIST: the category is one of the organization's own active leaf
+ *     accounts, offered as a closed enum and re-checked against the chart
+ *     when stage 2 applies it (src/lib/inbox/candidate-classification.ts).
+ *   - SAME POSTING: the system actor posts through approveInboxItem and the
+ *     shared cores, carrying a grant only the approval job mints; balance to
+ *     the cent, period locks, tenancy and audit are untouched.
+ *   - MEASURED AND REVERSIBLE: a spot-check share (10% by default) stays with
+ *     a person as unbiased labels, and Undo posts a reversal that counts as a
+ *     disagreement toward demotion.
+ */
+export const INBOX_APPROVE_LANE_EXCEPTIONS: ReadonlySet<AiProposalKind> = new Set<AiProposalKind>([
+  "categorize",
+]);
+
+/** Each lane's exceptions to STRUCTURAL_MANUAL_KINDS. Empty unless reviewed in above. */
+const LANE_EXCEPTIONS: Readonly<Record<AutonomyLaneKey, ReadonlySet<AiProposalKind>>> = {
+  inbox_approve: INBOX_APPROVE_LANE_EXCEPTIONS,
+};
+
+/**
  * The kinds a lane would apply that are still structurally manual for it.
  * While this is non-empty the lane can be promoted all the way to `auto`, and
  * every other check can pass, but nothing it approves is ever posted.
  */
 export function laneWalledKinds(laneKey: AutonomyLaneKey): AiProposalKind[] {
-  return LANE_APPLIED_KINDS[laneKey].filter((kind) => STRUCTURAL_MANUAL_KINDS.has(kind));
+  return LANE_APPLIED_KINDS[laneKey].filter(
+    (kind) => STRUCTURAL_MANUAL_KINDS.has(kind) && !LANE_EXCEPTIONS[laneKey].has(kind),
+  );
 }

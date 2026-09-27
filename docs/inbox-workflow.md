@@ -176,11 +176,13 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
   paid); returns the paper to the Inbox on a new revision; counts as a
   disagreement for the lane; and, when a memory answered the paper, counts an
   undo against that memory.
-- **Not yet.** `categorize` is structurally manual (`STRUCTURAL_MANUAL_KINDS`),
-  so while it is walled for the lane nothing Jev approves is posted — lanes
-  still learn and can be promoted. Stage 2 never picks the payment side, so a
-  paper stage 2 alone read is never complete enough to approve; a remembered
-  answer (build step 10) can make it so.
+- **Categories.** `categorize` stays structurally manual
+  (`STRUCTURAL_MANUAL_KINDS`) for per-kind autonomy and every other path; the
+  inbox_approve lane alone may apply the category of a paper it approves
+  (`INBOX_APPROVE_LANE_EXCEPTIONS` in `src/lib/ai/autonomy.ts`, with the reasons
+  and guards). Stage 2 never picks the payment side, so a paper stage 2 alone
+  read is never complete enough to approve; a remembered answer (build step 10)
+  can make it so.
 
 ## Review policy
 
