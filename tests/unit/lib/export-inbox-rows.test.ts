@@ -2,8 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   IMPORTED_WEBHOOK_NOTE,
   IMPORTED_WITHOUT_CHART_NOTE,
+  aiAutonomyLaneExportRowSchema,
   classificationMemoryExportRowSchema,
+  describeLaneRow,
   exportTriggerConfig,
+  importedLaneNote,
+  planLaneImport,
   planMemoryImport,
   planRoutineImport,
   resolveAccountReference,
@@ -377,5 +381,66 @@ describe("planMemoryImport", () => {
       ok: true,
       values: { enabled: false, uses: 12, undos: 4, consecutiveUndos: 2 },
     });
+  });
+});
+
+describe("planLaneImport", () => {
+  const lane = (overrides: Record<string, unknown> = {}) =>
+    aiAutonomyLaneExportRowSchema.parse({
+      laneKey: "inbox_approve",
+      docKind: "vendor_bill",
+      partyName: "Acme Hosting",
+      level: "auto",
+      amountCap: "500.00000000",
+      confidenceThreshold: "0.9500",
+      ...overrides,
+    });
+
+  it("brings every lane in at watch, whatever it had earned, and says so", () => {
+    for (const level of ["watch", "suggest", "auto"] as const) {
+      const plan = planLaneImport(lane({ level }), PARTIES);
+      expect(plan).toEqual({
+        ok: true,
+        values: {
+          laneKey: "inbox_approve",
+          partyId: IDS.acme,
+          docKind: "vendor_bill",
+          level: "watch",
+          // Canonical, as parseLaneAmountCap stores a cap an admin types.
+          amountCap: "500",
+          confidenceThreshold: "0.9500",
+        },
+        note: importedLaneNote(level),
+      });
+    }
+    expect(importedLaneNote("auto")).toBe(
+      "Imported at watch (was auto): Jev earns suggest and auto again from this organization's own reviews.",
+    );
+    expect(importedLaneNote("watch")).not.toContain("(was");
+  });
+
+  it("keeps the lane for papers with no known party, and normalizes the cap", () => {
+    const plan = planLaneImport(lane({ partyName: null, amountCap: "75.5" }), PARTIES);
+    expect(plan).toMatchObject({ ok: true, values: { partyId: null, amountCap: "75.5" } });
+  });
+
+  it("drops, with the reason, a lane whose party is missing or ambiguous here", () => {
+    expect(planLaneImport(lane({ partyName: "Globex" }), PARTIES)).toEqual({
+      ok: false,
+      dropped: true,
+      message: 'Dropped: party "Globex" is not here.',
+    });
+    expect(planLaneImport(lane({ partyName: "Twin Co" }), PARTIES)).toMatchObject({
+      ok: false,
+      dropped: true,
+      message: expect.stringMatching(/matches 2 parties/),
+    });
+  });
+
+  it("names a lane by its party and kind of paper", () => {
+    expect(describeLaneRow({ partyName: "Acme Hosting", docKind: "vendor_bill" })).toBe(
+      "Acme Hosting · Vendor bill",
+    );
+    expect(describeLaneRow({ partyName: null, docKind: null })).toBe("No known party · Any paper");
   });
 });

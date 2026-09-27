@@ -14,8 +14,9 @@ const read = (path: string) => readFileSync(join(REPO_ROOT, path), "utf8");
 
 /**
  * Inbox v2 step 12 — export v5 (.agent/rules/schema-export-import.md, category C). Every layer of
- * the protocol names the three Inbox-configuration entities, and the one table that must never
- * leave the database — routine_secrets — is not reachable from the export code at all.
+ * the protocol names the four Inbox-configuration entities, and what must never leave the database
+ * — routine_secrets, and the ai_run_feedback a lane earned its level with — is not reachable from
+ * the export code at all.
  */
 describe("export v5 wiring", () => {
   it("registers the entities at v5, in import order, with labels", () => {
@@ -24,6 +25,7 @@ describe("export v5 wiring", () => {
       "ruleSnapshots",
       "routines",
       "classificationMemories",
+      "aiAutonomyLanes",
     ]);
     const order = EXPORTABLE_ENTITIES as readonly string[];
     for (const key of INBOX_CONFIG_ENTITY_KEYS) {
@@ -33,6 +35,9 @@ describe("export v5 wiring", () => {
     expect(order.indexOf("ruleSnapshots")).toBeLessThan(order.indexOf("routines"));
     for (const dependency of ["vendors", "customers", "categories"]) {
       expect(order.indexOf("classificationMemories")).toBeGreaterThan(order.indexOf(dependency));
+    }
+    for (const dependency of ["vendors", "customers"]) {
+      expect(order.indexOf("aiAutonomyLanes")).toBeGreaterThan(order.indexOf(dependency));
     }
   });
 
@@ -58,11 +63,15 @@ describe("export v5 wiring", () => {
     expect(route).toContain("await listInboxConfigRecords(db, orgId, entityType)");
   });
 
-  it("never reads routine secrets on the way out", () => {
+  it("never reads routine secrets, lane feedback, or the Jev-approval switch on the way out", () => {
     for (const path of ["src/lib/export-inbox.ts", "src/lib/export-inbox-rows.ts"]) {
       const source = read(path);
       expect(source, `${path} imports routine_secrets`).not.toMatch(/\broutineSecrets\b/);
       expect(source).not.toMatch(/secretEnc|secret_enc|loadRoutineWebhookSecret/);
+      expect(source, `${path} reads ai_run_feedback`).not.toMatch(/\baiRunFeedback\b/);
+      expect(source, `${path} reads organization_ai_settings`).not.toMatch(
+        /\borganizationAiSettings\b|inboxAutoapprove/,
+      );
     }
     // The only secret-shaped key a routine row carries is removed before it leaves.
     expect(read("src/lib/export-inbox.ts")).toContain(

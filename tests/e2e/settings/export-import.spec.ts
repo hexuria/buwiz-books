@@ -53,6 +53,7 @@ test.describe("Settings Export & Import", () => {
         "Rule Snapshots",
         "Routines",
         "Classification Memories",
+        "Jev Approval Lanes",
       ];
 
       for (const label of expectedLabels) {
@@ -190,6 +191,7 @@ test.describe("Settings Export & Import", () => {
         "Rule Snapshots",
         "Routines",
         "Classification Memories",
+        "Jev Approval Lanes",
       ];
 
       for (const opt of expectedOptions) {

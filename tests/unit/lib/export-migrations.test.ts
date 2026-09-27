@@ -8,7 +8,12 @@ import v2Sample from "../../fixtures/export-v2-sample.json";
 import v5Sample from "../../fixtures/export-v5-sample.json";
 
 /** What v4 → v5 adds to every older file: the Inbox configuration, empty. */
-const V5_EMPTY = { ruleSnapshots: [], routines: [], classificationMemories: [] };
+const V5_EMPTY = {
+  ruleSnapshots: [],
+  routines: [],
+  classificationMemories: [],
+  aiAutonomyLanes: [],
+};
 
 describe("export-migrations", () => {
   // ── migrateToLatest ───────────────────────────────────────────────────────
@@ -122,7 +127,7 @@ describe("export-migrations", () => {
       },
     };
 
-    it("gives an old file empty routines, rule snapshots and memories", () => {
+    it("gives an old file empty routines, rule snapshots, memories and Jev lanes", () => {
       const result = migrateToLatest(v4);
       expect(result.meta).toEqual({ ...v4.meta, version: 5 });
       expect(result.data).toEqual({ ...v4.data, ...V5_EMPTY });

@@ -23,6 +23,13 @@
  *                          (kind, key) already here is a duplicate: this organization's own memory
  *                          wins. No test-lock eval case is written — there is no source paper here
  *                          to lock the replay against.
+ *   aiAutonomyLanes        configuration only, and never at the level it was exported at: every
+ *                          lane arrives at `watch` with a note, because authority is earned on
+ *                          this organization's own labels. Parties remap by name; a lane whose
+ *                          party cannot be mapped is dropped and reported. A lane already here
+ *                          (same lane, party and kind) is a duplicate and keeps its own level.
+ *                          `ai_run_feedback` (labels, lane evidence) and the organization's
+ *                          Jev-approval switch are never exported, so an import approves nothing.
  *
  * Disabled routines and memories are exported like enabled ones: "off" is configuration too (a
  * memory that turned itself off after two undos must stay off, and a missing inbound email
@@ -33,10 +40,12 @@ import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
+import { aiAutonomyLanes } from "@/db/schema/ai";
 import { classificationMemories } from "@/db/schema/classification-memories";
 import { parties } from "@/db/schema/parties";
 import { routines } from "@/db/schema/routines";
 import { ruleSnapshots } from "@/db/schema/rule-snapshots";
+import { findAutonomyLane, lockAutonomyLaneIdentity } from "@/lib/ai/autonomy-lanes";
 import { unresolvedMappingKeys } from "@/lib/coa/chart-readiness";
 import { describeMatchKey, type MemoryMatchKind } from "@/lib/inbox/memory/keys";
 import { isCrossPartyScope } from "@/lib/inbox/memory/service";
@@ -46,14 +55,18 @@ import { roleHasPermission } from "@/lib/permission-policy";
 import { INBOUND_EMAIL_PROVIDER } from "@/lib/routines/config";
 import {
   DUPLICATE_SKIPPED,
+  aiAutonomyLaneExportRowSchema,
   classificationMemoryExportRowSchema,
+  describeLaneRow,
   describeMemoryRow,
   describeSnapshotRow,
   exportTriggerConfig,
+  planLaneImport,
   planMemoryImport,
   planRoutineImport,
   routineExportRowSchema,
   ruleSnapshotExportRowSchema,
+  type AiAutonomyLaneExportRow,
   type ClassificationMemoryExportRow,
   type InboxConfigEntityKey,
   type InboxConfigImportResult,
@@ -62,26 +75,6 @@ import {
   type RuleSnapshotExportRow,
   type RuleSnapshotReference,
 } from "./export-inbox-rows";
-
-// ────────────────────────────────────────────────────────────────────────────────────────────
-// TODO(inbox-v2 step 11 — ai_autonomy_lanes, migration 0060): add the lanes here.
-//
-// Lanes are organization configuration and join this same v5 bump once step 11 is rebased
-// beneath this branch:
-//   • entity key "aiAutonomyLanes" (label "AI Autonomy Lanes"): INBOX_CONFIG_ENTITY_KEYS in
-//     ./export-inbox-rows.ts, EXPORTABLE_ENTITIES + ENTITY_LABELS in ./export-versions.ts,
-//     ENTITY_ENUM in src/routes/api/-export-import.ts, the v4 → v5 empty-array list in
-//     ./export-migrations.ts, ExportPanel / ImportPanel, and the round-trip integration test.
-//   • export the configuration only: lane_key, doc_kind, the party by NAME (never its uuid),
-//     level, amount cap (exact decimal string), and the confidence threshold. No promoted_by /
-//     demoted_by user ids.
-//   • NEVER export ai_run_feedback: it is the lane's evidence (who agreed with Jev, when), not
-//     configuration, and promotion is computed from it.
-//   • import: upsert by (lane_key, party, doc_kind); drop and report a lane whose party cannot be
-//     mapped, as memories do. Decide in step 11's review whether an imported lane may arrive at
-//     "auto": promotion is admin-only and earned on this organization's own history, so arriving
-//     at "suggest" (or "watch") is the conservative default.
-// ────────────────────────────────────────────────────────────────────────────────────────────
 
 const logger = createLogger("export-inbox");
 
@@ -547,6 +540,97 @@ export async function importClassificationMemories(
 }
 
 // ============================================================================
+// Jev approval lanes
+// ============================================================================
+
+export async function exportAutonomyLanes(
+  db: DbExecutor,
+  orgId: string,
+  options: { ids?: readonly string[] } = {},
+): Promise<AiAutonomyLaneExportRow[]> {
+  const conditions: SQL[] = [eq(aiAutonomyLanes.organizationId, orgId)];
+  if (options.ids?.length) conditions.push(inArray(aiAutonomyLanes.id, [...options.ids]));
+  const rows = await db
+    .select({
+      laneKey: aiAutonomyLanes.laneKey,
+      docKind: aiAutonomyLanes.docKind,
+      partyName: parties.name,
+      level: aiAutonomyLanes.level,
+      amountCap: aiAutonomyLanes.amountCap,
+      confidenceThreshold: aiAutonomyLanes.confidenceThreshold,
+    })
+    .from(aiAutonomyLanes)
+    .leftJoin(
+      parties,
+      and(eq(parties.id, aiAutonomyLanes.partyId), eq(parties.organizationId, orgId)),
+    )
+    .where(and(...conditions))
+    .orderBy(asc(aiAutonomyLanes.createdAt), asc(aiAutonomyLanes.id));
+  // Configuration only: no promoter, no promotion or demotion times, and nothing from
+  // ai_run_feedback — the labels a lane earned its level with stay in this database.
+  return rows.map((row) => ({
+    laneKey: row.laneKey,
+    docKind: row.docKind as AiAutonomyLaneExportRow["docKind"],
+    partyName: row.partyName ?? null,
+    level: row.level,
+    amountCap: row.amountCap,
+    confidenceThreshold: row.confidenceThreshold,
+  }));
+}
+
+export async function importAutonomyLanes(
+  ctx: InboxConfigImportContext,
+  rows: readonly AiAutonomyLaneExportRow[],
+): Promise<InboxConfigImportResult[]> {
+  const partyRows = await ctx.db
+    .select({ id: parties.id, name: parties.name })
+    .from(parties)
+    .where(eq(parties.organizationId, ctx.orgId));
+  return importEachRow(ctx.db, rows, describeLaneRow, async (tx, row) => {
+    const name = describeLaneRow(row);
+    const plan = planLaneImport(row, partyRows);
+    if (!plan.ok) return { name, success: false, error: plan.message };
+    const { values } = plan;
+    const identity = {
+      laneKey: values.laneKey,
+      partyId: values.partyId,
+      docKind: values.docKind,
+    };
+    // The same lock a lane's first proposal takes, so an import and a paper being classified
+    // cannot both create this lane.
+    await lockAutonomyLaneIdentity(tx, ctx.orgId, identity);
+    if (await findAutonomyLane(tx, ctx.orgId, identity)) {
+      // This organization's own lane wins, level and all: import never promotes or demotes.
+      return { name, success: true, error: DUPLICATE_SKIPPED };
+    }
+    const [created] = await tx
+      .insert(aiAutonomyLanes)
+      .values({ organizationId: ctx.orgId, ...values })
+      .onConflictDoNothing()
+      .returning({ id: aiAutonomyLanes.id });
+    if (!created) return { name, success: true, error: DUPLICATE_SKIPPED };
+    await insertActivityLog(
+      {
+        orgId: ctx.orgId,
+        entityType: "ai_autonomy_lane",
+        entityId: created.id,
+        action: "jev_lane_imported",
+        actorId: ctx.userId,
+        changes: {
+          level: { old: null, new: values.level },
+          exportedLevel: row.level,
+          amountCap: { old: null, new: values.amountCap },
+          confidenceThreshold: { old: null, new: values.confidenceThreshold },
+          note: plan.note,
+        },
+      },
+      tx,
+    );
+    return { name, success: true, error: plan.note };
+  });
+}
+
+// ============================================================================
 // Dispatch — what src/routes/api/-export-import.ts calls
 // ============================================================================
 
@@ -563,6 +647,8 @@ export async function exportInboxConfigEntity(
       return exportRoutines(db, orgId, options);
     case "classificationMemories":
       return exportClassificationMemories(db, orgId, options);
+    case "aiAutonomyLanes":
+      return exportAutonomyLanes(db, orgId, options);
   }
 }
 
@@ -590,6 +676,11 @@ export async function importInboxConfigEntity(
       return importClassificationMemories(
         ctx,
         rows.map((row) => classificationMemoryExportRowSchema.parse(row)),
+      );
+    case "aiAutonomyLanes":
+      return importAutonomyLanes(
+        ctx,
+        rows.map((row) => aiAutonomyLaneExportRowSchema.parse(row)),
       );
   }
 }
@@ -666,6 +757,29 @@ export async function listInboxConfigRecords(
             : describeMatchKey(row.matchKind as MemoryMatchKind, row.matchKey),
         subtitle: row.matchKind,
         extra: row.enabled ? row.docKind : `${row.docKind ?? "no answer"}, off`,
+      }));
+    }
+    case "aiAutonomyLanes": {
+      const rows = await db
+        .select({
+          id: aiAutonomyLanes.id,
+          partyName: parties.name,
+          docKind: aiAutonomyLanes.docKind,
+          level: aiAutonomyLanes.level,
+          amountCap: aiAutonomyLanes.amountCap,
+        })
+        .from(aiAutonomyLanes)
+        .leftJoin(
+          parties,
+          and(eq(parties.id, aiAutonomyLanes.partyId), eq(parties.organizationId, orgId)),
+        )
+        .where(eq(aiAutonomyLanes.organizationId, orgId))
+        .orderBy(asc(aiAutonomyLanes.createdAt), asc(aiAutonomyLanes.id));
+      return rows.map((row) => ({
+        id: row.id,
+        name: describeLaneRow({ partyName: row.partyName ?? null, docKind: row.docKind }),
+        subtitle: row.level,
+        extra: row.amountCap,
       }));
     }
   }

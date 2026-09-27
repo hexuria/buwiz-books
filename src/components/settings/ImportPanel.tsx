@@ -29,10 +29,11 @@ const ENTITY_OPTIONS: { value: EntityType; label: string }[] = [
     label: ENTITY_LABELS[value],
   })),
   // v5 Inbox configuration, in import order: snapshots before the routines that pin them,
-  // memories after the vendors, customers and categories they map onto.
+  // memories and Jev's lanes after the vendors, customers and categories they map onto.
   { value: "ruleSnapshots", label: ENTITY_LABELS.ruleSnapshots },
   { value: "routines", label: ENTITY_LABELS.routines },
   { value: "classificationMemories", label: ENTITY_LABELS.classificationMemories },
+  { value: "aiAutonomyLanes", label: ENTITY_LABELS.aiAutonomyLanes },
 ];
 
 /** Caches an Inbox-configuration import changes, from src/lib/query-keys.ts. */
@@ -40,6 +41,7 @@ const INBOX_CONFIG_QUERY_KEYS: Partial<Record<EntityType, ReadonlyArray<readonly
   ruleSnapshots: [keys.ruleSnapshots.all()],
   routines: [keys.routines.all(), keys.ruleSnapshots.all()],
   classificationMemories: [keys.inbox.memories()],
+  aiAutonomyLanes: [keys.jev.all()],
 };
 
 type ImportStep = "select" | "validate" | "importing" | "done";

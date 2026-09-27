@@ -1,12 +1,13 @@
 // ============================================================================
 // Export v5 round trip (Inbox v2 step 12): an organization's routines, rule
-// snapshots (one pinned, one shadowed) and classification memories leave
-// through Settings → Export and arrive in a FRESH organization through
-// Settings → Import — equal to what was exported except for the ids, which
-// are remapped. No signing secret leaves; imported signed webhooks start
-// disabled; a memory whose party or account cannot be mapped is dropped and
-// reported; re-importing changes nothing; the per-org inbound email routine is
-// never duplicated.
+// snapshots (one pinned, one shadowed), classification memories and Jev
+// approval lanes leave through Settings → Export and arrive in a FRESH
+// organization through Settings → Import — equal to what was exported except
+// for the ids, which are remapped. No signing secret leaves; imported signed
+// webhooks start disabled; a memory or lane whose party or account cannot be
+// mapped is dropped and reported; every lane arrives at watch, with neither
+// its labels nor the organization's Jev-approval switch; re-importing changes
+// nothing; the per-org inbound email routine is never duplicated.
 //
 // The real server functions run (exportData → JSON text → validateImport →
 // executeImport), behind a reduced request exactly as in
@@ -51,6 +52,7 @@ vi.mock("@/lib/auth", () => ({
 import { db, withOrgContext } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { activityLogs } from "@/db/schema/activity-logs";
+import { aiAutonomyLanes, aiRunFeedback, organizationAiSettings } from "@/db/schema/ai";
 import { member, organization, user } from "@/db/schema/auth";
 import { classificationMemories } from "@/db/schema/classification-memories";
 import { parties } from "@/db/schema/parties";
@@ -60,7 +62,12 @@ import { executeCoaPlan } from "@/lib/coa/execute-plan";
 import { planCoaPreset } from "@/lib/coa/plan-preset";
 import { COA_PRESETS } from "@/lib/coa/presets";
 import { loadCoaSnapshot } from "@/lib/coa/snapshot";
-import { DUPLICATE_SKIPPED, IMPORTED_WEBHOOK_NOTE } from "@/lib/export-inbox-rows";
+import {
+  DUPLICATE_SKIPPED,
+  IMPORTED_WEBHOOK_NOTE,
+  importedLaneNote,
+} from "@/lib/export-inbox-rows";
+import { loadJevApprovalSettings } from "@/lib/inbox/jev-approval/settings";
 import {
   createRoutine,
   ensureInboundEmailRoutine,
@@ -95,13 +102,20 @@ const api = {
   }) => Promise<ImportResult>,
 };
 
-const INBOX_ENTITIES = ["ruleSnapshots", "routines", "classificationMemories"] as const;
+const INBOX_ENTITIES = [
+  "ruleSnapshots",
+  "routines",
+  "classificationMemories",
+  "aiAutonomyLanes",
+] as const;
 type InboxEntity = (typeof INBOX_ENTITIES)[number];
 
 const HOSTING = "Roundtrip Hosting";
 const SOURCE_ONLY_VENDOR = "Source Only Vendor";
 const SOURCE_ONLY_ACCOUNT = { name: "Source Only Expense", accountNumber: "69990" };
 const FILE_HASH = "ab".repeat(32);
+/** Written into a lane label's evidence: it must never appear in the file. */
+const LANE_EVIDENCE_MARKER = "lane-evidence-must-stay-home";
 
 async function createOwner(prefix: string): Promise<string> {
   const userId = `${prefix}-user-${randomUUID()}`;
@@ -214,6 +228,14 @@ async function routinesOf(orgId: string) {
     .orderBy(asc(routines.name));
 }
 
+async function lanesOf(orgId: string) {
+  return db
+    .select()
+    .from(aiAutonomyLanes)
+    .where(eq(aiAutonomyLanes.organizationId, orgId))
+    .orderBy(asc(aiAutonomyLanes.docKind));
+}
+
 async function memoriesOf(orgId: string) {
   return db
     .select()
@@ -222,7 +244,7 @@ async function memoriesOf(orgId: string) {
     .orderBy(asc(classificationMemories.matchKind), asc(classificationMemories.matchKey));
 }
 
-integrationDescribe("export v5 round trip: routines, rule snapshots, memories", () => {
+integrationDescribe("export v5 round trip: routines, rule snapshots, memories, Jev lanes", () => {
   let owner: string;
   let src: string;
   let dst: string;
@@ -418,6 +440,54 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
       },
     ]);
 
+    // Jev's lanes: one earned all the way to auto, one watching papers with no known party, and
+    // one for a vendor the target does not have. The organization's Jev-approval switch is on,
+    // and the auto lane has a label its level was earned with.
+    const [autoLane] = await db
+      .insert(aiAutonomyLanes)
+      .values({
+        organizationId: src,
+        laneKey: "inbox_approve",
+        partyId: hostingId,
+        docKind: "expense",
+        level: "auto",
+        amountCap: "500",
+        confidenceThreshold: "0.9500",
+        promotedBy: owner,
+        promotedAt: new Date(),
+      })
+      .returning({ id: aiAutonomyLanes.id });
+    await db.insert(aiAutonomyLanes).values([
+      { organizationId: src, laneKey: "inbox_approve", partyId: null, docKind: "vendor_bill" },
+      {
+        organizationId: src,
+        laneKey: "inbox_approve",
+        partyId: sourceOnlyVendorId,
+        docKind: "money_in",
+        level: "suggest",
+        promotedBy: owner,
+        promotedAt: new Date(),
+      },
+    ]);
+    await db.insert(aiRunFeedback).values({
+      organizationId: src,
+      verdict: "accepted",
+      userId: owner,
+      laneId: autoLane.id,
+      laneEvidence: {
+        source: "jev",
+        confidence: 0.97,
+        wouldApprove: true,
+        marker: LANE_EVIDENCE_MARKER,
+      },
+      labelKey: `export-v5:${randomUUID()}`,
+    });
+    await db.insert(organizationAiSettings).values({
+      organizationId: src,
+      inboxAutoapproveEnabled: true,
+      inboxSpotCheckRate: "0.2500",
+    });
+
     // ── The fresh target: same chart preset, its own parties (new ids) ──
     await party(dst, HOSTING);
 
@@ -603,6 +673,97 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
     }
   });
 
+  it("exports each lane as configuration: no labels, no promoter, no switch", () => {
+    const lanes = exported.data.aiAutonomyLanes as Array<Record<string, unknown>>;
+    expect(lanes).toHaveLength(3);
+    for (const lane of lanes) {
+      expect(Object.keys(lane).sort()).toEqual(
+        ["amountCap", "confidenceThreshold", "docKind", "laneKey", "level", "partyName"].sort(),
+      );
+    }
+    expect(lanes.find((lane) => lane.docKind === "expense")).toEqual({
+      laneKey: "inbox_approve",
+      docKind: "expense",
+      partyName: HOSTING,
+      level: "auto",
+      amountCap: "500.00000000",
+      confidenceThreshold: "0.9500",
+    });
+    // ai_run_feedback, the switch and every user id stay in the source database.
+    expect(fileText).not.toContain(LANE_EVIDENCE_MARKER);
+    expect(fileText).not.toMatch(/laneEvidence|labelKey|verdict|inboxAutoapprove|spotCheck/i);
+    expect(fileText).not.toContain(owner);
+  });
+
+  it("brings every lane in at watch, drops the unmappable one, and leaves Jev approval off", async () => {
+    const { result } = imports.get("aiAutonomyLanes")!;
+    expect(result).toMatchObject({ imported: 2, skipped: 0, failed: 1 });
+    expect(result.results).toEqual(
+      expect.arrayContaining([
+        { name: `${HOSTING} · Paid expense`, success: true, error: importedLaneNote("auto") },
+        { name: "No known party · Vendor bill", success: true, error: importedLaneNote("watch") },
+        {
+          name: `${SOURCE_ONLY_VENDOR} · Money in`,
+          success: false,
+          error: `Dropped: party "${SOURCE_ONLY_VENDOR}" is not here.`,
+        },
+      ]),
+    );
+
+    const [dstHosting] = await db
+      .select({ id: parties.id })
+      .from(parties)
+      .where(and(eq(parties.organizationId, dst), eq(parties.name, HOSTING)));
+    const target = await lanesOf(dst);
+    expect(
+      target.map((lane) => ({
+        laneKey: lane.laneKey,
+        partyId: lane.partyId,
+        docKind: lane.docKind,
+        level: lane.level,
+        amountCap: lane.amountCap,
+        confidenceThreshold: lane.confidenceThreshold,
+        promotedBy: lane.promotedBy,
+        promotedAt: lane.promotedAt,
+        demotedAt: lane.demotedAt,
+      })),
+    ).toEqual([
+      {
+        laneKey: "inbox_approve",
+        partyId: dstHosting.id,
+        docKind: "expense",
+        // Earned autonomy is never imported: this organization's reviews must earn it again.
+        level: "watch",
+        amountCap: "500.00000000",
+        confidenceThreshold: "0.9500",
+        promotedBy: null,
+        promotedAt: null,
+        demotedAt: null,
+      },
+      {
+        laneKey: "inbox_approve",
+        partyId: null,
+        docKind: "vendor_bill",
+        level: "watch",
+        amountCap: null,
+        confidenceThreshold: null,
+        promotedBy: null,
+        promotedAt: null,
+        demotedAt: null,
+      },
+    ]);
+    expect(
+      await db.select().from(aiRunFeedback).where(eq(aiRunFeedback.organizationId, dst)),
+    ).toHaveLength(0);
+    expect(
+      await db
+        .select()
+        .from(organizationAiSettings)
+        .where(eq(organizationAiSettings.organizationId, dst)),
+    ).toHaveLength(0);
+    expect((await loadJevApprovalSettings(db, dst)).autoApproveEnabled).toBe(false);
+  });
+
   it("records who brought each row in", async () => {
     const logged = await db
       .select({ action: activityLogs.action, actorId: activityLogs.actorId })
@@ -613,6 +774,7 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
     expect(count("rule_snapshot_imported")).toBe(2);
     expect(count("routine_imported")).toBe(3);
     expect(count("memory_imported")).toBe(3);
+    expect(count("jev_lane_imported")).toBe(2);
   });
 
   it("changes nothing when the same file is imported again", async () => {
@@ -620,6 +782,7 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
       snapshots: (await snapshotsOf(dst)).length,
       routines: (await routinesOf(dst)).length,
       memories: (await memoriesOf(dst)).length,
+      lanes: (await lanesOf(dst)).length,
     };
     for (const entity of INBOX_ENTITIES) {
       const { result } = await importEntity(owner, dst, entity, fileText);
@@ -632,6 +795,7 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
       snapshots: (await snapshotsOf(dst)).length,
       routines: (await routinesOf(dst)).length,
       memories: (await memoriesOf(dst)).length,
+      lanes: (await lanesOf(dst)).length,
     }).toEqual(before);
   });
 
@@ -653,6 +817,29 @@ integrationDescribe("export v5 round trip: routines, rule snapshots, memories", 
     expect(emailRoutines).toHaveLength(1);
     // The organization's own routine is kept as it was: import never re-pins it.
     expect(emailRoutines[0]).toMatchObject({ id: provisioned.id, ruleSnapshotId: null });
+  });
+
+  it("keeps a lane this organization already has, at the level it earned here", async () => {
+    const other = await createOrganization("export-v5-lanes", owner);
+    const hostingHere = await party(other, HOSTING);
+    await db.insert(aiAutonomyLanes).values({
+      organizationId: other,
+      laneKey: "inbox_approve",
+      partyId: hostingHere,
+      docKind: "expense",
+      level: "suggest",
+      promotedBy: owner,
+      promotedAt: new Date(),
+    });
+    const { result } = await importEntity(owner, other, "aiAutonomyLanes", fileText);
+    expect(result.results.find((row) => row.name === `${HOSTING} · Paid expense`)).toEqual({
+      name: `${HOSTING} · Paid expense`,
+      success: true,
+      error: DUPLICATE_SKIPPED,
+    });
+    const hostingLanes = (await lanesOf(other)).filter((lane) => lane.partyId === hostingHere);
+    expect(hostingLanes).toHaveLength(1);
+    expect(hostingLanes[0]).toMatchObject({ level: "suggest", amountCap: null });
   });
 
   it("refuses a routine whose pinned snapshot was not imported first", async () => {

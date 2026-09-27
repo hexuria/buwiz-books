@@ -98,6 +98,7 @@ const ENTITY_ENUM = [
   "ruleSnapshots",
   "routines",
   "classificationMemories",
+  "aiAutonomyLanes",
 ] as const;
 
 export type EntityType = (typeof ENTITY_ENUM)[number];
@@ -1370,10 +1371,12 @@ export const executeImport = createServerFn({ method: "POST" }).handler(
           }
 
           // Inbox configuration (v5): snapshots, then routines (their pins remap onto
-          // the snapshots), then memories (parties and accounts remap by reference).
+          // the snapshots), then memories (parties and accounts remap by reference),
+          // then Jev's lanes (always imported at watch).
           case "ruleSnapshots":
           case "routines":
-          case "classificationMemories": {
+          case "classificationMemories":
+          case "aiAutonomyLanes": {
             results.push(
               ...(await importInboxConfigEntity({ db, orgId, userId, role }, entityType, rows)),
             );
@@ -1619,6 +1622,7 @@ export const listExportableRecords = createServerFn({ method: "GET" }).handler(
         case "ruleSnapshots":
         case "routines":
         case "classificationMemories":
+        case "aiAutonomyLanes":
           return await listInboxConfigRecords(db, orgId, entityType);
 
         // Number sequences and org settings don't have cherry-pick

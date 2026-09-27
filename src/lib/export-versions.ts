@@ -42,12 +42,12 @@ export const EXPORTABLE_ENTITIES = [
   "phPayrollYearState",
   "phComputedReturns",
   // v5: Inbox v2 organization configuration (src/lib/export-inbox.ts). Order matters: rule
-  // snapshots before the routines that pin them; memories after the parties and categories
-  // they resolve against.
+  // snapshots before the routines that pin them; memories and Jev's approval lanes after the
+  // parties (and, for memories, categories) they resolve against.
   "ruleSnapshots",
   "routines",
   "classificationMemories",
-  // TODO(inbox-v2 step 11): "aiAutonomyLanes" joins v5 here (see src/lib/export-inbox.ts).
+  "aiAutonomyLanes",
 ] as const;
 
 export type ExportableEntity = (typeof EXPORTABLE_ENTITIES)[number];
@@ -90,6 +90,7 @@ export const ENTITY_LABELS: Record<ExportableEntity, string> = {
   ruleSnapshots: "Rule Snapshots",
   routines: "Routines",
   classificationMemories: "Classification Memories",
+  aiAutonomyLanes: "Jev Approval Lanes",
 };
 
 /** Metadata block included in every versioned export file */

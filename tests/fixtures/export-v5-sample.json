@@ -4,7 +4,13 @@
     "exportedAt": "2026-09-27T10:00:00.000Z",
     "organizationName": "Test Org",
     "organizationSlug": "test-org",
-    "entities": ["vendors", "ruleSnapshots", "routines", "classificationMemories"]
+    "entities": [
+      "vendors",
+      "ruleSnapshots",
+      "routines",
+      "classificationMemories",
+      "aiAutonomyLanes"
+    ]
   },
   "data": {
     "vendors": [
@@ -31,7 +37,9 @@
             "ruleKey": "low_confidence_category",
             "enabled": true,
             "impact": "warning",
-            "config": { "threshold": "0.80" },
+            "config": {
+              "threshold": "0.80"
+            },
             "formulaVersion": 1
           }
         ],
@@ -43,7 +51,10 @@
         "name": "Inbound email",
         "enabled": true,
         "triggerKind": "webhook",
-        "triggerConfig": { "provider": "resend", "auth": "svix" },
+        "triggerConfig": {
+          "provider": "resend",
+          "auth": "svix"
+        },
         "maxConcurrentRuns": 1,
         "ruleSnapshot": {
           "id": "7a6d3f4e-1111-4c1d-9e0a-1f2e3d4c5b6a",
@@ -76,7 +87,10 @@
         "answerPartyName": "Acme Hosting",
         "answerLines": [
           {
-            "lineMatch": { "side": "debit", "index": 0 },
+            "lineMatch": {
+              "side": "debit",
+              "index": 0
+            },
             "accountNumber": "6100",
             "accountName": "Software",
             "accountType": "expense",
@@ -85,7 +99,10 @@
             "taxCode": null
           },
           {
-            "lineMatch": { "side": "credit", "index": 0 },
+            "lineMatch": {
+              "side": "credit",
+              "index": 0
+            },
             "accountNumber": "1010",
             "accountName": "Checking",
             "accountType": "asset",
@@ -98,6 +115,24 @@
         "undos": 0,
         "consecutiveUndos": 0,
         "enabled": true
+      }
+    ],
+    "aiAutonomyLanes": [
+      {
+        "laneKey": "inbox_approve",
+        "docKind": "expense",
+        "partyName": "Acme Hosting",
+        "level": "auto",
+        "amountCap": "500.00000000",
+        "confidenceThreshold": "0.9500"
+      },
+      {
+        "laneKey": "inbox_approve",
+        "docKind": "vendor_bill",
+        "partyName": null,
+        "level": "watch",
+        "amountCap": null,
+        "confidenceThreshold": null
       }
     ]
   }

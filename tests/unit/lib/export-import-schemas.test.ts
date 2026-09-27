@@ -8,6 +8,7 @@ import { z } from "zod";
 // v5 Inbox configuration: these validators live in a plain module, not the server-function
 // file, so the tests below exercise the real ones rather than replicas.
 import {
+  aiAutonomyLaneExportRowSchema,
   classificationMemoryExportRowSchema,
   routineExportRowSchema,
   ruleSnapshotExportRowSchema,
@@ -511,6 +512,52 @@ describe("v5 Inbox configuration row schemas", () => {
           classificationMemoryExportRowSchema.safeParse({ ...memoryRow, ...patch }).success,
         ).toBe(false);
       }
+    });
+  });
+
+  describe("aiAutonomyLaneExportRowSchema", () => {
+    const [autoLane, partylessLane] = v5Sample.data.aiAutonomyLanes;
+
+    it("accepts the fixture rows, including the lane with no known party", () => {
+      expect(aiAutonomyLaneExportRowSchema.safeParse(autoLane).success).toBe(true);
+      expect(aiAutonomyLaneExportRowSchema.parse(partylessLane)).toMatchObject({
+        partyName: null,
+        amountCap: null,
+        confidenceThreshold: null,
+      });
+    });
+
+    it("refuses a lane key, level or kind of paper the app does not have", () => {
+      for (const patch of [
+        { laneKey: "bank_match" },
+        { level: "autonomous" },
+        { docKind: "receipt" },
+      ]) {
+        expect(aiAutonomyLaneExportRowSchema.safeParse({ ...autoLane, ...patch }).success).toBe(
+          false,
+        );
+      }
+    });
+
+    it("keeps the cap and threshold to what the lane columns hold, without throwing", () => {
+      for (const amountCap of ["0", "-5", "1e3", "1234567890123.00", "5.123456789"]) {
+        expect(() =>
+          aiAutonomyLaneExportRowSchema.safeParse({ ...autoLane, amountCap }),
+        ).not.toThrow();
+        expect(
+          aiAutonomyLaneExportRowSchema.safeParse({ ...autoLane, amountCap }).success,
+          `cap ${amountCap}`,
+        ).toBe(false);
+      }
+      for (const confidenceThreshold of ["0", "1.5", "0.95001", "-0.5", "95%"]) {
+        expect(
+          aiAutonomyLaneExportRowSchema.safeParse({ ...autoLane, confidenceThreshold }).success,
+          `threshold ${confidenceThreshold}`,
+        ).toBe(false);
+      }
+      expect(
+        aiAutonomyLaneExportRowSchema.safeParse({ ...autoLane, confidenceThreshold: "1" }).success,
+      ).toBe(true);
     });
   });
 });

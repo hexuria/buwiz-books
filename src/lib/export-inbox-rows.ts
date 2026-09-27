@@ -3,7 +3,7 @@
  * validators, and the pure decisions an import makes about each row. The database half — the
  * SELECTs, the inserts, the reference lookups — is ./export-inbox.ts.
  *
- * Three entities, imported in this order (each resolves against the one before):
+ * Four entities, imported in this order (each resolves against the one before):
  *
  *   ruleSnapshots          immutable rule packs. The row keeps its source `id` (the file's name
  *                          for it), its `label`, its content, and its creation time to the
@@ -13,10 +13,16 @@
  *   classificationMemories human fixes that stick. Parties travel by name and accounts by
  *                          (number, name) — the same resolvable references the rest of the export
  *                          uses — and are remapped on import.
+ *   aiAutonomyLanes        Jev's approval lanes, as configuration: the lane, its kind of paper,
+ *                          its party by name, its level, amount cap and confidence threshold.
+ *                          Earned autonomy is never imported: every lane arrives at `watch`, and
+ *                          this organization's own reviews must earn suggest and auto again.
  *
  * Never exported: `routine_secrets` (a webhook routine's signing secret, nor even its
- * `secret_ref`), runtime state (cursor, next/last run, last error), user ids, and anything the
- * memories learned from (`ai_run_feedback`, eval cases, documents). Ids never cross databases.
+ * `secret_ref`), runtime state (cursor, next/last run, last error), user ids, anything the
+ * memories or lanes learned from (`ai_run_feedback` — labels and lane evidence — eval cases,
+ * documents), and the organization's Jev-approval switch and its other AI settings. Ids never
+ * cross databases.
  */
 import { z } from "zod";
 import { ruleSnapshotEntriesSchema } from "@/lib/inbox/rule-set";
@@ -47,13 +53,21 @@ import {
 } from "@/lib/routines/config";
 import { computeNextRunAt } from "@/lib/routines/schedule";
 import { getScheduleSource } from "@/lib/routines/schedule-sources";
+import {
+  AUTONOMY_LANE_KEYS,
+  AUTONOMY_LANE_LEVELS,
+  type AutonomyLaneKey,
+  type AutonomyLaneLevel,
+} from "@/db/schema/ai";
+import { parseMoneyToScaled, scaledToMoney } from "@/lib/inbox/money";
+import { INBOX_V2_KINDS, INBOX_V2_KIND_LABELS, type InboxV2Kind } from "@/lib/inbox/v2/triage";
 
-/** Import order matters: snapshots before the routines that pin them. */
+/** Import order matters: snapshots before the routines that pin them; parties before lanes. */
 export const INBOX_CONFIG_ENTITY_KEYS = [
   "ruleSnapshots",
   "routines",
   "classificationMemories",
-  // TODO(inbox-v2 step 11): "aiAutonomyLanes" joins here — see the block in ./export-inbox.ts.
+  "aiAutonomyLanes",
 ] as const;
 
 export type InboxConfigEntityKey = (typeof INBOX_CONFIG_ENTITY_KEYS)[number];
@@ -497,6 +511,101 @@ export function planMemoryImport(
   };
 }
 
+// ============================================================================
+// Jev approval lanes
+// ============================================================================
+
+/** A lane's amount cap: a positive amount that fits numeric(20,8) (parseLaneAmountCap's rule). */
+const laneAmountCap = z
+  .string()
+  .regex(/^\d{1,12}(?:\.\d{1,8})?$/u, {
+    abort: true,
+    message: "must be a positive amount with at most 8 decimal places",
+  })
+  .refine((value) => parseMoneyToScaled(value) > 0n, "must be greater than zero");
+
+/** A lane's confidence threshold: above 0, at most 1, four decimals (numeric(5,4)). */
+const laneConfidenceThreshold = z
+  .string()
+  .regex(/^(?:0(?:\.\d{1,4})?|1(?:\.0{1,4})?)$/u, {
+    abort: true,
+    message: "must be between 0 and 1, with at most 4 decimal places",
+  })
+  .refine((value) => Number(value) > 0, "must be greater than zero");
+
+export const aiAutonomyLaneExportRowSchema = z.object({
+  laneKey: z.enum(AUTONOMY_LANE_KEYS),
+  /** The kind of paper (INBOX_V2_KINDS). */
+  docKind: z.enum(INBOX_V2_KINDS).nullable().default(null),
+  /** The vendor or customer, by name. Null is the lane for papers with no known party. */
+  partyName: z.string().min(1).nullable().default(null),
+  /** The level the lane had where it was exported. Informational: import sets `watch`. */
+  level: z.enum(AUTONOMY_LANE_LEVELS),
+  amountCap: laneAmountCap.nullable().default(null),
+  confidenceThreshold: laneConfidenceThreshold.nullable().default(null),
+});
+
+export type AiAutonomyLaneExportRow = z.output<typeof aiAutonomyLaneExportRowSchema>;
+
+/** Why an imported lane is at watch whatever its exported level (shown on every imported lane). */
+export function importedLaneNote(exportedLevel: AutonomyLaneLevel): string {
+  const was = exportedLevel === "watch" ? "" : ` (was ${exportedLevel})`;
+  return `Imported at watch${was}: Jev earns suggest and auto again from this organization's own reviews.`;
+}
+
+export interface LaneImportValues {
+  laneKey: AutonomyLaneKey;
+  partyId: string | null;
+  docKind: string | null;
+  level: "watch";
+  amountCap: string | null;
+  confidenceThreshold: string | null;
+}
+
+export type LaneImportPlan =
+  | { ok: true; values: LaneImportValues; note: string }
+  | { ok: false; dropped: true; message: string };
+
+/**
+ * What an exported lane becomes here. Its party is remapped by name (a lane whose party is not
+ * here, or is ambiguous, is dropped and reported, like a memory). Its level is NOT imported:
+ * promotion is admin-only and earned on this organization's own labels, so every lane starts at
+ * `watch`. Its cap and threshold come along as the lane's limits — they only narrow what Jev
+ * "would approve"; promoting to auto again sets both and re-validates the threshold against this
+ * organization's calibration.
+ */
+export function planLaneImport(
+  row: AiAutonomyLaneExportRow,
+  parties: readonly PartyRef[],
+): LaneImportPlan {
+  let partyId: string | null = null;
+  if (row.partyName) {
+    const party = resolvePartyReference(parties, row.partyName);
+    if (!party.ok) return { ok: false, dropped: true, message: `Dropped: ${party.problem}.` };
+    partyId = party.value.id;
+  }
+  return {
+    ok: true,
+    values: {
+      laneKey: row.laneKey,
+      partyId,
+      docKind: row.docKind,
+      level: "watch",
+      amountCap: row.amountCap === null ? null : scaledToMoney(parseMoneyToScaled(row.amountCap)),
+      confidenceThreshold: row.confidenceThreshold,
+    },
+    note: importedLaneNote(row.level),
+  };
+}
+
+/** A readable name for a lane: its party and its kind of paper. */
+export function describeLaneRow(row: { partyName: string | null; docKind: string | null }): string {
+  const kind = row.docKind
+    ? (INBOX_V2_KIND_LABELS[row.docKind as InboxV2Kind] ?? row.docKind)
+    : "Any paper";
+  return `${row.partyName ?? "No known party"} · ${kind}`;
+}
+
 /** The row validator validateImport and executeImport apply to an entity's rows. */
 export function inboxConfigRowSchema(entity: InboxConfigEntityKey) {
   switch (entity) {
@@ -506,6 +615,8 @@ export function inboxConfigRowSchema(entity: InboxConfigEntityKey) {
       return routineExportRowSchema;
     case "classificationMemories":
       return classificationMemoryExportRowSchema;
+    case "aiAutonomyLanes":
+      return aiAutonomyLaneExportRowSchema;
   }
 }
 

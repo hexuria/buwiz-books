@@ -138,15 +138,15 @@ function migrateV3toV4(data: Record<string, unknown>): VersionedExportFile {
 }
 
 /**
- * v4 → v5: Inbox v2 organization configuration joins the export — rule snapshots, routines and
- * classification memories (src/lib/export-inbox.ts). A v4 file has none, so each gets an empty
- * array; every other key, known or not, passes through untouched.
+ * v4 → v5: Inbox v2 organization configuration joins the export — rule snapshots, routines,
+ * classification memories and Jev's approval lanes (src/lib/export-inbox.ts). A v4 file has none,
+ * so each gets an empty array; every other key, known or not, passes through untouched.
  */
 export const V5_INBOX_CONFIG_ENTITIES = [
   "ruleSnapshots",
   "routines",
   "classificationMemories",
-  // TODO(inbox-v2 step 11): "aiAutonomyLanes" (see src/lib/export-inbox.ts).
+  "aiAutonomyLanes",
 ] as const;
 
 function migrateV4toV5(data: Record<string, unknown>): VersionedExportFile {
