@@ -12,10 +12,10 @@ import {
 import { matchKeyDigest } from "../../src/lib/inbox/memory/keys";
 
 /**
- * The memory test lock, in the suite CI runs on every push (deploy.yml runs
- * unit, component and integration — not the recorded evals). Every authored
- * inbox_memory case in the checked-in fixture must replay exactly through the
- * pure apply function; tests/evals/memory-lock.eval.ts replays the same file.
+ * The test lock's own behavior: that replay catches every kind of drift and that a lock is only
+ * ever written for an answer that replays onto its own paper. The gate itself — every authored
+ * inbox_memory case in the checked-in fixture replaying exactly — is
+ * tests/evals/memory-lock.eval.ts, which CI runs with the recorded evals (deploy.yml).
  */
 
 const fixture = JSON.parse(
@@ -24,23 +24,6 @@ const fixture = JSON.parse(
 
 const OFFICE = "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001";
 const POSTAGE = "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1002";
-
-describe("checked-in memory locks", () => {
-  it("are all authored inbox_memory cases", () => {
-    expect(fixture.cases.length).toBeGreaterThan(0);
-    for (const testCase of fixture.cases) {
-      expect(testCase.task).toBe(MEMORY_LOCK_TASK);
-      expect(testCase.provenance).toBe(MEMORY_LOCK_PROVENANCE);
-    }
-  });
-
-  for (const testCase of fixture.cases) {
-    it(`replays exactly: ${testCase.name}`, () => {
-      const replay = replayMemoryLock(testCase);
-      expect(replay, JSON.stringify(replay)).toMatchObject({ passed: true });
-    });
-  }
-});
 
 describe("the lock bites", () => {
   const base = fixture.cases[0];

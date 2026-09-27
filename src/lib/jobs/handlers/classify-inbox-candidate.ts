@@ -61,6 +61,7 @@ export async function processClassifyInboxCandidateJob(
       matchKind: result.memory.matchKind,
       memoryIds: result.memory.memoryIds,
     },
+    readyForReview: result.readyForReview,
     paymentDetailsChanged: result.paymentDetailsChanged,
     findingCount: result.findingCount,
   };

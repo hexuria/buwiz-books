@@ -81,6 +81,7 @@ import { lineTextKey } from "@/lib/inbox/memory/keys";
 import { replayMemoryLock } from "@/lib/inbox/memory/lock";
 import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import { approveInboxItem } from "@/lib/inbox/service";
+import { listInboxV2Items } from "@/lib/inbox/v2/list";
 import { amendPostedJournal } from "@/lib/journal-amendment";
 import type { AiCompleteFn } from "@/lib/party-match/model-pick";
 
@@ -872,6 +873,143 @@ integrationDescribe("memory hits are still drafts", () => {
       id: saved.memoryId,
       problem: "An account in the answer is inactive.",
     });
+  });
+});
+
+integrationDescribe("a remembered answer that settles the entry", () => {
+  async function listedItem(fixture: Fixture, inboxItemId: string) {
+    const list = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      listInboxV2Items(tx, fixture.orgId),
+    );
+    return list.items.find((item) => item.id === inboxItemId);
+  }
+
+  it("moves to ready for review, reads Ready to approve, and approves as-is", async () => {
+    const fixture = await createOrganizationWithChart("memory-ready");
+    await disableRule(fixture, "missing_department");
+    await disableRule(fixture, "missing_location");
+    const { chart, vendor, saved } = await rememberedReceipt(fixture, "party");
+
+    const paper = await uploadReceipt(fixture, { description: "Envelopes", amount: "7.10" });
+    expect((await itemOf(paper.inboxItemId)).state).toBe("needs_information");
+    const result = await classify(fixture, paper.candidate, stubbedComplete().complete);
+    expect(result).toMatchObject({ memory: { outcome: "hit" }, readyForReview: true });
+    const item = await itemOf(paper.inboxItemId);
+    expect(item.state).toBe("ready_for_review");
+    const [classified] = await eventsFor(paper.candidate.id, "candidate_classified");
+    expect(classified.data).toMatchObject({
+      stateBefore: "needs_information",
+      stateAfter: "ready_for_review",
+    });
+
+    // The list says so, with the Remembered badge.
+    expect(await listedItem(fixture, paper.inboxItemId)).toMatchObject({
+      reason: "ready",
+      reasonDetail: "remembered",
+      sourceBadge: { kind: "remembered" },
+    });
+
+    // No correction needed: approval takes the remembered entry as it stands.
+    const approval = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      approveInboxItem(
+        { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
+        {
+          inboxItemId: paper.inboxItemId,
+          expectedRevision: item.candidateRevision,
+          expectedLockVersion: item.lockVersion,
+        },
+      ),
+    );
+    if (approval.approvalOutcome !== "approved") throw new Error(approval.message);
+    expect(await eventsFor(paper.candidate.id, "memory_confirmed")).toHaveLength(1);
+    expect(await memoryRow(saved.memoryId)).toMatchObject({ uses: 1, undos: 0 });
+    const posted = await linesOf(paper.candidate.id);
+    expect(posted.map((line) => line.accountId)).toEqual([chart.office.id, chart.bank.id]);
+    expect((await reloadCandidate(paper.candidate.id)).partyId).toBe(vendor.id);
+  });
+
+  it("stays in needs_information while any check blocks it", async () => {
+    // Department and location are required by default, and nothing remembers them.
+    const fixture = await createOrganizationWithChart("memory-not-ready");
+    await rememberedReceipt(fixture, "party");
+    const paper = await uploadReceipt(fixture, { description: "Envelopes", amount: "7.10" });
+    const result = await classify(fixture, paper.candidate, stubbedComplete().complete);
+    expect(result).toMatchObject({ memory: { outcome: "hit" }, readyForReview: false });
+    expect((await itemOf(paper.inboxItemId)).state).toBe("needs_information");
+    expect(await listedItem(fixture, paper.inboxItemId)).toMatchObject({
+      reason: "needs_fix",
+      sourceBadge: { kind: "remembered" },
+    });
+  });
+
+  it("names disagreeing memories as the fix and leaves the item where it was", async () => {
+    const fixture = await createOrganizationWithChart("memory-conflict-list");
+    const chart = await chartOf(fixture);
+    const vendor = await addParty(fixture.orgId, { name: "Staples" });
+    const fileA = await insertDocument(fixture, {});
+    const fileB = await insertDocument(fixture, {});
+    const answerTo = (accountId: string) => ({
+      organizationId: fixture.orgId,
+      matchKind: "file_hash" as const,
+      answerDocKind: "purchase",
+      answerPartyId: vendor.id,
+      answerLines: [
+        {
+          lineMatch: { side: "debit" as const, index: 0 },
+          accountId,
+          accountType: "expense",
+          amount: "84.25",
+          currency: "USD",
+          taxCode: null,
+        },
+        {
+          lineMatch: { side: "credit" as const, index: 0 },
+          accountId: chart.bank.id,
+          accountType: "asset",
+          amount: "84.25",
+          currency: "USD",
+          taxCode: null,
+        },
+      ],
+      createdBy: fixture.userId,
+    });
+    await db.insert(classificationMemories).values([
+      { ...answerTo(chart.office.id), matchKey: fileA.contentHash! },
+      { ...answerTo(chart.computers.id), matchKey: fileB.contentHash! },
+    ]);
+    const paper = await paperCarrying(fixture, [fileA, fileB]);
+    const result = await classify(fixture, paper.candidate, stubbedComplete().complete);
+    expect(result).toMatchObject({ memory: { outcome: "conflict" }, readyForReview: false });
+    expect((await itemOf(paper.inboxItemId)).state).toBe("needs_information");
+    const listed = await listedItem(fixture, paper.inboxItemId);
+    expect(listed).toMatchObject({ reason: "needs_fix", reasonDetail: "blocking_finding" });
+    expect(listed?.reasonText).toMatch(/remembered answers for this file disagree/u);
+    expect(listed?.sourceBadge).toBeNull();
+  });
+
+  it("writes a remembered bill's payable line to its vendor, as a correction would", async () => {
+    const fixture = await createOrganizationWithChart("memory-line-party");
+    const chart = await chartOf(fixture);
+    const vendor = await addParty(fixture.orgId, { name: "Staples" });
+    const first = await uploadReceipt(fixture);
+    await correct(fixture, first.inboxItemId, {
+      partyId: vendor.id,
+      economicEventClass: "bill_accrual",
+      lines: [
+        { accountId: chart.office.id, debit: "84.25" },
+        { accountId: chart.ap.id, credit: "84.25" },
+      ],
+    });
+    await remember(fixture, first.candidate.id, "party");
+
+    const next = await uploadReceipt(fixture, { description: "Toner", amount: "19.99" });
+    const result = await classify(fixture, next.candidate, stubbedComplete().complete);
+    expect(result).toMatchObject({ memory: { outcome: "hit", matchKind: "party" } });
+    const lines = await linesOf(next.candidate.id);
+    expect(lines.map((line) => [line.accountId, line.partyId])).toEqual([
+      [chart.office.id, null],
+      [chart.ap.id, vendor.id],
+    ]);
   });
 });
 

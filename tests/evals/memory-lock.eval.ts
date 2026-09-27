@@ -7,8 +7,9 @@
 // kind of paper, and every amount to 1e-8 — or the lock fails. Memories are
 // answered with no model at all, so live mode has nothing to add here.
 //
-// tests/unit/inbox-memory-lock.test.ts replays the same fixture in the unit
-// suite, which is the one CI runs on every push.
+// CI runs this with the recorded evals (deploy.yml), next to the rule
+// scorecard gate. tests/unit/inbox-memory-lock.test.ts covers the lock's own
+// behavior: that replay catches drift, and what a lock is built from.
 // ============================================================================
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

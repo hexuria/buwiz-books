@@ -32,6 +32,7 @@ import {
 } from "./InboxV2Pane";
 import { inboxKeyAction, INBOX_DRAWER_ATTRIBUTE } from "./keyboard";
 import { ReasonChip } from "./ReasonChip";
+import { RememberThisPrompt } from "./RememberThisPrompt";
 import { useInboxV2List } from "./useInboxV2";
 
 export type InboxV2Filter = InboxV2Reason | "all";
@@ -97,6 +98,9 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
   const listQuery = useInboxV2List();
   const [filter, setFilter] = useState<InboxV2Filter>("all");
   const paneRef = useRef<InboxV2PaneHandle>(null);
+  // "Remember this?" for an item approved with a correction that changed its answer. The pane
+  // has moved on by then, so the offer waits here, out of the way, until answered or dismissed.
+  const [rememberApproved, setRememberApproved] = useState<ApproveRequest["remember"] | null>(null);
 
   const items = listQuery.data?.items ?? EMPTY_ITEMS;
   const visible = useMemo(() => filterInboxV2Items(items, filter), [items, filter]);
@@ -174,13 +178,16 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
       }
       showToast(errorMessage(error), { icon: "error" });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
       showToast(
         result.kind === "reject"
           ? "Rejected. The paper stays in Documents."
           : `Approved${result.transactionNumber ? ` as ${result.transactionNumber}` : ""}.`,
         { icon: "success" },
       );
+      if (result.kind === "approve" && input.kind === "approve" && input.request.remember) {
+        setRememberApproved(input.request.remember);
+      }
     },
     onSettled: async () => {
       // Refresh once the last in-flight decision lands, so a refetch cannot resurrect a row
@@ -372,6 +379,24 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
           </div>
         )}
       </section>
+
+      {rememberApproved && (
+        <aside
+          aria-label="Remember your last correction"
+          className="fixed right-4 bottom-4 z-40 w-[min(30rem,calc(100vw-2rem))] rounded-2xl shadow-lg"
+        >
+          <p className="rounded-t-2xl bg-slate-800 px-4 py-2 text-xs font-medium text-white">
+            You corrected {rememberApproved.who} before approving it.
+          </p>
+          <RememberThisPrompt
+            key={`${rememberApproved.candidateId}:${rememberApproved.candidateRevision}`}
+            candidateId={rememberApproved.candidateId}
+            candidateRevision={rememberApproved.candidateRevision}
+            onSaved={() => setRememberApproved(null)}
+            onDismiss={() => setRememberApproved(null)}
+          />
+        </aside>
+      )}
 
       {/* ── Reading drawer (below lg) ── */}
       {!isDesktop && pane && (

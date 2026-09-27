@@ -100,6 +100,14 @@ the same Inbox items, so switching moves no data and open items carry over.
 - A correction keeps each line's counterparty: payable and receivable lines
   take the entry's vendor or customer, and other lines keep the party they had
   unless the correction names one.
+- An entry a classification memory answered carries a **Remembered** badge. With
+  no check blocking it, it reads Ready to approve ("Answered from a correction
+  you asked Jev to remember…"); disagreeing memories read Needs a fix, named by
+  their `memory_conflict` check.
+- After a save that changed the answer (accounts, counterparty, or kind of
+  paper), the pane offers **Remember this?** above the editor; approving with
+  such a change offers it in a corner card once the approval lands. Both are
+  optional and block nothing. Settings → Review Rules lists the memories.
 
 ## Review policy
 
@@ -250,7 +258,12 @@ findings still block. A memory's accounts and party must pass the same checks as
 a model's pick (active leaf accounts of this organization, still of the type
 they had, a party of the right kind); one that fails is skipped and reported on
 the memory. Two memories of the same specificity that disagree apply nothing and
-raise the blocking `memory_conflict` finding.
+raise the blocking `memory_conflict` finding. When a remembered answer settles
+the whole entry — every line has an account, the counterparty is set where the
+kind of paper has one — and no finding blocks approval, the item moves to ready
+for review exactly as a reviewer's correction would leave it; otherwise it stays
+in needs information. Remembered payable and receivable lines carry the entry's
+counterparty, as a correction writes them.
 
 A correction away from a memory's answer before approval — or a reversal or void
 of the posted entry — counts as an undo; an answer approved as-is resets the
@@ -258,8 +271,9 @@ count. Two undos in a row turn the memory off. Everyone who can see the Inbox ca
 list memories (uses, undos, whether one turned itself off, and why it would be
 skipped today); owners and admins can turn them on or off or delete them. Every
 save also writes an `ai_eval_cases` row (`authored`, task `inbox_memory`);
-replaying it must reproduce the answer exactly (`tests/evals/memory-lock.eval.ts`,
-and the unit suite over `tests/evals/fixtures/inbox-memory-locks.json`).
+replaying it must reproduce the answer exactly. CI's recorded evals replay every
+authored case in `tests/evals/fixtures/inbox-memory-locks.json`
+(`tests/evals/memory-lock.eval.ts`).
 
 Event classes inferred from email text, OCR, or document extraction are
 reviewer-editable and every change is audited. Provider-owned payment, payroll,

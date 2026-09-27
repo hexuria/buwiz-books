@@ -182,9 +182,12 @@ describe("MemoriesSettings", () => {
     renderSection();
     const active = await rowFor("This sender");
     expect(within(active).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      /can see what is remembered but not change it/u,
-    );
+    expect(screen.getByText(/can see what is remembered but not change it/u)).toBeInTheDocument();
+  });
+
+  it("is a section of its own, headed Memories", async () => {
+    renderSection();
+    expect(await screen.findByRole("region", { name: "Memories" })).toBeInTheDocument();
   });
 
   it("says when nothing is remembered yet", async () => {

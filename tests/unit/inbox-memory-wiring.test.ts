@@ -116,6 +116,21 @@ describe("classification memory wiring", () => {
     );
   });
 
+  it("gates CI on the memory test lock through the recorded evals", () => {
+    expect(read("vitest.evals.config.ts")).toContain('"tests/evals/memory-lock.eval.ts"');
+    expect(read(".github/workflows/deploy.yml")).toContain("run: bun run test:evals");
+  });
+
+  it("mounts the prompt in the reading pane and the memories in Review Rules", () => {
+    const pane = read("src/components/inbox-v2/InboxV2Pane.tsx");
+    expect(pane).toContain("<RememberThisPrompt");
+    expect(pane).toContain("correctionChangesAnswer(draftAnswer(detail), correction)");
+    expect(read("src/components/inbox-v2/InboxV2Page.tsx")).toContain("<RememberThisPrompt");
+    expect(read("src/components/settings/ReviewRulesSettings.tsx")).toContain(
+      "<MemoriesSettings />",
+    );
+  });
+
   it("builds memory query keys under the Inbox prefix", () => {
     const keys = read("src/lib/query-keys.ts");
     expect(keys).toContain('memories: () => ["inbox", "memories"] as const,');

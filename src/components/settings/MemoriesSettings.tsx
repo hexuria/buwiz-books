@@ -7,12 +7,13 @@
  * off, or deletes them. A memory that would be skipped today (an account deactivated since it was
  * saved, say) says why.
  *
- * Standalone on purpose: the Settings page mounts it when the Inbox v2 screen lands. Reads go
- * through `listMemories` (inbox:view); every change goes through the admin-only server functions in
+ * Settings → Review Rules mounts it after the rule snapshots: memories are organization
+ * configuration that decides drafts, like the rules. Reads go through `listMemories`
+ * (inbox:view); every change goes through the admin-only server functions in
  * src/routes/api/-inbox-memory.ts, whose permission checks are the real boundary.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { AlertTriangleIcon, LockIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
 import { keys } from "@/lib/query-keys";
@@ -54,6 +55,7 @@ function times(count: number): string {
 }
 
 export function MemoriesSettings() {
+  const headingId = useId();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { canAccess: canManage, isLoading: permissionLoading } = usePermission(
@@ -90,9 +92,14 @@ export function MemoriesSettings() {
   const rows = memories.data ?? [];
 
   return (
-    <div>
-      <h2 className="text-xl font-semibold text-[#1e293b] dark:text-white mb-1">Memories</h2>
-      <p className="text-sm text-[#64748b] dark:text-white/50 mb-6">
+    <section
+      aria-labelledby={headingId}
+      className="bg-white dark:bg-[#1e293b] rounded-2xl border border-[#e2e8f0] dark:border-white/10 p-6"
+    >
+      <h3 id={headingId} className="text-sm font-semibold text-[#1e293b] dark:text-white mb-1">
+        Memories
+      </h3>
+      <p className="text-xs text-[#64748b] dark:text-white/50 mb-4">
         Answers people chose to have the Inbox remember. A matching paper is answered the same way
         with no model involved, and still arrives as a draft for review. When two memories of the
         same kind disagree, neither is used and the paper waits for a person. A memory that is
@@ -100,16 +107,13 @@ export function MemoriesSettings() {
       </p>
 
       {!permissionLoading && !canManage && (
-        <div
-          role="status"
-          className="mb-6 flex items-start gap-2 rounded-xl border border-[#e2e8f0] dark:border-white/10 bg-[#f8fafc] dark:bg-[#0f172a] px-4 py-3 text-xs text-[#64748b] dark:text-white/50"
-        >
+        <p className="mb-4 flex items-start gap-2 text-xs text-[#64748b] dark:text-white/50">
           <LockIcon size={14} className="mt-0.5 shrink-0" />
           <span>
             You can see what is remembered but not change it. Ask an owner or admin for the
             “configure agent rules” permission.
           </span>
-        </div>
+        </p>
       )}
 
       {memories.isLoading ? (
@@ -155,7 +159,7 @@ export function MemoriesSettings() {
           ))}
         </ul>
       )}
-    </div>
+    </section>
   );
 }
 

@@ -153,9 +153,10 @@ export function resolveCorrectionLinePartyIds(
 
 /**
  * Payable and receivable accounts, by the aging reports' definition: the mapped A/P and A/R
- * accounts with everything under them, plus any account with either subtype.
+ * accounts with everything under them, plus any account with either subtype. Shared with inbox
+ * stage 2, which writes a remembered answer's lines the way a correction writes them.
  */
-async function counterpartyAccountIds(
+export async function counterpartyAccountIds(
   db: DbExecutor,
   orgId: string,
   orgAccounts: ReadonlyArray<{ id: string; subtype: string | null }>,

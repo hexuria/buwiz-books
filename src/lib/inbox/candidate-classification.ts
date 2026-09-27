@@ -97,6 +97,7 @@ import {
 import { runDuplicateMatchingForSource } from "./duplicate-engine";
 import { DUPLICATE_MATCHER_VERSION, normalizeDuplicateMatchInput } from "./duplicate-matcher";
 import { directionForEconomicEventClass } from "./economic-event";
+import { counterpartyAccountIds, resolveCorrectionLinePartyIds } from "./candidate-correction";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
 import {
   CATEGORY_ACCOUNT_TYPES,
@@ -685,6 +686,10 @@ async function draftCreatePartyProposal(
  * Write a memory's answer onto the two placeholder lines. One remembered line
  * per side updates the placeholders in place; a remembered split replaces
  * them with its lines. Either way both sides sum to the draft's total.
+ *
+ * Lines carry their counterparty exactly as a reviewer's correction writes
+ * them (resolveCorrectionLinePartyIds): a payable or receivable line takes the
+ * entry's party, so a remembered bill's payable line is owed to its vendor.
  */
 async function writeMemoryLines(
   db: DbExecutor,
@@ -693,6 +698,8 @@ async function writeMemoryLines(
     candidate: CandidateRow;
     lines: LineRow[];
     application: MemoryApplication;
+    entryPartyId: string | null;
+    chart: readonly ChartAccount[];
     evidence: Record<string, unknown>;
   },
 ): Promise<void> {
@@ -708,6 +715,17 @@ async function writeMemoryLines(
     ...input.evidence,
     matcherInputHash: placeholder.predictionEvidence?.matcherInputHash ?? null,
   });
+  const linePartyIds = resolveCorrectionLinePartyIds(
+    application.lines.map((line) => ({
+      accountId: line.accountId,
+      originalDebit: line.side === "debit" ? line.amount : null,
+    })),
+    input.lines,
+    {
+      entryPartyId: input.entryPartyId,
+      counterpartyAccountIds: await counterpartyAccountIds(db, orgId, input.chart),
+    },
+  );
   if (debits.length === 1 && credits.length === 1) {
     for (const answer of [debits[0], credits[0]]) {
       const placeholder = placeholders[answer.side];
@@ -717,6 +735,7 @@ async function writeMemoryLines(
           accountId: answer.accountId,
           categoryConfidence: null,
           lineDescription: description ?? placeholder.lineDescription,
+          partyId: linePartyIds[application.lines.indexOf(answer)],
           predictionEvidence: evidenceFor(placeholder),
         })
         .where(
@@ -749,6 +768,7 @@ async function writeMemoryLines(
       originalCurrency: candidate.originalCurrency,
       exchangeRate: "1",
       lineDescription: description,
+      partyId: linePartyIds[index],
       predictionEvidence: evidenceFor(placeholders[line.side]),
       sortOrder: index,
     })),
@@ -820,6 +840,39 @@ async function reclassifySourceForMemory(
     );
 }
 
+/**
+ * Whether a remembered answer settled the whole entry: every line has an
+ * account, the counterparty is set where the kind of paper has one, and no
+ * open finding blocks approval — the same bar approval itself applies.
+ */
+async function memoryAnswerSettlesEntry(
+  db: DbExecutor,
+  input: {
+    orgId: string;
+    inboxItemId: string;
+    candidateId: string;
+    partyRequired: boolean;
+    partyId: string | null;
+  },
+): Promise<boolean> {
+  if (input.partyRequired && input.partyId === null) return false;
+  const lines = await loadCandidateLines(db, input.orgId, input.candidateId);
+  if (lines.length < 2 || lines.some((line) => line.accountId === null)) return false;
+  const [blocking] = await db
+    .select({ id: reviewFindings.id })
+    .from(reviewFindings)
+    .where(
+      and(
+        eq(reviewFindings.organizationId, input.orgId),
+        eq(reviewFindings.inboxItemId, input.inboxItemId),
+        eq(reviewFindings.state, "open"),
+        eq(reviewFindings.impact, "blocking"),
+      ),
+    )
+    .limit(1);
+  return !blocking;
+}
+
 export interface ClassificationMemorySummary {
   /**
    * hit: a memory answered; conflict: memories disagreed; changed: the memory
@@ -846,6 +899,8 @@ export type ClassifyCandidateResult =
         proposalId: string | null;
       };
       memory: ClassificationMemorySummary;
+      /** A remembered answer settled the entry and no check blocks it: moved to ready_for_review. */
+      readyForReview: boolean;
       paymentDetailsChanged: boolean;
       findingCount: number;
     };
@@ -948,6 +1003,31 @@ export async function classifyInboxCandidate(
         ...(memorySummary.rejected.length > 0 ? { rejected: memorySummary.rejected } : {}),
       };
 
+      // Counterparty: a memory's party, else an exact match or a confident
+      // model pick links it; "new" drafts a proposal; anything else stays
+      // with the reviewer. A memory path asks no model about the party.
+      // Settled before the lines, which carry it the way a correction's do.
+      const outcome = answeredByMemory(context)
+        ? deterministicPartyOutcome(context)
+        : partyOutcome(context, models.pick);
+      let partyId = candidate.partyId;
+      let proposalId: string | null = null;
+      if (hit?.application.partyId) {
+        partyId = hit.application.partyId;
+      } else if (outcome && partyId === null) {
+        if (outcome.kind === "exact" || outcome.kind === "model") {
+          partyId = outcome.party.id;
+        } else if (outcome.kind === "new" && context.plan.partyQuery) {
+          proposalId = await draftCreatePartyProposal(tx, {
+            orgId: input.orgId,
+            candidateId: candidate.id,
+            query: context.plan.partyQuery,
+            confidence: outcome.confidence,
+            invocationId: outcome.invocationId,
+          });
+        }
+      }
+
       const categoryLines: Array<{ lineIndex: number; outcome: string; accountId: string | null }> =
         [];
       if (hit) {
@@ -956,6 +1036,8 @@ export async function classifyInboxCandidate(
           candidate,
           lines,
           application: hit.application,
+          entryPartyId: partyId,
+          chart,
           evidence: {
             source: "memory",
             classificationVersion: CANDIDATE_CLASSIFICATION_VERSION,
@@ -1040,7 +1122,11 @@ export async function classifyInboxCandidate(
 
       // The kind of paper the memory remembered, when stage 1 read another.
       const effectiveEvent = hit ? hit.application.docKind : context.plan.event;
-      if (hit && candidate.sourceRecordId && hit.application.docKind !== context.plan.event) {
+      const reclassified =
+        hit !== null &&
+        candidate.sourceRecordId !== null &&
+        hit.application.docKind !== context.plan.event;
+      if (hit && candidate.sourceRecordId && reclassified) {
         await reclassifySourceForMemory(tx, {
           orgId: input.orgId,
           sourceRecordId: candidate.sourceRecordId,
@@ -1048,30 +1134,6 @@ export async function classifyInboxCandidate(
           memoryId: hit.memoryIds[0],
           candidateRevision: candidate.revision + 1,
         });
-      }
-
-      // Counterparty: a memory's party, else an exact match or a confident
-      // model pick links it; "new" drafts a proposal; anything else stays
-      // with the reviewer. A memory path asks no model about the party.
-      const outcome = answeredByMemory(context)
-        ? deterministicPartyOutcome(context)
-        : partyOutcome(context, models.pick);
-      let partyId = candidate.partyId;
-      let proposalId: string | null = null;
-      if (hit?.application.partyId) {
-        partyId = hit.application.partyId;
-      } else if (outcome && partyId === null) {
-        if (outcome.kind === "exact" || outcome.kind === "model") {
-          partyId = outcome.party.id;
-        } else if (outcome.kind === "new" && context.plan.partyQuery) {
-          proposalId = await draftCreatePartyProposal(tx, {
-            orgId: input.orgId,
-            candidateId: candidate.id,
-            query: context.plan.partyQuery,
-            confidence: outcome.confidence,
-            invocationId: outcome.invocationId,
-          });
-        }
       }
 
       const nextRevision = candidate.revision + 1;
@@ -1172,6 +1234,34 @@ export async function classifyInboxCandidate(
       }
       const conflictFinding = conflict ? 1 : 0;
 
+      if (hit && candidate.sourceRecordId && reclassified) {
+        await runDuplicateMatchingForSource(
+          { db: tx, orgId: input.orgId, userId: "system" },
+          candidate.sourceRecordId,
+          "source_updated",
+        );
+      }
+
+      // A remembered answer that settles the whole entry leaves the item where
+      // a reviewer's correction would: ready for review — unless a check,
+      // whichever raised it, blocks approval.
+      const readyForReview =
+        hit !== null &&
+        item.state === "needs_information" &&
+        (await memoryAnswerSettlesEntry(tx, {
+          orgId: input.orgId,
+          inboxItemId: item.id,
+          candidateId: candidate.id,
+          partyRequired: role !== null,
+          partyId,
+        }));
+      if (readyForReview) {
+        await tx
+          .update(inboxItems)
+          .set({ state: "ready_for_review", updatedAt: new Date() })
+          .where(and(eq(inboxItems.organizationId, input.orgId), eq(inboxItems.id, item.id)));
+      }
+
       const partySummary = {
         outcome: hit?.application.partyId
           ? ("memory" as const)
@@ -1211,17 +1301,11 @@ export async function classifyInboxCandidate(
             paymentDetailsChanged,
             findingCount: findingCount + conflictFinding,
             ruleSet,
+            stateBefore: item.state,
+            stateAfter: readyForReview ? "ready_for_review" : item.state,
           },
         })
         .onConflictDoNothing();
-
-      if (hit && candidate.sourceRecordId && hit.application.docKind !== context.plan.event) {
-        await runDuplicateMatchingForSource(
-          { db: tx, orgId: input.orgId, userId: "system" },
-          candidate.sourceRecordId,
-          "source_updated",
-        );
-      }
 
       if (deps.beforeCommit && !(await deps.beforeCommit(tx))) throw new LeaseLostError();
       return {
@@ -1230,6 +1314,7 @@ export async function classifyInboxCandidate(
         categoryLines,
         party: partySummary,
         memory: memorySummary,
+        readyForReview,
         paymentDetailsChanged,
         findingCount: findingCount + conflictFinding,
       } as const;
