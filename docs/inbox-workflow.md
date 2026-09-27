@@ -156,7 +156,9 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
   being created; no change to a payee's bank details, ever; an open period;
   every line on an account and balanced; the total at or under the lane's cap;
   and the paper not sampled as a spot check. Anything else leaves it in the
-  Inbox, and a `jev_auto_approval_held` event says why.
+  Inbox, and a `jev_auto_approval_held` event says why. A paper is decided when
+  it is proposed: promoting a lane or turning the switch on does not approve
+  papers already waiting in the Inbox.
 - **Spot checks.** A share of what Jev would approve (10% by default, set in
   Settings) is decided before posting — a hash of the candidate id and the
   organization's salt — and left in the Inbox as **Spot check**. The person's
