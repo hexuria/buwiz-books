@@ -24,6 +24,7 @@ import {
   withSessionOrgContext,
 } from "../../lib/server-context";
 import { EXPORT_VERSION } from "../../lib/export-versions";
+import { orgSettingsExportRow } from "../../lib/export-org-settings";
 import type { ExportMeta, VersionedExportFile } from "../../lib/export-versions";
 // Migration engine — used by import flow to handle legacy v1 files
 import { migrateToLatest } from "../../lib/export-migrations";
@@ -601,25 +602,8 @@ export const exportData = createServerFn({ method: "POST" }).handler(
 
           case "orgSettings": {
             const [org] = await db.select().from(organization).where(eq(organization.id, orgId));
-            if (org) {
-              const meta = (org.metadata ?? {}) as Record<string, unknown>;
-              result.orgSettings = [
-                {
-                  name: org.name,
-                  slug: org.slug,
-                  currency: meta.currency ?? "USD",
-                  phone: meta.phone ?? null,
-                  website: meta.website ?? null,
-                  taxId: meta.taxId ?? null,
-                  addressStreet: meta.addressStreet ?? null,
-                  addressCity: meta.addressCity ?? null,
-                  addressState: meta.addressState ?? null,
-                  addressPostalCode: meta.addressPostalCode ?? null,
-                  addressCountry: meta.addressCountry ?? null,
-                  logoUrl: meta.logoUrl ?? null,
-                },
-              ];
-            }
+            // metadata is a JSON string: parse it (it used to be cast, exporting defaults).
+            if (org) result.orgSettings = [orgSettingsExportRow(org)];
             break;
           }
         }
