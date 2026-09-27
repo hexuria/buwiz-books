@@ -1,16 +1,16 @@
 /**
- * Rule snapshots panel (Inbox v2 spec §6, §10 "Settings: Rules … snapshots").
- *
- * Standalone on purpose: the Settings → Review Rules page lives on another
- * build step's branch and mounts `RuleSnapshotsSettings` when both land. This
- * file owns no route.
+ * Rule snapshots — the last card of Settings → Review Rules (Inbox v2 spec §6, §10).
  *
  * The flow it supports: freeze the current rules into a snapshot, measure it
  * with `bun eval:scorecard`, shadow it on a routine, then pin it to promote.
  * Older snapshots stay listed for rollback. Snapshots cannot be edited.
+ *
+ * `RuleSnapshotsPanel` is presentational; `RuleSnapshotsSettings` wires it to
+ * the server functions and is what ReviewRulesSettings mounts.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent } from "react";
+import { useToast } from "@/components/ui/Toast";
 import { keys } from "@/lib/query-keys";
 import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
@@ -53,6 +53,9 @@ export interface RuleSnapshotsPanelProps {
   onPin: (change: RulePinChange) => void;
 }
 
+const SELECT =
+  "min-h-11 lg:min-h-0 rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] px-2 py-1.5 text-xs text-[#1e293b] dark:text-white disabled:opacity-50";
+
 function snapshotName(snapshot: Pick<RuleSnapshotRow, "label">): string {
   return snapshot.label?.trim() || "Untitled snapshot";
 }
@@ -71,6 +74,8 @@ export function RuleSnapshotsPanel({
   onCreate,
   onPin,
 }: RuleSnapshotsPanelProps) {
+  const headingId = useId();
+  const labelId = useId();
   const [label, setLabel] = useState("");
   const disabled = !canConfigure || busy;
 
@@ -81,58 +86,70 @@ export function RuleSnapshotsPanel({
   };
 
   return (
-    <section aria-labelledby="rule-snapshots-heading" className="space-y-4">
-      <div>
-        <h2 id="rule-snapshots-heading" className="text-base font-semibold">
-          Rule snapshots
-        </h2>
-        <p className="mt-1 text-sm text-slate-500">
-          A snapshot freezes today&apos;s rules. Shadow it on a routine to see what it would flag,
-          then pin it to make it the routine&apos;s rules. Older snapshots stay for rollback.
-        </p>
-      </div>
+    <section
+      aria-labelledby={headingId}
+      className="bg-white dark:bg-[#1e293b] rounded-2xl border border-[#e2e8f0] dark:border-white/10 p-6"
+    >
+      <h3 id={headingId} className="text-sm font-semibold text-[#1e293b] dark:text-white mb-1">
+        Rule snapshots
+      </h3>
+      <p className="text-xs text-[#64748b] dark:text-white/50 mb-4">
+        A snapshot freezes the rules above exactly as they are now. Shadow one on a routine to see
+        what it would flag without holding anything back, then choose it as the routine&apos;s
+        rules. Older snapshots stay here, so you can switch back.
+      </p>
 
       {error && (
-        <p role="alert" className="text-sm text-rose-600">
+        <p role="alert" className="mb-4 text-xs text-[#b91c1c] dark:text-red-300">
           {error}
         </p>
       )}
 
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-        <label className="flex flex-col text-sm">
-          <span className="text-slate-600 dark:text-slate-300">Snapshot label</span>
+      <form onSubmit={submit} className="mb-4 flex flex-wrap items-end gap-2">
+        <div className="flex min-w-0 flex-1 basis-48 flex-col">
+          <label htmlFor={labelId} className="text-[11px] text-[#64748b] dark:text-white/50">
+            Snapshot label
+          </label>
           <input
+            id={labelId}
             value={label}
             onChange={(event) => setLabel(event.target.value)}
             maxLength={120}
             placeholder="e.g. Receipts over 50"
             disabled={disabled}
-            className="mt-1 rounded-md border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
+            className="mt-1 min-h-11 lg:min-h-0 rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] px-3 py-1.5 text-sm text-[#1e293b] dark:text-white disabled:opacity-50"
           />
-        </label>
+        </div>
         <button
           type="submit"
           disabled={disabled}
-          className="rounded-md bg-teal-700 px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-50"
+          className="min-h-11 lg:min-h-0 rounded-lg bg-[#0d9488] px-4 py-2 text-sm font-medium text-white transition-all hover:bg-[#0f766e] disabled:opacity-50"
         >
           Snapshot current rules
         </button>
       </form>
 
       {snapshots.length === 0 ? (
-        <p className="text-sm text-slate-500">No snapshots yet. Routines use the live rules.</p>
+        <p className="text-xs text-[#94a3b8] dark:text-white/40">
+          No snapshots yet. Routines use the live rules.
+        </p>
       ) : (
-        <ul aria-label="Rule snapshots" className="divide-y divide-slate-200 dark:divide-slate-700">
+        <ul
+          aria-label="Saved rule snapshots"
+          className="divide-y divide-[#e2e8f0] dark:divide-white/10"
+        >
           {snapshots.map((snapshot) => (
-            <li key={snapshot.id} className="py-2 text-sm">
-              <span className="font-medium">{snapshotName(snapshot)}</span>
-              <span className="ml-2 text-slate-500">
+            <li key={snapshot.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+              <span className="font-medium text-[#1e293b] dark:text-white">
+                {snapshotName(snapshot)}
+              </span>
+              <span className="text-[11px] text-[#94a3b8] dark:text-white/40">
                 {createdOn(snapshot.createdAt)} · {snapshot.ruleCount} rules
               </span>
               {snapshot.pinnedBy.map((pin) => (
                 <span
                   key={`${pin.routineId}:${pin.slot}`}
-                  className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                  className="rounded-full bg-[#f1f5f9] dark:bg-white/5 px-2 py-0.5 text-[10px] font-semibold text-[#64748b] dark:text-white/50"
                 >
                   {pin.slot === "active" ? "Pinned on" : "Shadowing"} {pin.routineName}
                 </span>
@@ -142,11 +159,15 @@ export function RuleSnapshotsPanel({
         </ul>
       )}
 
-      {routines.length > 0 && (
-        <table className="w-full text-left text-sm">
+      {routines.length === 0 ? (
+        <p className="mt-4 text-xs text-[#94a3b8] dark:text-white/40">
+          No routines yet. Inbound email becomes one when the first email arrives.
+        </p>
+      ) : (
+        <table className="mt-4 w-full text-left text-sm">
           <caption className="sr-only">Rules each routine uses</caption>
           <thead>
-            <tr className="text-slate-500">
+            <tr className="text-[11px] text-[#64748b] dark:text-white/50">
               <th scope="col" className="py-1 font-medium">
                 Routine
               </th>
@@ -161,7 +182,7 @@ export function RuleSnapshotsPanel({
           <tbody>
             {routines.map((routine) => (
               <tr key={routine.id}>
-                <td className="py-1 pr-2">{routine.name}</td>
+                <td className="py-1 pr-2 text-[#1e293b] dark:text-white">{routine.name}</td>
                 <td className="py-1 pr-2">
                   <select
                     aria-label={`Rules for ${routine.name}`}
@@ -174,7 +195,7 @@ export function RuleSnapshotsPanel({
                         shadow: false,
                       })
                     }
-                    className="rounded-md border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
+                    className={SELECT}
                   >
                     <option value="">Live rules</option>
                     {snapshots.map((snapshot) => (
@@ -196,7 +217,7 @@ export function RuleSnapshotsPanel({
                         shadow: true,
                       })
                     }
-                    className="rounded-md border border-slate-300 px-2 py-1 dark:border-slate-600 dark:bg-slate-900"
+                    className={SELECT}
                   >
                     <option value="">No shadow</option>
                     {snapshots
@@ -217,9 +238,14 @@ export function RuleSnapshotsPanel({
   );
 }
 
-/** The panel wired to the server functions. Mount this from Settings → Review Rules. */
+function errorMessage(error: unknown): string | null {
+  return error instanceof Error ? error.message : null;
+}
+
+/** The panel wired to the server functions, as Settings → Review Rules mounts it. */
 export function RuleSnapshotsSettings() {
   const queryClient = useQueryClient();
+  const { showToast } = useToast();
   const { canAccess: canConfigure } = usePermission("agentRule", "configure");
   const snapshots = useQuery({
     queryKey: keys.ruleSnapshots.list(),
@@ -235,10 +261,16 @@ export function RuleSnapshotsSettings() {
       queryClient.invalidateQueries({ queryKey: keys.routines.all() }),
     ]);
   };
+  const onError = (error: unknown) =>
+    showToast(errorMessage(error) ?? "That did not save. Please try again.", { icon: "error" });
   const create = useMutation({
     mutationFn: (label: string) =>
       callServerFn(createRuleSnapshot, { data: { label: label || undefined } }),
-    onSuccess: invalidate,
+    onSuccess: async (snapshot) => {
+      await invalidate();
+      showToast(`Snapshot “${snapshotName(snapshot)}” saved.`, { icon: "success" });
+    },
+    onError,
   });
   const pin = useMutation({
     mutationFn: (change: RulePinChange) =>
@@ -253,9 +285,12 @@ export function RuleSnapshotsSettings() {
         : callServerFn(unpinRoutineRuleSnapshot, {
             data: { routineId: change.routineId, shadow: change.shadow },
           }),
-    onSuccess: invalidate,
+    onSuccess: async (routine) => {
+      await invalidate();
+      showToast(`${routine.name} rules updated.`, { icon: "success" });
+    },
+    onError,
   });
-  const failure = create.error ?? pin.error ?? snapshots.error ?? routines.error;
 
   return (
     <RuleSnapshotsPanel
@@ -263,7 +298,7 @@ export function RuleSnapshotsSettings() {
       routines={routines.data ?? []}
       canConfigure={canConfigure}
       busy={create.isPending || pin.isPending}
-      error={failure instanceof Error ? failure.message : null}
+      error={errorMessage(snapshots.error) ?? errorMessage(routines.error)}
       onCreate={(label) => create.mutate(label)}
       onPin={(change) => pin.mutate(change)}
     />

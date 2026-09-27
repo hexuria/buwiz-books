@@ -67,7 +67,8 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof RuleSnapshot
 describe("RuleSnapshotsPanel", () => {
   it("lists snapshots with their rule counts and where they are pinned", () => {
     renderPanel();
-    const list = screen.getByRole("list", { name: "Rule snapshots" });
+    expect(screen.getByRole("region", { name: "Rule snapshots" })).toBeVisible();
+    const list = screen.getByRole("list", { name: "Saved rule snapshots" });
     expect(within(list).getByText("Receipts over 10")).toBeVisible();
     expect(within(list).getByText("Untitled snapshot")).toBeVisible();
     expect(within(list).getByText("Shadowing Inbound email")).toBeVisible();
@@ -78,6 +79,9 @@ describe("RuleSnapshotsPanel", () => {
   it("says routines run on live rules before any snapshot exists", () => {
     renderPanel({ snapshots: [], routines: [] });
     expect(screen.getByText("No snapshots yet. Routines use the live rules.")).toBeVisible();
+    expect(
+      screen.getByText("No routines yet. Inbound email becomes one when the first email arrives."),
+    ).toBeVisible();
   });
 
   it("snapshots the current rules with a trimmed label", async () => {

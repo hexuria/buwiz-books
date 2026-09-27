@@ -6,7 +6,9 @@
  * Stop approval or only Warn, and tunes thresholds and lookback. It edits exactly what the Review
  * Agents page edited, through the same server functions (src/routes/api/-review-agents.ts) — the
  * permission checks, bounds and optimistic versioning live there, not here. The ledger scan and
- * its findings (LedgerScan) sit under the ledger checks they run.
+ * its findings (LedgerScan) sit under the ledger checks they run, and rule snapshots
+ * (RuleSnapshotsSettings) — frozen copies of these rules a routine can pin or shadow — close the
+ * section.
  *
  * Unsaved drafts are guarded in two places. A route change (Back to app, browser back, any link
  * out) is held here with an in-page prompt. Settings sections are local state on the page, which
@@ -25,6 +27,7 @@ import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
 import { listReviewAgents } from "../../routes/api/-review-agents";
 import { LedgerScan } from "./LedgerScan";
+import { RuleSnapshotsSettings } from "./RuleSnapshotsPanel";
 import {
   IMPACT_LABEL,
   ReviewRuleConfigForm,
@@ -202,6 +205,7 @@ export function ReviewRulesSettings({
               {group === "review" && <LedgerScan rules={groupRules} focusRuleKey={focusRuleKey} />}
             </Fragment>
           ))}
+          <RuleSnapshotsSettings />
         </div>
       )}
     </div>
