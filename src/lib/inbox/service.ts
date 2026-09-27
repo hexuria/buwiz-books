@@ -3,7 +3,6 @@ import { and, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { organization } from "@/db/schema/auth";
-import { bills } from "@/db/schema/bills";
 import { dimensions } from "@/db/schema/dimensions";
 import { documentAttachments, documents } from "@/db/schema/documents";
 import {
@@ -29,7 +28,12 @@ import { assertIdempotencyPayloadMatches, idempotencyPayloadHash } from "@/lib/i
 import { parseOrgMetadata } from "@/lib/org-metadata";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { reviewDecisionActor, type PostingActor } from "@/lib/posting/actor";
-import { createBillCore, touchesAccountsPayable } from "@/lib/posting/bill-core";
+import {
+  accrueReviewedBillCore,
+  createBillCore,
+  lockAccruableEditorBill,
+  touchesAccountsPayable,
+} from "@/lib/posting/bill-core";
 import {
   postTransactionCore,
   type PostTransactionDraft,
@@ -108,22 +112,6 @@ function sourceDocumentStampFor(
     return { id: externalId, type: candidateType };
   }
   return null;
-}
-
-/**
- * The Bills-editor bill behind a "bill" candidate, found by its uuid external
- * id and locked: the Bills page takes the same row lock before it posts an
- * accrual, so the two paths serialize instead of both accruing.
- */
-async function lockCandidateBill(db: DbExecutor, orgId: string, externalId: string | null) {
-  if (!externalId || !UUID_SHAPE.test(externalId)) return null;
-  const [bill] = await db
-    .select({ id: bills.id, status: bills.status, journalHeaderId: bills.journalHeaderId })
-    .from(bills)
-    .where(and(eq(bills.id, externalId), eq(bills.organizationId, orgId)))
-    .limit(1)
-    .for("update");
-  return bill ?? null;
 }
 
 function sourceProvider(input: CreateCandidateInput): string {
@@ -837,14 +825,13 @@ export interface ApproveInboxInput {
 export const DUPLICATE_APPROVAL_BLOCKED_MESSAGE =
   "Resolve the blocking Possible Duplicate case before approving this transaction.";
 
-export const BILL_ALREADY_ACCRUED_MESSAGE =
-  "This bill was already approved in Bills, so its accrual is posted. Reject this Inbox item instead of approving it again.";
-
-export const BILL_VOIDED_MESSAGE =
-  "This bill was voided in Bills. Reject this Inbox item instead of approving it.";
-
-export const BILL_DELETED_MESSAGE =
-  "This bill was deleted in Bills. Reject this Inbox item instead of approving it.";
+// Why a Bills-editor bill's Inbox item cannot be approved: one set of refusals, in the bill core.
+export {
+  BILL_ALREADY_ACCRUED_MESSAGE,
+  BILL_DELETED_MESSAGE,
+  BILL_PAID_MESSAGE,
+  BILL_VOIDED_MESSAGE,
+} from "@/lib/posting/bill-core";
 
 export type ApproveInboxResult =
   | {
@@ -923,17 +910,14 @@ export async function approveInboxItem(
   // A Bills-editor bill can be approved, scheduled, paid, voided or deleted on
   // the Bills page while its Inbox item is still pending. Accruing it here
   // afterwards would double the payable and repoint the bill's
-  // journal_header_id, revive a voided bill, or recreate a deleted one. All
-  // are refused; the item stays open for a person to reject.
-  const existingBill =
-    row.candidate.candidateType === "bill"
-      ? await lockCandidateBill(db, orgId, row.sourceRecordExternalId)
+  // journal_header_id, revive a voided bill, recreate a deleted one, or change
+  // a paid bill's amounts. All are refused (lockAccruableEditorBill, which the
+  // bill core runs again before it accrues); the item stays open for a person
+  // to reject.
+  const editorBill =
+    row.candidate.candidateType === "bill" && row.sourceRecordExternalId
+      ? await lockAccruableEditorBill(db, orgId, row.sourceRecordExternalId)
       : null;
-  if (row.candidate.candidateType === "bill" && row.sourceRecordExternalId && !existingBill) {
-    throw new Error(BILL_DELETED_MESSAGE);
-  }
-  if (existingBill?.journalHeaderId) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
-  if (existingBill?.status === "voided") throw new Error(BILL_VOIDED_MESSAGE);
 
   const linkedCandidateSources = await db
     .select({
@@ -1193,16 +1177,16 @@ export async function approveInboxItem(
   };
 
   // A Bills-editor bill already has its row (locked and checked above):
-  // approval posts the accrual and links it (below). Any other vendor bill
-  // whose entry accrues a payable gets its bill row now, through the bill
-  // core, so it appears in Bills and in A/P aging. A vendor bill booked
-  // straight against cash never touched payables, so it posts as an ordinary
-  // journal: there is nothing left to pay.
-  const existingBillId = existingBill?.id ?? null;
+  // approval accrues it through the bill core, which also brings the bill in line with the entry being posted
+  // (a reviewer may have corrected it here). Any other vendor bill whose entry
+  // accrues a payable gets its bill row now, through the same core, so it
+  // appears in Bills and in A/P aging. A vendor bill booked straight against
+  // cash never touched payables, so it posts as an ordinary journal: there is
+  // nothing left to pay.
   const originEconomicEventClass =
     candidateSources.find(({ id }) => id === originSourceRecordId)?.economicEventClass ?? null;
   const createsBill =
-    existingBillId === null &&
+    editorBill === null &&
     isVendorBillCandidate(row.candidate.candidateType, originEconomicEventClass) &&
     (await touchesAccountsPayable(
       db,
@@ -1212,7 +1196,24 @@ export async function approveInboxItem(
 
   let posted: PostedTransaction;
   let billId: string | undefined;
-  if (createsBill) {
+  if (editorBill) {
+    if (!row.candidate.partyId) {
+      throw new Error("Choose the vendor for this bill before approving it.");
+    }
+    const { partyId: _entryParty, ...accrual } = journal;
+    const accrued = await accrueReviewedBillCore(db, orgId, actor, {
+      billId: editorBill.id,
+      vendorId: row.candidate.partyId,
+      journal: accrual,
+      activityContext: {
+        source: "inbox",
+        inboxItemId: row.item.id,
+        candidateId: row.candidate.id,
+      },
+    });
+    posted = accrued.posted;
+    billId = accrued.bill.id;
+  } else if (createsBill) {
     if (!row.candidate.partyId) {
       throw new Error("Choose the vendor for this bill before approving it.");
     }
@@ -1241,9 +1242,8 @@ export async function approveInboxItem(
     // EXCLUSIVELY through the source-document pair. Without it, a bill
     // approved here flipped to voided while its journal stayed posted
     // forever, and never appeared in aging at all. Stamped only when the
-    // external id is uuid-shaped: source_document_id is a uuid column, and for
-    // bill candidates the id-as-externalId convention is already load-bearing
-    // at the bills.journalHeaderId update below.
+    // external id is uuid-shaped: source_document_id is a uuid column. (A
+    // Bills-editor bill is stamped by the bill core, above.)
     posted = await postTransactionCore(db, orgId, actor, {
       ...journal,
       sourceDocument: sourceDocumentStampFor(
@@ -1289,19 +1289,6 @@ export async function approveInboxItem(
         )
         .onConflictDoNothing();
     }
-  }
-  if (existingBillId) {
-    await db
-      .update(bills)
-      .set({
-        status: "awaiting_payment",
-        journalHeaderId,
-        approverId: userId,
-        approvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(bills.id, existingBillId), eq(bills.organizationId, orgId)));
-    billId = existingBillId;
   }
 
   await db

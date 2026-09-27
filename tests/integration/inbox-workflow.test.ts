@@ -115,7 +115,7 @@ type ApprovalTestOrganization = Awaited<ReturnType<typeof setupApprovalTestOrgan
 async function createWorkflowDocument(
   orgId: string,
   label: string,
-  documentType: "receipt" | "other",
+  documentType: "receipt" | "invoice" | "other",
 ) {
   const token = randomUUID();
   const [document] = await db
@@ -2231,6 +2231,18 @@ describe("inbox approval source-document stamping", () => {
   it("stamps a bill candidate's journal with the bill source pair", async () => {
     const fixture = await setupApprovalTestOrganization("stamp-bill");
     const { orgId, userId } = fixture;
+    // A Bills-editor bill accrues to Accounts Payable: approval posts it through the bill
+    // core, which refuses any other shape (a bill "paid" from the bank is not a payable).
+    const [payable] = await db
+      .insert(accounts)
+      .values({
+        organizationId: orgId,
+        accountNumber: "20000",
+        name: "Accounts Payable",
+        accountType: "liability",
+        subtype: "accounts_payable",
+      })
+      .returning();
 
     const [bill] = await db
       .insert(bills)
@@ -2247,13 +2259,14 @@ describe("inbox approval source-document stamping", () => {
       .returning();
 
     const receipt = await createWorkflowDocument(orgId, "stamp-bill", "receipt");
+    const invoice = await createWorkflowDocument(orgId, "stamp-bill-invoice", "invoice");
     const submitted = await withOrgContext(orgId, userId, "owner", (tx) =>
       createTransactionCandidate(
         { db: tx, orgId, userId, role: "owner" },
         {
           candidateType: "bill",
           transactionDate: "2026-07-24",
-          transactionType: "pay_out",
+          transactionType: "journal",
           memo: "Bill accrual via inbox",
           referenceNumber: "STAMP-1",
           partyId: fixture.vendor.id,
@@ -2261,7 +2274,7 @@ describe("inbox approval source-document stamping", () => {
           sourceChannel: "upload",
           sourceProvider: "internal",
           externalId: bill.id,
-          documentIds: [receipt.id],
+          documentIds: [receipt.id, invoice.id],
           lines: [
             {
               accountId: fixture.expense.id,
@@ -2270,8 +2283,9 @@ describe("inbox approval source-document stamping", () => {
               locationId: fixture.location.id,
             },
             {
-              accountId: fixture.bank.id,
+              accountId: payable.id,
               credit: "84.25",
+              partyId: fixture.vendor.id,
               departmentId: fixture.department.id,
               locationId: fixture.location.id,
             },

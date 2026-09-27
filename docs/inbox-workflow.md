@@ -42,10 +42,16 @@ straight against cash posts as an ordinary journal with no bill. Nothing
 extracts a due date yet, so these bills are due on the bill date until their
 terms are set on the bill.
 
-A Bills-editor bill can also be approved, scheduled, paid, voided or deleted on
-the Bills page while its Inbox item is still pending. Those actions already
-post, cancel or remove its accrual, so the Inbox refuses to approve that item;
-reject it instead.
+A Bills-editor bill already exists when its item is approved, and a reviewer
+may have corrected the entry in the Inbox first. Approval accrues it through
+the same core, which brings the bill in line with what posts — amount, balance
+due, line items, vendor, bill date and number (its terms stay as set) — in the
+approval's transaction, under the same A/P-shape and whole-cent rules. The bill
+can also be approved, scheduled, paid, voided or deleted on the Bills page while
+its Inbox item is still pending. Those actions already post, cancel or remove
+its accrual, so approval refuses, with nothing written, a bill that was deleted,
+voided, already accrued from Bills (approving would post it twice), or has
+payments recorded; reject such an item instead.
 
 ## Inbox v2 (per-organization preview)
 

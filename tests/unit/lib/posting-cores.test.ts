@@ -16,7 +16,7 @@ import {
   type PostingLineDraft,
 } from "@/lib/posting/posting-lines";
 import { isVendorBillCandidate } from "@/lib/inbox/vendor-bill";
-import { createBillCore } from "@/lib/posting/bill-core";
+import { accrueReviewedBillCore, createBillCore } from "@/lib/posting/bill-core";
 import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
 import { createInvoiceCore } from "@/lib/posting/invoice-core";
 import { postTransactionCore } from "@/lib/posting/transaction-core";
@@ -97,6 +97,20 @@ describe("posting actor", () => {
         billDate: "2026-07-20",
         dueDate: "2026-07-20",
         accrual: { kind: "review", billId: "b", status: "in_review", lineItems: [] },
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+    await expect(
+      accrueReviewedBillCore(untouchable, "org-1", JEV, {
+        billId: "b",
+        vendorId: "v",
+        journal: {
+          idempotencyKey: "k",
+          transactionDate: "2026-07-20",
+          transactionType: "journal",
+          source: "bill",
+          functionalCurrency: "USD",
+          lines: [],
+        },
       }),
     ).rejects.toThrow(SystemActorNotSupportedError);
     await expect(
