@@ -12,14 +12,39 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.hoisted(() => {
+  // Nothing here may reach a model: stage 2 runs on a stubbed classifier, and
+  // mock mode answers anything else.
+  vi.stubEnv("AI_MODE", "mock");
+});
+
 import { db } from "@/db";
-import { aiRunFeedback } from "@/db/schema/ai";
+import {
+  aiActionProposals,
+  aiAutonomyLanes,
+  aiRunFeedback,
+  organizationAiSettings,
+} from "@/db/schema/ai";
+import { organization } from "@/db/schema/auth";
 import { activityLogs } from "@/db/schema/activity-logs";
 import { bills } from "@/db/schema/bills";
-import { inboxItems, processingJobs, reviewDecisions, workflowEvents } from "@/db/schema/inbox";
+import {
+  inboxItems,
+  organizationAccountingSettings,
+  processingJobs,
+  reviewDecisions,
+  reviewFindings,
+  sourceMatchCandidates,
+  transactionCandidates,
+  workflowEvents,
+} from "@/db/schema/inbox";
 import { journalHeaders } from "@/db/schema/journals";
+import { updateOrgAiConfig } from "@/lib/ai/org-ai-config";
+import { classifyInboxCandidate } from "@/lib/inbox/candidate-classification";
 import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
+import { undoJevApproval } from "@/lib/inbox/jev-approval/undo";
 import { approveInboxItem } from "@/lib/inbox/service";
 import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
 import { listInboxV2Items } from "@/lib/inbox/v2/list";
@@ -31,11 +56,15 @@ import { processJevAutoApproveJob } from "@/lib/jobs/handlers/jev-auto-approve";
 import { mintJevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   asOrg,
+  disableRule,
+  rememberPaymentSide,
   setJevApprovalSettings,
   setLaneAuto,
   setupJevOrganization,
+  stubbedJevClassifier,
   submitJevBill,
   submitJevExpense,
+  uploadPaper,
   type JevFixture,
 } from "../utils/jev-fixture";
 
@@ -116,6 +145,14 @@ async function queuedJevJobs(fixture: JevFixture) {
     );
 }
 
+async function journalsFor(candidateId: string) {
+  const [candidate] = await db
+    .select()
+    .from(transactionCandidates)
+    .where(eq(transactionCandidates.id, candidateId));
+  return candidate.postedJournalHeaderId;
+}
+
 describeDb("Jev approves papers on an auto lane", () => {
   it("approves a paper that passes every check, through the path a person's approval takes", async () => {
     const { fixture, laneId } = await autoLaneOrganization("jev-auto-approves");
@@ -193,6 +230,376 @@ describeDb("Jev approves papers on an auto lane", () => {
       approverId: JEV_AUDIT_ACTOR_ID,
       vendorId: fixture.vendor.id,
     });
+  });
+
+  type Mutation = (input: {
+    fixture: JevFixture;
+    laneId: string;
+    paper: Awaited<ReturnType<typeof proposeOnLane>>;
+  }) => Promise<void>;
+
+  const ALWAYS_HUMAN: Array<[string, Mutation, string]> = [
+    [
+      "a new party would be created",
+      async ({ fixture, paper }) => {
+        await db.insert(aiActionProposals).values({
+          organizationId: fixture.orgId,
+          kind: "create_party",
+          proposal: { entity: { name: "Paper Street Supply Ltd" } },
+          sourceRef: { entityType: "transaction_candidate", entityId: paper.candidate.id },
+        });
+      },
+      "new_party",
+    ],
+    [
+      "the payee's bank details changed, even once a person resolved it",
+      async ({ fixture, paper }) => {
+        await db.insert(reviewFindings).values({
+          organizationId: fixture.orgId,
+          inboxItemId: paper.item.id,
+          candidateId: paper.candidate.id,
+          ruleKey: "party_payment_details_changed",
+          impact: "blocking",
+          state: "resolved",
+          subjectType: "transaction_candidate",
+          subjectId: paper.candidate.id,
+          fingerprint: `${paper.candidate.id}:payment-details:test`,
+          message: "Different bank details.",
+        });
+      },
+      "payment_details_changed",
+    ],
+    [
+      "it may be a duplicate",
+      async ({ fixture, paper }) => {
+        const other = await submitJevExpense(fixture, { amount: "99.99", day: 28, record: false });
+        const [left, right] = [
+          paper.candidate.sourceRecordId!,
+          other.candidate.sourceRecordId!,
+        ].sort();
+        await db.insert(sourceMatchCandidates).values({
+          organizationId: fixture.orgId,
+          leftSourceRecordId: left,
+          rightSourceRecordId: right,
+          matchType: "probable",
+          score: "80",
+        });
+      },
+      "duplicate_case",
+    ],
+    [
+      "its period is closed",
+      async ({ fixture }) => {
+        await db
+          .update(organization)
+          .set({ closedThrough: "2026-08-31" })
+          .where(eq(organization.id, fixture.orgId));
+      },
+      "period_locked",
+    ],
+    [
+      "maker-checker is on and Jev was not opted in",
+      async ({ fixture }) => {
+        await db
+          .update(organizationAccountingSettings)
+          .set({ requireDifferentApprover: true })
+          .where(eq(organizationAccountingSettings.organizationId, fixture.orgId));
+      },
+      "maker_checker",
+    ],
+    [
+      "a warning is open",
+      async ({ fixture, paper }) => {
+        await db.insert(reviewFindings).values({
+          organizationId: fixture.orgId,
+          inboxItemId: paper.item.id,
+          candidateId: paper.candidate.id,
+          ruleKey: "transaction_in_parent_category",
+          impact: "warning",
+          subjectType: "transaction_candidate",
+          subjectId: paper.candidate.id,
+          fingerprint: `${paper.candidate.id}:warning:test`,
+          message: "Post to a leaf category.",
+        });
+      },
+      "open_warning",
+    ],
+    [
+      "it is over the lane's cap",
+      async ({ laneId }) => {
+        await db
+          .update(aiAutonomyLanes)
+          .set({ amountCap: "10" })
+          .where(eq(aiAutonomyLanes.id, laneId));
+      },
+      "over_cap",
+    ],
+    [
+      "Jev's confidence is below the lane's threshold",
+      async ({ laneId }) => {
+        await db
+          .update(aiAutonomyLanes)
+          .set({ confidenceThreshold: "0.99" })
+          .where(eq(aiAutonomyLanes.id, laneId));
+      },
+      "below_threshold",
+    ],
+    [
+      "the organization's switch is off",
+      async ({ fixture }) => {
+        await setJevApprovalSettings(fixture.orgId, { inboxAutoapproveEnabled: false });
+      },
+      "autoapprove_off",
+    ],
+    [
+      "the AI kill switch is on",
+      async ({ fixture }) => {
+        await setJevApprovalSettings(fixture.orgId, { killSwitch: true });
+      },
+      "ai_kill_switch",
+    ],
+    [
+      "the lane was demoted after the paper was queued",
+      async ({ laneId }) => {
+        await db
+          .update(aiAutonomyLanes)
+          .set({ level: "suggest" })
+          .where(eq(aiAutonomyLanes.id, laneId));
+      },
+      "lane_not_auto",
+    ],
+  ];
+
+  it.each(ALWAYS_HUMAN)(
+    "decides again under the lock and holds the paper when %s",
+    async (_label, mutate, reason) => {
+      const { fixture, laneId } = await autoLaneOrganization("jev-auto-human");
+      const paper = await proposeOnLane(fixture, { amount: "42.10", day: 3 });
+      expect(paper.proposal!.evaluation.approve).toBe(true);
+      await mutate({ fixture, laneId, paper });
+
+      const { result, job } = await runQueuedJevJob(
+        fixture,
+        paper.candidate.id,
+        paper.candidate.revision,
+      );
+      expect(result).toMatchObject({ processed: true, status: "held", heldForSpotCheck: false });
+      expect((result.holds as Array<{ reason: string }>).map((hold) => hold.reason)).toContain(
+        reason,
+      );
+      expect(job.status).toBe("completed");
+      expect(await journalsFor(paper.candidate.id)).toBeNull();
+      const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, paper.item.id));
+      expect(item.state).toBe("ready_for_review");
+    },
+  );
+
+  it("skips a paper a person changed after it was queued", async () => {
+    const { fixture } = await autoLaneOrganization("jev-auto-stale");
+    const paper = await proposeOnLane(fixture, { amount: "42.10", day: 3 });
+    await asOrg(
+      fixture,
+      (tx) =>
+        correctInboxCandidate(
+          { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+          {
+            inboxItemId: paper.item.id,
+            expectedRevision: paper.candidate.revision,
+            expectedLockVersion: paper.item.lockVersion,
+            transactionDate: "2026-08-03",
+            transactionType: "pay_out",
+            partyId: fixture.vendor.id,
+            originalCurrency: "USD",
+            lines: [
+              {
+                accountId: fixture.hardware.id,
+                debit: "42.10",
+                departmentId: fixture.department.id,
+                locationId: fixture.location.id,
+              },
+              {
+                accountId: fixture.bank.id,
+                credit: "42.10",
+                departmentId: fixture.department.id,
+                locationId: fixture.location.id,
+              },
+            ],
+          },
+        ),
+      fixture.reviewerId,
+    );
+    const { result } = await runQueuedJevJob(fixture, paper.candidate.id, paper.candidate.revision);
+    expect(result).toMatchObject({ status: "skipped", reason: "stale_revision" });
+    expect(await journalsFor(paper.candidate.id)).toBeNull();
+  });
+
+  it("holds a spot-check sample back before posting, and the person's decision labels the lane", async () => {
+    const { fixture, laneId } = await autoLaneOrganization("jev-auto-spot");
+    await setJevApprovalSettings(fixture.orgId, { inboxSpotCheckRate: "1" });
+    const sampled = await proposeOnLane(fixture, { amount: "42.10", day: 3 });
+    // Decided at proposal time: held back, so no approval is even queued.
+    expect(sampled.proposal!.evaluation).toMatchObject({
+      approve: false,
+      wouldApprove: true,
+      heldForSpotCheck: true,
+      holds: [{ reason: "spot_check", scope: "sample" }],
+    });
+    expect(await queuedJevJobs(fixture)).toEqual([]);
+    let list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((row) => row.id === sampled.item.id)).toMatchObject({
+      reason: "spot_check",
+      reasonText: "Jev would approve this — spot check.",
+    });
+
+    // The person approves it unchanged: an unbiased "accepted" for the lane.
+    await asOrg(
+      fixture,
+      (tx) =>
+        approveInboxItem(
+          { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+          {
+            inboxItemId: sampled.item.id,
+            expectedRevision: sampled.candidate.revision,
+            expectedLockVersion: sampled.item.lockVersion,
+          },
+        ),
+      fixture.reviewerId,
+    );
+    const [label] = await db
+      .select()
+      .from(aiRunFeedback)
+      .where(eq(aiRunFeedback.organizationId, fixture.orgId));
+    expect(label).toMatchObject({
+      laneId,
+      verdict: "accepted",
+      laneEvidence: { spotCheck: true, wouldApprove: true, autoApproved: false },
+    });
+
+    // Sampled only once queued (the share was raised meanwhile): the job holds it.
+    await setJevApprovalSettings(fixture.orgId, { inboxSpotCheckRate: "0" });
+    const later = await proposeOnLane(fixture, { amount: "42.20", day: 4 });
+    expect(later.proposal!.evaluation.approve).toBe(true);
+    await setJevApprovalSettings(fixture.orgId, { inboxSpotCheckRate: "1" });
+    const { result } = await runQueuedJevJob(fixture, later.candidate.id, later.candidate.revision);
+    expect(result).toMatchObject({ status: "held", heldForSpotCheck: true });
+    expect(await journalsFor(later.candidate.id)).toBeNull();
+    list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((row) => row.id === later.item.id)?.reason).toBe("spot_check");
+  });
+
+  it("acts only on papers in the job row's own organization", async () => {
+    const { fixture: owner } = await autoLaneOrganization("jev-auto-tenant-a");
+    const paper = await proposeOnLane(owner, { amount: "42.10", day: 3 });
+    const intruder = await readyOrganization("jev-auto-tenant-b");
+    const workerId = `test-worker-${randomUUID()}`;
+    const [job] = await db
+      .insert(processingJobs)
+      .values({
+        organizationId: intruder.orgId,
+        jobType: JEV_AUTO_APPROVE_JOB_TYPE,
+        status: "running",
+        lockedBy: workerId,
+        lockedUntil: new Date(Date.now() + 60_000),
+        attempts: 1,
+        payload: { candidateId: paper.candidate.id, candidateRevision: paper.candidate.revision },
+      })
+      .returning();
+    const result = await processJevAutoApproveJob(job, { workerId });
+    expect(result).toMatchObject({ processed: true, status: "skipped", reason: "not_found" });
+    expect(await journalsFor(paper.candidate.id)).toBeNull();
+  });
+
+  it("end to end: stage 2 on a stubbed classifier, a remembered payment side, Jev approves, a person undoes", async () => {
+    const { fixture, laneId } = await autoLaneOrganization("jev-auto-e2e");
+    // This organization does not track departments or locations.
+    await disableRule(fixture.orgId, "missing_department");
+    await disableRule(fixture.orgId, "missing_location");
+    const { candidate, inboxItemId } = await uploadPaper(fixture, {});
+
+    const classified = await classifyInboxCandidate(
+      { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: candidate.revision },
+      {
+        complete: stubbedJevClassifier("67200", 0.97),
+        beforeCommit: async (tx) => {
+          await recordJevProposalAfterClassification(tx, {
+            orgId: fixture.orgId,
+            candidateId: candidate.id,
+          });
+          return true;
+        },
+      },
+    );
+    expect(classified).toMatchObject({ status: "classified", party: { outcome: "exact" } });
+    // Stage 2 never picks the payment side: nothing queued yet.
+    expect(await queuedJevJobs(fixture)).toEqual([]);
+
+    await rememberPaymentSide(fixture, {
+      candidateId: candidate.id,
+      inboxItemId,
+      accountId: fixture.bank.id,
+    });
+    const proposal = await asOrg(fixture, (tx) =>
+      recordJevProposalAfterClassification(tx, { orgId: fixture.orgId, candidateId: candidate.id }),
+    );
+    expect(proposal).toMatchObject({
+      laneId,
+      source: "jev",
+      confidence: 0.97,
+      evaluation: { approve: true, holds: [] },
+    });
+    const { result } = await runQueuedJevJob(fixture, candidate.id, proposal!.candidateRevision);
+    expect(result).toMatchObject({ status: "approved", laneId });
+
+    const [journal] = await db
+      .select()
+      .from(journalHeaders)
+      .where(eq(journalHeaders.id, result.journalHeaderId as string));
+    expect(journal).toMatchObject({
+      createdBy: JEV_AUDIT_ACTOR_ID,
+      totalAmount: "48.60000000",
+      transactionDate: "2026-08-23",
+      partyId: fixture.vendor.id,
+    });
+
+    const undone = await asOrg(
+      fixture,
+      (tx) =>
+        undoJevApproval(
+          { db: tx, orgId: fixture.orgId, userId: fixture.reviewerId, role: "admin" },
+          { journalHeaderId: journal.id, reason: "Paid personally" },
+        ),
+      fixture.reviewerId,
+    );
+    expect(undone.laneId).toBe(laneId);
+    const [label] = await db
+      .select()
+      .from(aiRunFeedback)
+      .where(eq(aiRunFeedback.organizationId, fixture.orgId));
+    expect(label).toMatchObject({
+      laneId,
+      verdict: "rejected",
+      laneEvidence: { autoApproved: true, confidence: 0.97 },
+    });
+    const list = await asOrg(fixture, (tx) => listInboxV2Items(tx, fixture.orgId));
+    expect(list.items.find((row) => row.id === inboxItemId)?.reason).toBe("ready");
+  });
+});
+
+describeDb("categorize outside the inbox_approve lane", () => {
+  it("is still refused for per-kind autonomy, at any accuracy", async () => {
+    const fixture = await setupJevOrganization("jev-categorize-wall");
+    await expect(
+      updateOrgAiConfig(db, {
+        orgId: fixture.orgId,
+        actorId: fixture.userId,
+        autonomy: { categorize: "auto_apply_high_confidence" },
+      }),
+    ).rejects.toThrow(/always applied by a human/);
+    const [settings] = await db
+      .select({ autonomy: organizationAiSettings.autonomy })
+      .from(organizationAiSettings)
+      .where(eq(organizationAiSettings.organizationId, fixture.orgId));
+    expect(settings?.autonomy ?? {}).toEqual({});
   });
 });
 
