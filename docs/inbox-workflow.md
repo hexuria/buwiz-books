@@ -66,10 +66,23 @@ the same Inbox items, so switching moves no data and open items carry over.
   Inbox badge is the list's length.
 - Each item carries one reason, first match wins: **Failed** (the item failed,
   or its source could not be processed), **Needs a fix** (an open blocking check,
-  or details still missing), **Jev unsure** (a real model-unsure signal, such as
-  a low-confidence category), **Spot check** (reserved for autonomy hold-back
-  samples; nothing produces it yet), and otherwise **Ready to approve** — a clean
-  entry, typed by hand or read confidently.
+  or an entry still missing lines or accounts), **Jev unsure** (a real
+  model-unsure signal), **Spot check** (reserved for autonomy hold-back samples;
+  nothing produces it yet), and otherwise **Ready to approve** — a clean entry,
+  typed by hand or read confidently.
+- Jev is unsure when a line carries a low-confidence category, or when stage 2
+  could not use its answer: a category below the threshold or with no usable
+  answer (kept in the line's prediction evidence), or a counterparty it left
+  unresolved (on the `candidate_classified` event for the current revision). A
+  confident "no fit" or "new party" is an answer, not a doubt. Stage 2 parks such
+  a category on Uncategorized and leaves such a counterparty empty, so the doubt
+  surfaces as an `uncategorized` or missing vendor/customer check; that check
+  alone makes the item Jev unsure, not Needs a fix. Anything the doubt does not
+  explain still needs a fix — today that includes the payment side, which stage 2
+  never picks, so a freshly classified paper reads Needs a fix and its strip
+  names the doubt after the check ("… Jev isn't sure about the category (41%
+  sure)."). A reviewer's saved correction replaces the system's lines and
+  revision, so the doubt ends there.
 - The reading pane is the real editor, prefilled: vendor bills open in the Bills
   editor, everything else in the New transaction editor on its tab. Its Save
   runs the candidate correction and the book checks; Approve first saves any

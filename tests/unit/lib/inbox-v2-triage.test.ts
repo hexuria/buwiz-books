@@ -7,22 +7,54 @@ import {
   formatSourceBadge,
   INBOX_V2_REASON_LABELS,
   INBOX_V2_REASONS,
+  type InboxV2EntryShape,
   type InboxV2OpenFinding,
+  type InboxV2ReasonInput,
+  type ModelUnsureSignal,
 } from "../../../src/lib/inbox/v2/triage";
 import { isInboxV2Enabled } from "../../../src/lib/inbox/v2/flag";
 
 /**
  * Inbox v2 shows only what needs a human, with exactly one reason per item (spec §10). These pin
- * the precedence — failed > needs_fix > jev_unsure > spot_check > ready — and that "Jev unsure"
- * needs a real model-unsure signal: a clean or hand-entered item is "Ready to approve".
+ * the precedence — failed > needs_fix > jev_unsure > spot_check > ready — that "Jev unsure"
+ * needs a real model-unsure signal (a clean or hand-entered item is "Ready to approve"), and that
+ * a blocking finding which is nothing but stage 2's doubt does not bury that signal as a fix.
  */
 
-const blocking = (ruleKey: string, message = `${ruleKey} message`): InboxV2OpenFinding => ({
-  ruleKey,
-  blocking: true,
-  message,
-});
+const blocking = (
+  ruleKey: string,
+  message = `${ruleKey} message`,
+  lineIndexes: number[] | null = null,
+): InboxV2OpenFinding => ({ ruleKey, blocking: true, message, lineIndexes });
 const warning = (ruleKey: string): InboxV2OpenFinding => ({ ruleKey, blocking: false });
+
+/** A two-line entry with an account on every line. */
+const COMPLETE: InboxV2EntryShape = { lineCount: 2, linesWithoutAccount: [] };
+
+function reasonFor(input: Partial<InboxV2ReasonInput>) {
+  return deriveInboxV2Reason({
+    state: "ready_for_review",
+    openFindings: [],
+    entry: COMPLETE,
+    ...input,
+  });
+}
+
+/** Stage 2 parked line 0 on Uncategorized: its pick was below the threshold. */
+const unsureCategory: ModelUnsureSignal = {
+  subject: "category",
+  cause: "low_confidence",
+  confidence: 0.41,
+  lineIndex: 0,
+};
+/** Stage 2 left the counterparty empty: the model gave no usable answer. */
+const failedParty: ModelUnsureSignal = {
+  subject: "party",
+  cause: "failed",
+  confidence: null,
+  lineIndex: null,
+};
+const UNCATEGORIZED_MESSAGE = "Choose a leaf category for every posting line.";
 
 describe("deriveInboxV2Reason", () => {
   it("offers the spec's four reason chips plus Ready to approve, in chip order", () => {
@@ -36,16 +68,17 @@ describe("deriveInboxV2Reason", () => {
     expect(INBOX_V2_REASON_LABELS.ready).toBe("Ready to approve");
   });
 
-  it("reports a failed item as failed, whatever else is open", () => {
-    const reason = deriveInboxV2Reason({
+  it("reports a failed item as failed, whatever else is open or unsure", () => {
+    const reason = reasonFor({
       state: "failed",
       openFindings: [blocking("missing_vendor")],
+      modelUnsureSignals: [unsureCategory],
     });
-    expect(reason).toMatchObject({ reason: "failed", detail: "processing_failed" });
+    expect(reason).toMatchObject({ reason: "failed", detail: "processing_failed", signals: [] });
   });
 
   it("treats an open source_processing_failed finding as failed and carries its message", () => {
-    const reason = deriveInboxV2Reason({
+    const reason = reasonFor({
       state: "needs_information",
       openFindings: [
         blocking("uncategorized"),
@@ -63,8 +96,7 @@ describe("deriveInboxV2Reason", () => {
   });
 
   it("needs a fix when any blocking finding other than low confidence is open", () => {
-    const reason = deriveInboxV2Reason({
-      state: "ready_for_review",
+    const reason = reasonFor({
       openFindings: [
         warning("transaction_in_parent_category"),
         blocking("low_confidence_category"),
@@ -79,16 +111,25 @@ describe("deriveInboxV2Reason", () => {
     expect(describeInboxV2Reason(reason)).toBe("Assign a vendor to this expense transaction.");
   });
 
-  it("needs a fix while the entry still lacks details, even with no finding open", () => {
-    expect(deriveInboxV2Reason({ state: "needs_information", openFindings: [] })).toMatchObject({
-      reason: "needs_fix",
-      detail: "needs_information",
-    });
+  it("needs a fix while the entry lacks lines or an account, even with no finding open", () => {
+    for (const entry of [
+      { lineCount: 0, linesWithoutAccount: [] },
+      { lineCount: 2, linesWithoutAccount: [1] },
+    ]) {
+      const reason = reasonFor({ state: "needs_information", entry });
+      expect(reason).toMatchObject({ reason: "needs_fix", detail: "needs_information" });
+      expect(describeInboxV2Reason(reason)).toBe(
+        "Add the accounting details before this can be approved.",
+      );
+    }
+  });
+
+  it("judges the entry, not the lifecycle state: a complete draft in needs_information is ready", () => {
+    expect(reasonFor({ state: "needs_information" })).toMatchObject({ reason: "ready" });
   });
 
   it("does not count a non-blocking duplicate or warning as a fix", () => {
-    const reason = deriveInboxV2Reason({
-      state: "ready_for_review",
+    const reason = reasonFor({
       openFindings: [warning("possible_duplicate"), warning("missing_receipt")],
     });
     expect(reason).toMatchObject({ reason: "ready", detail: "ready" });
@@ -99,54 +140,117 @@ describe("deriveInboxV2Reason", () => {
       blocking("low_confidence_category"),
       warning("low_confidence_category"),
     ]) {
-      const reason = deriveInboxV2Reason({ state: "ready_for_review", openFindings: [finding] });
+      const reason = reasonFor({ openFindings: [finding] });
       expect(reason).toMatchObject({ reason: "jev_unsure", detail: "low_confidence" });
       expect(describeInboxV2Reason(reason)).toMatch(/isn't sure about the category/);
     }
   });
 
-  it("is Jev unsure on a step-7 model signal", () => {
-    const reason = deriveInboxV2Reason({
-      state: "ready_for_review",
-      openFindings: [],
-      modelUnsureSignals: [{ subject: "party", confidence: 0.41 }],
+  it("is Jev unsure when the only blocker is the category stage 2 parked on Uncategorized", () => {
+    const reason = reasonFor({
+      openFindings: [blocking("uncategorized", UNCATEGORIZED_MESSAGE, [0])],
+      modelUnsureSignals: [unsureCategory],
     });
     expect(reason).toMatchObject({ reason: "jev_unsure", detail: "model_unsure" });
-    expect(describeInboxV2Reason(reason)).toBe("Jev isn't sure about the vendor or customer.");
+    expect(describeInboxV2Reason(reason)).toBe("Jev isn't sure about the category (41% sure).");
+  });
+
+  it("is Jev unsure on an unsure category left empty where no Uncategorized account is mapped", () => {
+    const reason = reasonFor({
+      entry: { lineCount: 2, linesWithoutAccount: [0] },
+      openFindings: [blocking("uncategorized", UNCATEGORIZED_MESSAGE, [0])],
+      modelUnsureSignals: [{ ...unsureCategory, cause: "failed", confidence: null }],
+    });
+    expect(reason).toMatchObject({ reason: "jev_unsure", detail: "model_unsure" });
+    expect(describeInboxV2Reason(reason)).toBe("Jev couldn't choose a category.");
+  });
+
+  it("is Jev unsure when a missing vendor or customer is the unresolved counterparty match", () => {
+    for (const ruleKey of ["missing_vendor", "missing_customer"]) {
+      const reason = reasonFor({
+        openFindings: [blocking(ruleKey)],
+        modelUnsureSignals: [failedParty],
+      });
+      expect(reason).toMatchObject({ reason: "jev_unsure", detail: "model_unsure" });
+      expect(describeInboxV2Reason(reason)).toBe("Jev couldn't match the vendor or customer.");
+    }
+  });
+
+  it("still needs a fix for what the doubt does not explain, and names the doubt after it", () => {
+    // Stage 2 never picks the payment side: its empty line is in the same finding.
+    const paymentSideOpen = reasonFor({
+      state: "needs_information",
+      entry: { lineCount: 2, linesWithoutAccount: [1] },
+      openFindings: [blocking("uncategorized", UNCATEGORIZED_MESSAGE, [0, 1])],
+      modelUnsureSignals: [unsureCategory],
+    });
+    expect(paymentSideOpen).toMatchObject({
+      reason: "needs_fix",
+      detail: "blocking_finding",
+      ruleKey: "uncategorized",
+    });
+    expect(describeInboxV2Reason(paymentSideOpen)).toBe(
+      `${UNCATEGORIZED_MESSAGE} Jev isn't sure about the category (41% sure).`,
+    );
+
+    // A counterparty doubt does not explain a missing dimension.
+    expect(
+      reasonFor({
+        openFindings: [blocking("missing_vendor"), blocking("missing_department")],
+        modelUnsureSignals: [failedParty],
+      }),
+    ).toMatchObject({ reason: "needs_fix", ruleKey: "missing_department" });
+
+    // Nor a category doubt a missing counterparty, or an ingest-time finding with no lines named.
+    for (const finding of [blocking("missing_vendor"), blocking("uncategorized")]) {
+      expect(
+        reasonFor({ openFindings: [finding], modelUnsureSignals: [unsureCategory] }).reason,
+      ).toBe("needs_fix");
+    }
+    // An empty line the model was never asked about is a missing detail.
+    expect(
+      reasonFor({
+        entry: { lineCount: 2, linesWithoutAccount: [1] },
+        modelUnsureSignals: [unsureCategory],
+      }),
+    ).toMatchObject({ reason: "needs_fix", detail: "needs_information" });
+  });
+
+  it("names every subject the model was unsure of", () => {
+    const reason = reasonFor({
+      openFindings: [
+        blocking("uncategorized", UNCATEGORIZED_MESSAGE, [0]),
+        blocking("missing_vendor"),
+      ],
+      modelUnsureSignals: [
+        unsureCategory,
+        { ...failedParty, cause: "low_confidence", confidence: 0.55 },
+      ],
+    });
+    expect(reason.reason).toBe("jev_unsure");
+    expect(describeInboxV2Reason(reason)).toBe(
+      "Jev isn't sure about the category (41% sure). Jev isn't sure about the vendor or customer (55% sure).",
+    );
   });
 
   it("marks a held-back sample as a spot check, but never over a real problem or doubt", () => {
+    expect(reasonFor({ spotCheck: true })).toMatchObject({ reason: "spot_check" });
     expect(
-      deriveInboxV2Reason({ state: "ready_for_review", openFindings: [], spotCheck: true }),
-    ).toMatchObject({ reason: "spot_check" });
-    expect(
-      deriveInboxV2Reason({
-        state: "ready_for_review",
-        openFindings: [blocking("missing_vendor")],
-        spotCheck: true,
-      }),
+      reasonFor({ openFindings: [blocking("missing_vendor")], spotCheck: true }),
     ).toMatchObject({ reason: "needs_fix" });
-    expect(
-      deriveInboxV2Reason({
-        state: "ready_for_review",
-        openFindings: [],
-        modelUnsureSignals: [{ subject: "category", confidence: 0.3 }],
-        spotCheck: true,
-      }),
-    ).toMatchObject({ reason: "jev_unsure" });
+    expect(reasonFor({ modelUnsureSignals: [unsureCategory], spotCheck: true })).toMatchObject({
+      reason: "jev_unsure",
+    });
   });
 
   it("falls back to Ready to approve, never to Jev unsure", () => {
-    const clean = deriveInboxV2Reason({ state: "ready_for_review", openFindings: [] });
+    const clean = reasonFor({});
     expect(clean).toMatchObject({ reason: "ready", detail: "ready" });
     expect(describeInboxV2Reason(clean)).toBe(
       "No check blocks it. Review the entry and approve it.",
     );
     // No signal at all, however it was entered: not Jev unsure.
-    expect(
-      deriveInboxV2Reason({ state: "ready_for_review", openFindings: [], modelUnsureSignals: [] })
-        .reason,
-    ).toBe("ready");
+    expect(reasonFor({ modelUnsureSignals: [] }).reason).toBe("ready");
   });
 });
 

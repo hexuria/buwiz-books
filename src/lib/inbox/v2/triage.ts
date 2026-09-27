@@ -8,11 +8,19 @@
  * reason. Precedence, first match wins:
  *
  *   failed      the item failed, or its source could not be processed
- *   needs_fix   an open blocking finding, or the entry is still missing details
- *   jev_unsure  a real model-unsure signal: a low-confidence category, or a step-7 signal
+ *   needs_fix   an open blocking finding, or an entry still missing lines or accounts
+ *   jev_unsure  a real model-unsure signal: a low-confidence category, or an answer stage 2
+ *               could not use (a category or counterparty below the threshold, or none at all)
  *   spot_check  a held-back sample of what Jev would have approved (step 11; never yet)
  *   ready       nothing above: a clean entry (typed by hand, or a confident paper) waiting for
  *               approval
+ *
+ * A blocking finding that exists only because the model was unsure is Jev unsure, not a fix:
+ * stage 2 parks an unsure category on Uncategorized and leaves an unsure counterparty empty, so
+ * its doubt always surfaces as an `uncategorized` or missing-party finding. Counting those as
+ * fixes would leave Jev unsure unreachable. Anything the doubt does not account for (the payment
+ * side stage 2 never picks, a missing dimension, a duplicate) still needs a fix, and the strip
+ * names the doubt after it.
  *
  * Papers still being read (received / processing) need nobody yet: the list counts them instead
  * of giving them a reason.
@@ -52,21 +60,37 @@ export interface InboxV2OpenFinding {
   /** Effective impact now, after the duplicate engine's current mode is applied. */
   blocking: boolean;
   message?: string | null;
+  /** The lines a line-level book rule flagged (`evidence.lineIndexes`), in line order. */
+  lineIndexes?: readonly number[] | null;
 }
 
 /**
- * STEP 7 HOOK. The category and entity checks (spec §4-5) will report when the model is not sure
- * of an answer. Nothing produces these yet; callers pass an empty list.
+ * An answer stage 2 (src/lib/inbox/candidate-classification.ts) could not use: the model was
+ * below the organization's low-confidence threshold, or gave no usable answer. The draft took
+ * the safe fallback — Uncategorized for a category, no counterparty for a party — so a person
+ * must settle what the model could not. Read from the line's prediction evidence and the
+ * classification event (src/lib/inbox/v2/model-doubt.ts).
  */
 export interface ModelUnsureSignal {
-  subject: "category" | "party" | "document_kind";
-  /** Calibrated confidence 0..1, when the model gave one. */
+  subject: "category" | "party";
+  /** `low_confidence`: answered below the threshold. `failed`: no usable answer at all. */
+  cause: "low_confidence" | "failed";
+  /** The model's confidence 0..1, when it gave one. */
   confidence: number | null;
+  /** For a category: the line's index in line order, as line-level findings count lines. */
+  lineIndex: number | null;
+}
+
+/** The draft as it stands: how many lines it has, and which have no account yet. */
+export interface InboxV2EntryShape {
+  lineCount: number;
+  linesWithoutAccount: readonly number[];
 }
 
 export interface InboxV2ReasonInput {
   state: string;
   openFindings: readonly InboxV2OpenFinding[];
+  entry: InboxV2EntryShape;
   modelUnsureSignals?: readonly ModelUnsureSignal[];
   /** STEP 11 HOOK: a held-back autonomy sample. Always false until lanes exist. */
   spotCheck?: boolean;
@@ -79,65 +103,123 @@ export interface InboxV2ReasonResult {
   ruleKey: string | null;
   /** That finding's own message, when it has one. */
   message: string | null;
-  /** The step-7 signal that decided the reason, when one did. */
-  signal: ModelUnsureSignal | null;
+  /** Everything the model was unsure of, whichever reason won; the strip names it. */
+  signals: ModelUnsureSignal[];
 }
 
 export const SOURCE_PROCESSING_FAILED_RULE = "source_processing_failed";
 export const LOW_CONFIDENCE_CATEGORY_RULE = "low_confidence_category";
+const UNCATEGORIZED_RULE = "uncategorized";
+const MISSING_PARTY_RULES = new Set(["missing_vendor", "missing_customer"]);
 
 function result(
   reason: InboxV2Reason,
   detail: InboxV2ReasonDetail,
+  signals: readonly ModelUnsureSignal[],
   finding?: InboxV2OpenFinding,
-  signal?: ModelUnsureSignal,
 ): InboxV2ReasonResult {
   return {
     reason,
     detail,
     ruleKey: finding?.ruleKey ?? null,
     message: finding?.message?.trim() || null,
-    signal: signal ?? null,
+    signals: [...signals],
   };
+}
+
+/**
+ * Whether a blocking finding says nothing beyond the model's own doubt, so settling that doubt
+ * is the whole fix. A low-confidence finding always is. `uncategorized` is only when every line
+ * it flags is a category the model was unsure of; a missing vendor or customer only when the
+ * counterparty match was.
+ */
+function explainedByDoubt(
+  finding: InboxV2OpenFinding,
+  unsureLines: ReadonlySet<number>,
+  unsureParty: boolean,
+): boolean {
+  if (finding.ruleKey === LOW_CONFIDENCE_CATEGORY_RULE) return true;
+  if (finding.ruleKey === UNCATEGORIZED_RULE) {
+    const flagged = finding.lineIndexes ?? [];
+    return flagged.length > 0 && flagged.every((index) => unsureLines.has(index));
+  }
+  return MISSING_PARTY_RULES.has(finding.ruleKey) && unsureParty;
 }
 
 export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonResult {
   const findings = input.openFindings;
+  const signals = input.modelUnsureSignals ?? [];
 
   const processingFailure = findings.find(
     (finding) => finding.ruleKey === SOURCE_PROCESSING_FAILED_RULE,
   );
   if (input.state === "failed" || processingFailure) {
-    return result("failed", "processing_failed", processingFailure);
+    return result("failed", "processing_failed", [], processingFailure);
   }
 
-  // A blocking low-confidence finding blocks approval like any other, but it says the model
-  // was unsure, not that the entry is wrong — so it is Jev unsure, below.
-  const blocking = findings.find(
-    (finding) => finding.blocking && finding.ruleKey !== LOW_CONFIDENCE_CATEGORY_RULE,
+  const unsureLines = new Set(
+    signals.flatMap((signal) =>
+      signal.subject === "category" && signal.lineIndex !== null ? [signal.lineIndex] : [],
+    ),
   );
-  if (blocking) return result("needs_fix", "blocking_finding", blocking);
-  if (input.state === "needs_information") return result("needs_fix", "needs_information");
+  const unsureParty = signals.some((signal) => signal.subject === "party");
+
+  const blocking = findings.find(
+    (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
+  );
+  if (blocking) return result("needs_fix", "blocking_finding", signals, blocking);
+  // Judged on the entry, not the lifecycle state: stage 2 fills lines without moving an item
+  // out of needs_information. A line with no account is missing a detail unless it is a
+  // category the model was unsure of (no Uncategorized account was mapped to park it on).
+  if (
+    input.entry.lineCount === 0 ||
+    input.entry.linesWithoutAccount.some((index) => !unsureLines.has(index))
+  ) {
+    return result("needs_fix", "needs_information", signals);
+  }
 
   const lowConfidence = findings.find(
     (finding) => finding.ruleKey === LOW_CONFIDENCE_CATEGORY_RULE,
   );
-  if (lowConfidence) return result("jev_unsure", "low_confidence", lowConfidence);
-  const signal = input.modelUnsureSignals?.[0];
-  if (signal) return result("jev_unsure", "model_unsure", undefined, signal);
+  if (lowConfidence) return result("jev_unsure", "low_confidence", signals, lowConfidence);
+  if (signals.length > 0) return result("jev_unsure", "model_unsure", signals);
 
-  if (input.spotCheck) return result("spot_check", "spot_check");
+  if (input.spotCheck) return result("spot_check", "spot_check", signals);
 
-  return result("ready", "ready");
+  return result("ready", "ready", signals);
 }
 
-const SIGNAL_SUBJECTS: Record<ModelUnsureSignal["subject"], string> = {
-  category: "category",
-  party: "vendor or customer",
-  document_kind: "kind of paper",
-};
+/**
+ * One sentence per subject the model could not settle, first doubt per subject:
+ * "Jev isn't sure about the category (41% sure)." / "Jev couldn't match the vendor or customer."
+ */
+export function describeModelDoubts(signals: readonly ModelUnsureSignal[]): string {
+  const sentences = new Map<ModelUnsureSignal["subject"], string>();
+  for (const signal of signals) {
+    if (sentences.has(signal.subject)) continue;
+    if (signal.cause === "failed") {
+      sentences.set(
+        signal.subject,
+        signal.subject === "category"
+          ? "Jev couldn't choose a category."
+          : "Jev couldn't match the vendor or customer.",
+      );
+      continue;
+    }
+    const subject = signal.subject === "category" ? "the category" : "the vendor or customer";
+    const sure =
+      signal.confidence === null ? "" : ` (${Math.round(signal.confidence * 100)}% sure)`;
+    sentences.set(signal.subject, `Jev isn't sure about ${subject}${sure}.`);
+  }
+  return [...sentences.values()].join(" ");
+}
 
-/** The strip's one sentence for a reason. */
+function withDoubts(sentence: string, signals: readonly ModelUnsureSignal[]): string {
+  const doubts = describeModelDoubts(signals);
+  return doubts ? `${sentence} ${doubts}` : sentence;
+}
+
+/** The strip's one sentence for a reason, followed by whatever the model was unsure of. */
 export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
   switch (reason.detail) {
     case "processing_failed":
@@ -146,13 +228,19 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
         "This paper could not be processed. It is stored safely; retry it or reject it."
       );
     case "blocking_finding":
-      return reason.message ?? "A check must pass before this can be approved.";
+      return withDoubts(
+        reason.message ?? "A check must pass before this can be approved.",
+        reason.signals,
+      );
     case "needs_information":
-      return "Add the accounting details before this can be approved.";
+      return withDoubts("Add the accounting details before this can be approved.", reason.signals);
     case "low_confidence":
-      return "Jev isn't sure about the category. Confirm it or pick another.";
+      return withDoubts(
+        "Jev isn't sure about the category. Confirm it or pick another.",
+        reason.signals.filter((signal) => signal.subject !== "category"),
+      );
     case "model_unsure":
-      return `Jev isn't sure about the ${SIGNAL_SUBJECTS[reason.signal?.subject ?? "category"]}.`;
+      return describeModelDoubts(reason.signals);
     case "spot_check":
       return "Spot check: Jev would have approved this. Your answer keeps its approvals honest.";
     case "ready":

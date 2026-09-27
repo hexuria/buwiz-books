@@ -13,6 +13,13 @@ import { parties } from "@/db/schema/parties";
 import { loadDuplicateEngineConfig } from "../duplicate-engine";
 import { DUPLICATE_MATCHER_VERSION } from "../duplicate-matcher";
 import {
+  CANDIDATE_CLASSIFIED_ACTION,
+  entryShapeOf,
+  lineFactsFrom,
+  modelUnsureSignalsFor,
+  UNRESOLVED_PARTY_OUTCOME,
+} from "./model-doubt";
+import {
   deriveInboxV2Kind,
   deriveInboxV2Reason,
   deriveInboxV2SourceBadge,
@@ -23,7 +30,6 @@ import {
   type InboxV2Reason,
   type InboxV2ReasonDetail,
   type InboxV2SourceBadge,
-  type ModelUnsureSignal,
 } from "./triage";
 
 export const INBOX_V2_LISTED_STATES = ["needs_information", "ready_for_review", "failed"] as const;
@@ -61,15 +67,6 @@ export interface InboxV2List {
   beingRead: number;
 }
 
-/**
- * STEP 7 HOOK. The category and entity checks will record when the model is unsure; read them
- * here. Until they exist nothing produces a signal, and "Jev unsure" comes from the
- * low_confidence_category finding (or the not-yet-autonomous fallback) alone.
- */
-function modelUnsureSignalsFor(_itemId: string): ModelUnsureSignal[] {
-  return [];
-}
-
 /** STEP 11 HOOK. Autonomy lanes will hold back a sample of would-be approvals as spot checks. */
 function isSpotCheckSample(_itemId: string): boolean {
   return false;
@@ -79,13 +76,17 @@ function openFindingsFrom(raw: unknown): InboxV2OpenFinding[] {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];
-    const { ruleKey, blocking, message } = entry as Record<string, unknown>;
+    const { ruleKey, blocking, message, lineIndexes } = entry as Record<string, unknown>;
     if (typeof ruleKey !== "string") return [];
     return [
       {
         ruleKey,
         blocking: blocking === true,
         message: typeof message === "string" ? message : null,
+        lineIndexes:
+          Array.isArray(lineIndexes) && lineIndexes.every((index) => Number.isInteger(index))
+            ? (lineIndexes as number[])
+            : null,
       },
     ];
   });
@@ -142,6 +143,7 @@ export async function listInboxV2Items(
           json_build_object(
             'ruleKey', rf.rule_key,
             'message', rf.message,
+            'lineIndexes', rf.evidence->'lineIndexes',
             'blocking', (
               rf.impact = 'blocking'
               and (
@@ -171,6 +173,36 @@ export async function listInboxV2Items(
           and rf.inbox_item_id = ${inboxItems.id}
           and rf.state = 'open'
       ), '[]'::json)`,
+      // Each line in the order the book rules count them, with stage 2's evidence on it.
+      lineFacts: sql<unknown>`coalesce((
+        select json_agg(
+          json_build_object(
+            'hasAccount', l.account_id is not null,
+            'evidenceSource', l.prediction_evidence->>'source',
+            'outcome', l.prediction_evidence->>'outcome',
+            'confidence', l.prediction_evidence->'confidence'
+          )
+          order by l.sort_order, l.id
+        )
+        from transaction_candidate_lines l
+        where l.organization_id = ${transactionCandidates.organizationId}
+          and l.candidate_id = ${transactionCandidates.id}
+      ), '[]'::json)`,
+      // Stage 2's counterparty outcome, only while it still describes the draft: the event
+      // produced the current revision and nothing has linked a counterparty since.
+      unresolvedParty: sql<unknown>`(
+        select we.data->'party'
+        from workflow_events we
+        where we.organization_id = ${inboxItems.organizationId}
+          and we.entity_type = 'transaction_candidate'
+          and we.entity_id = ${transactionCandidates.id}
+          and we.action = ${CANDIDATE_CLASSIFIED_ACTION}
+          and we.data->>'candidateRevision' = ${transactionCandidates.revision}::text
+          and we.data->'party'->>'outcome' = ${UNRESOLVED_PARTY_OUTCOME}
+          and ${transactionCandidates.partyId} is null
+        order by we.created_at desc, we.id desc
+        limit 1
+      )`,
       minCategoryConfidence: sql<string | null>`(
         select min(l.category_confidence)::text
         from transaction_candidate_lines l
@@ -211,10 +243,12 @@ export async function listInboxV2Items(
     .limit(limit + 1);
 
   const items = rows.slice(0, limit).map((row): InboxV2ListItem => {
+    const lines = lineFactsFrom(row.lineFacts);
     const reason = deriveInboxV2Reason({
       state: row.state,
       openFindings: openFindingsFrom(row.openFindings),
-      modelUnsureSignals: modelUnsureSignalsFor(row.id),
+      entry: entryShapeOf(lines),
+      modelUnsureSignals: modelUnsureSignalsFor({ lines, unresolvedParty: row.unresolvedParty }),
       spotCheck: isSpotCheckSample(row.id),
     });
     return {
