@@ -24,7 +24,12 @@ if (mode !== "recorded" && mode !== "live") {
 export default defineConfig({
   plugins: [tsconfigPaths()],
   test: {
-    include: mode === "live" ? ["tests/evals/*.live.eval.ts"] : ["tests/evals/prompts.eval.ts"],
+    // Recorded mode also carries the rule scorecard gate: every locked golden
+    // case must reproduce exactly (tests/evals/scorecard.eval.ts).
+    include:
+      mode === "live"
+        ? ["tests/evals/*.live.eval.ts"]
+        : ["tests/evals/prompts.eval.ts", "tests/evals/scorecard.eval.ts"],
     setupFiles: mode === "live" ? ["./tests/evals/setup-live.ts"] : [],
     environment: "node",
     globals: true,

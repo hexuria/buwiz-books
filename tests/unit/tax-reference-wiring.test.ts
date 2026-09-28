@@ -493,6 +493,8 @@ describe("tax reference catalog wiring", () => {
       "0051_void_rewrite_guard.sql",
       "0052_posted_journal_needs_lines.sql",
       "0053_review_decision_actor.sql",
+      "0054_routines.sql",
+      "0055_rule_snapshots.sql",
       "0058_party_name_trigram.sql",
     ];
 

@@ -9,6 +9,13 @@
  * Inbound email is the first webhook routine: each organization gets one
  * system-provisioned `resend` routine the first time an email arrives for it.
  *
+ * Rule snapshots (spec §6): `rule_snapshot_id` pins the immutable rule pack the
+ * routine's papers are evaluated against (null = the organization's live
+ * review_rule_configs), and `shadow_rule_snapshot_id` names a second pack that
+ * is evaluated alongside it and logged, never enforced. Both reference
+ * `rule_snapshots` ON DELETE RESTRICT, so a pinned or shadowed snapshot cannot
+ * disappear underneath a routine.
+ *
  * Export/import: routines are org configuration and join the export in the
  * version-5 bump (spec build step 12). They are deliberately NOT exported yet.
  */
@@ -27,6 +34,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import { organization, user } from "./auth";
+import { ruleSnapshots } from "./rule-snapshots";
 
 export type RoutineTriggerKind = "webhook" | "schedule" | "integration";
 
@@ -41,9 +49,15 @@ export const routines = pgTable(
     enabled: boolean("enabled").default(true).notNull(),
     triggerKind: varchar("trigger_kind", { length: 32 }).$type<RoutineTriggerKind>().notNull(),
     triggerConfig: jsonb("trigger_config").$type<Record<string, unknown>>().default({}).notNull(),
-    // The pinned rule snapshot (spec §6). Deliberately NO foreign key yet:
-    // `rule_snapshots` arrives in build step 8, which adds the constraint.
-    ruleSnapshotId: uuid("rule_snapshot_id"),
+    // The pinned rule snapshot (spec §6); null evaluates against live configs.
+    ruleSnapshotId: uuid("rule_snapshot_id").references(() => ruleSnapshots.id, {
+      onDelete: "restrict",
+    }),
+    // A snapshot evaluated in shadow: its findings are logged as workflow
+    // events and never become review findings.
+    shadowRuleSnapshotId: uuid("shadow_rule_snapshot_id").references(() => ruleSnapshots.id, {
+      onDelete: "restrict",
+    }),
     maxConcurrentRuns: integer("max_concurrent_runs").default(1).notNull(),
     cursor: text("cursor"),
     nextRunAt: timestamp("next_run_at", { withTimezone: true }),

@@ -14,12 +14,17 @@
  *
  * Setting a schedule (creating a schedule routine, changing its schedule, or
  * enabling it) computes its first `next_run_at`; disabling clears it.
+ *
+ * Pinning rules (spec §6): `setRoutineRuleSnapshot` pins, unpins, or shadows
+ * one of the organization's immutable rule snapshots. Pinning the snapshot a
+ * routine was shadowing promotes it and clears the shadow.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbExecutor } from "@/db";
 import { workflowEvents } from "@/db/schema/inbox";
 import { routines, type RoutineTriggerKind } from "@/db/schema/routines";
+import { ruleSnapshots } from "@/db/schema/rule-snapshots";
 import { assertChartOfAccountsApplied } from "@/lib/coa/chart-readiness";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { toSerializableRecord, type SerializableJson } from "@/lib/serializable-json";
@@ -50,7 +55,10 @@ export interface RoutineView {
   systemManaged: boolean;
   /** Whether an HMAC webhook routine has a signing secret yet. */
   hasSigningSecret: boolean;
+  /** The pinned rule snapshot; null = the organization's live rule configs. */
   ruleSnapshotId: string | null;
+  /** A snapshot evaluated alongside and logged, never enforced. */
+  shadowRuleSnapshotId: string | null;
   maxConcurrentRuns: number;
   nextRunAt: Date | null;
   lastRunAt: Date | null;
@@ -93,6 +101,20 @@ export type UpdateRoutineInput = z.input<typeof updateRoutineInputSchema>;
 
 export const routineIdInputSchema = z.object({ routineId: z.string().uuid() });
 
+export const pinRoutineRuleSnapshotInputSchema = z.object({
+  routineId: z.string().uuid(),
+  snapshotId: z.string().uuid(),
+  /** Pin as the routine's shadow (evaluated and logged) instead of its enforced rules. */
+  shadow: z.boolean().default(false),
+});
+export type PinRoutineRuleSnapshotInput = z.input<typeof pinRoutineRuleSnapshotInputSchema>;
+
+export const unpinRoutineRuleSnapshotInputSchema = z.object({
+  routineId: z.string().uuid(),
+  shadow: z.boolean().default(false),
+});
+export type UnpinRoutineRuleSnapshotInput = z.input<typeof unpinRoutineRuleSnapshotInputSchema>;
+
 export function toRoutineView(row: RoutineRow): RoutineView {
   const { secret_ref: secretRef, ...publicConfig } = row.triggerConfig;
   return {
@@ -104,6 +126,7 @@ export function toRoutineView(row: RoutineRow): RoutineView {
     systemManaged: isInboundEmailRoutine(row),
     hasSigningSecret: typeof secretRef === "string" && secretRef.length > 0,
     ruleSnapshotId: row.ruleSnapshotId,
+    shadowRuleSnapshotId: row.shadowRuleSnapshotId,
     maxConcurrentRuns: row.maxConcurrentRuns,
     nextRunAt: row.nextRunAt,
     lastRunAt: row.lastRunAt,
@@ -338,6 +361,87 @@ export async function rotateRoutineWebhookSecret(
     db,
   );
   return { routine: toRoutineView(updated), secret };
+}
+
+/**
+ * Pin, unpin, or shadow a rule snapshot on a routine (spec §6).
+ *
+ * `slot: "active"` sets the rules the routine's papers are evaluated against
+ * (null = live configs); `slot: "shadow"` sets a snapshot that is evaluated
+ * alongside and only logged. The snapshot must be one of this organization's —
+ * an explicit predicate on top of RLS, with the same "not found" for another
+ * organization's snapshot as for a missing one. Pinning the snapshot the
+ * routine was shadowing promotes it: the shadow is cleared in the same write.
+ */
+export async function setRoutineRuleSnapshot(
+  db: DbExecutor,
+  input: {
+    orgId: string;
+    actorId: string;
+    routineId: string;
+    slot: "active" | "shadow";
+    snapshotId: string | null;
+    now?: Date;
+  },
+): Promise<RoutineView> {
+  const current = await lockRoutine(db, input.orgId, input.routineId);
+  if (input.snapshotId) {
+    const [snapshot] = await db
+      .select({ id: ruleSnapshots.id })
+      .from(ruleSnapshots)
+      .where(
+        and(eq(ruleSnapshots.organizationId, input.orgId), eq(ruleSnapshots.id, input.snapshotId)),
+      )
+      .limit(1);
+    if (!snapshot) throw new Error("Rule snapshot not found.");
+  }
+
+  const set: Partial<typeof routines.$inferInsert> = {};
+  const changes: Record<string, { old: unknown; new: unknown }> = {};
+  if (input.slot === "active") {
+    if (current.ruleSnapshotId === input.snapshotId) return toRoutineView(current);
+    set.ruleSnapshotId = input.snapshotId;
+    changes.ruleSnapshotId = { old: current.ruleSnapshotId, new: input.snapshotId };
+    if (input.snapshotId && current.shadowRuleSnapshotId === input.snapshotId) {
+      set.shadowRuleSnapshotId = null;
+      changes.shadowRuleSnapshotId = { old: current.shadowRuleSnapshotId, new: null };
+    }
+  } else {
+    if (current.shadowRuleSnapshotId === input.snapshotId) return toRoutineView(current);
+    if (input.snapshotId && input.snapshotId === current.ruleSnapshotId) {
+      throw new Error(
+        "This snapshot already evaluates this routine's papers; shadowing it would compare it with itself.",
+      );
+    }
+    set.shadowRuleSnapshotId = input.snapshotId;
+    changes.shadowRuleSnapshotId = { old: current.shadowRuleSnapshotId, new: input.snapshotId };
+  }
+
+  const [updated] = await db
+    .update(routines)
+    .set({ ...set, updatedAt: input.now ?? new Date() })
+    .where(and(eq(routines.organizationId, input.orgId), eq(routines.id, current.id)))
+    .returning();
+  const action =
+    input.slot === "active"
+      ? input.snapshotId
+        ? "routine_rules_pinned"
+        : "routine_rules_unpinned"
+      : input.snapshotId
+        ? "routine_rules_shadow_set"
+        : "routine_rules_shadow_cleared";
+  await insertActivityLog(
+    {
+      orgId: input.orgId,
+      entityType: "routine",
+      entityId: current.id,
+      action,
+      actorId: input.actorId,
+      changes,
+    },
+    db,
+  );
+  return toRoutineView(updated);
 }
 
 /**

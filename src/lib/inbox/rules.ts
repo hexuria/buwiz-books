@@ -162,11 +162,23 @@ export function evaluateBookRules(input: {
     });
   }
 
-  // Exact scale-8 sum (audit P8 — float drift joined the money ratchet).
-  const expenseTotalMoney = sumMoney(
+  // Every comparison here happens in the FUNCTIONAL currency, in exact
+  // scale-8 decimals (audit P8 — float drift joined the money ratchet).
+  //
+  // The lines carry original-currency amounts (callers pass the entry's own
+  // amounts), so a foreign-currency total converts through the candidate's
+  // rate — the same original-to-functional mapping posting uses. It used to
+  // be compared unconverted: EUR 70 at 1.10 (USD 77) slipped under a USD 75
+  // threshold, and JPY 10,000 (about USD 67) tripped it.
+  const functionalCurrency = settings.functionalCurrency.trim().toUpperCase();
+  const originalCurrency = (candidate.originalCurrency ?? functionalCurrency).trim().toUpperCase();
+  const expenseTotalOriginal = sumMoney(
     lines.map((line, index) => (expenseLineIndexes.includes(index) ? (line.debit ?? "0") : "0")),
   );
-  const expenseTotal = Number(expenseTotalMoney);
+  const convertsExpense = originalCurrency !== functionalCurrency;
+  const expenseTotal = convertsExpense
+    ? multiplyMoney(expenseTotalOriginal, candidate.exchangeRate ?? "1")
+    : expenseTotalOriginal;
   // The threshold converts with the candidate's OWN exchange rate only when
   // that rate is actually the right pair — i.e. the candidate's original
   // currency IS the threshold's currency (rate maps it into functional).
@@ -174,16 +186,17 @@ export function evaluateBookRules(input: {
   // with a wholly unrelated pair. When no correct pair is available the
   // threshold is used as-is, which is the pre-conversion behavior made
   // explicit rather than a silently wrong multiplication.
+  const thresholdCurrency = settings.missingReceiptCurrency.trim().toUpperCase();
   const thresholdInFunctionalCurrency =
-    settings.missingReceiptCurrency === settings.functionalCurrency
+    thresholdCurrency === functionalCurrency
       ? settings.missingReceiptThreshold
-      : settings.missingReceiptCurrency === candidate.originalCurrency
+      : thresholdCurrency === originalCurrency
         ? multiplyMoney(settings.missingReceiptThreshold, candidate.exchangeRate ?? "1")
         : settings.missingReceiptThreshold;
   const hasReceipt = documents.some((document) => document.documentType === "receipt");
   if (
-    expenseTotal > 0 &&
-    compareMoney(String(expenseTotal), thresholdInFunctionalCurrency) > 0 &&
+    compareMoney(expenseTotal, "0") > 0 &&
+    compareMoney(expenseTotal, thresholdInFunctionalCurrency) > 0 &&
     !hasReceipt
   ) {
     findings.push({
@@ -191,9 +204,17 @@ export function evaluateBookRules(input: {
       impact: "blocking",
       message: `Attach a receipt for expenses over ${settings.missingReceiptCurrency} ${settings.missingReceiptThreshold}.`,
       evidence: {
-        expenseTotal: String(expenseTotal),
+        // Functional currency: what was compared with the threshold.
+        expenseTotal,
         threshold: settings.missingReceiptThreshold,
         thresholdCurrency: settings.missingReceiptCurrency,
+        ...(convertsExpense
+          ? {
+              originalExpenseTotal: expenseTotalOriginal,
+              originalCurrency,
+              exchangeRate: candidate.exchangeRate ?? "1",
+            }
+          : {}),
       },
     });
   }

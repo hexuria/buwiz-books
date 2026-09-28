@@ -24,6 +24,14 @@ const api = vi.hoisted(() => ({
   resolveReviewFinding: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-review-agents", () => api);
+// Review Rules closes with the rule snapshots card, which reads these two.
+vi.mock("../../src/routes/api/-rule-snapshots", () => ({
+  listRuleSnapshots: vi.fn(async () => []),
+  createRuleSnapshot: vi.fn(),
+  pinRoutineRuleSnapshot: vi.fn(),
+  unpinRoutineRuleSnapshot: vi.fn(),
+}));
+vi.mock("../../src/routes/api/-routines", () => ({ listRoutines: vi.fn(async () => []) }));
 
 vi.mock("../../src/routes/api/-org-settings", () => ({
   getOrgSettings: vi.fn(async () => ({ id: "org-1", name: "Acme Books", slug: "acme" })),

@@ -34,8 +34,6 @@ import {
   inboxItems,
   organizationAccountingSettings,
   reviewFindings,
-  reviewRuleConfigs,
-  reviewRuleDefinitions,
   sourceRecords,
   transactionCandidateLines,
   transactionCandidates,
@@ -89,10 +87,21 @@ import {
 } from "./line-categorization";
 import {
   DEFAULT_LOW_CONFIDENCE_THRESHOLD,
-  loadLowConfidenceThreshold,
+  lowConfidenceThresholdOf,
 } from "./low-confidence-threshold";
 import { raisePaymentDetailsFindingIfChanged } from "./payment-details-check";
-import { BOOK_RULE_KEYS, evaluateBookRules, type BookRuleAccount } from "./rules";
+import {
+  evaluateCandidateRules,
+  withRuleSetProvenance,
+  type CandidateRuleInput,
+  type RuleSetProvenance,
+} from "./rule-set";
+import {
+  loadRuleFallbacks,
+  recordShadowRuleEvaluation,
+  resolveCandidateRuleSets,
+} from "./rule-snapshots";
+import { BOOK_RULE_KEYS, type BookRuleAccount } from "./rules";
 import { INBOX_OPEN_STATES, type CandidateLineInput } from "./types";
 
 const DEFAULT_MISSING_RECEIPT_THRESHOLD = "75";
@@ -241,7 +250,16 @@ async function loadClassificationContext(
     plan.direction && plan.categoryLines.length > 0
       ? buildAccountCodeList(await loadChart(db, orgId), CATEGORY_ACCOUNT_TYPES[plan.direction])
       : null;
-  const minConfidence = await loadLowConfidenceThreshold(db, orgId);
+  // The threshold a model pick must reach is the low-confidence rule's own, so
+  // it comes from the rules this paper is evaluated against: the snapshot its
+  // routine pins, or the live configs.
+  const ruleSets = await resolveCandidateRuleSets(
+    db,
+    orgId,
+    row.candidate.id,
+    await loadRuleFallbacks(db, orgId),
+  );
+  const minConfidence = lowConfidenceThresholdOf(ruleSets.active);
   const partySearch =
     plan.partyQuery && row.candidate.partyId === null
       ? await findPartyCandidates(plan.partyQuery, partyLookups(db, orgId))
@@ -370,24 +388,12 @@ function partyOutcome(
   return decidePartyMatch(search.candidates, pick, context.minConfidence);
 }
 
-async function loadRuleConfigs(db: DbExecutor, orgId: string) {
-  const rows = await db
-    .select({
-      key: reviewRuleDefinitions.key,
-      enabled: reviewRuleConfigs.enabled,
-      impact: reviewRuleConfigs.impact,
-      config: reviewRuleConfigs.config,
-    })
-    .from(reviewRuleConfigs)
-    .innerJoin(reviewRuleDefinitions, eq(reviewRuleConfigs.definitionId, reviewRuleDefinitions.id))
-    .where(eq(reviewRuleConfigs.organizationId, orgId));
-  return new Map(rows.map((rule) => [rule.key, rule]));
-}
-
 /**
  * Re-run the book rules on the classified draft, exactly as a correction
- * does: live per-org configs decide enabled and impact, and findings are
- * fingerprinted by the new revision.
+ * does: the paper's rule set — its routine's pinned snapshot, else the live
+ * per-org configs — decides enabled, impact, and thresholds; a shadow
+ * snapshot is evaluated and only logged; findings are fingerprinted by the
+ * new revision and record the rule set that raised them.
  */
 async function reevaluateBookRules(
   db: DbExecutor,
@@ -401,7 +407,7 @@ async function reevaluateBookRules(
     chart: ChartAccount[];
     documentTypes: DocumentFacts["documentTypes"];
   },
-): Promise<number> {
+): Promise<{ findingCount: number; ruleSet: RuleSetProvenance }> {
   const { orgId } = input;
   await db
     .update(reviewFindings)
@@ -450,13 +456,12 @@ async function reevaluateBookRules(
     .from(organizationAccountingSettings)
     .where(eq(organizationAccountingSettings.organizationId, orgId))
     .limit(1);
-  const rules = await loadRuleConfigs(db, orgId);
-  const lowConfidence = rules.get("low_confidence_category")?.config as
-    | { threshold?: number }
-    | undefined;
-  const receipt = rules.get("missing_receipt")?.config as
-    | { threshold?: number; currency?: string }
-    | undefined;
+  const ruleSets = await resolveCandidateRuleSets(db, orgId, input.candidate.id, {
+    lowConfidenceThreshold:
+      settings?.lowConfidenceThreshold ?? String(DEFAULT_LOW_CONFIDENCE_THRESHOLD),
+    missingReceiptThreshold: settings?.missingReceiptThreshold ?? DEFAULT_MISSING_RECEIPT_THRESHOLD,
+    missingReceiptCurrency: settings?.missingReceiptCurrency ?? DEFAULT_MISSING_RECEIPT_CURRENCY,
+  });
   const ruleLines: CandidateLineInput[] = input.lines.map((line) => ({
     accountId: line.accountId,
     debit: line.originalDebit,
@@ -467,7 +472,7 @@ async function reevaluateBookRules(
     lineDescription: line.lineDescription,
   }));
   const functionalCurrency = input.candidate.functionalCurrency;
-  const findings = evaluateBookRules({
+  const ruleInput: CandidateRuleInput = {
     candidate: {
       transactionDate: input.candidate.transactionDate,
       transactionType: input.candidate.transactionType as
@@ -487,32 +492,10 @@ async function reevaluateBookRules(
     accounts: ruleAccounts,
     party: party ? { id: party.id, partyType: party.partyType } : null,
     documents: input.documentTypes,
-    settings: {
-      lowConfidenceThreshold: String(
-        lowConfidence?.threshold ??
-          settings?.lowConfidenceThreshold ??
-          DEFAULT_LOW_CONFIDENCE_THRESHOLD,
-      ),
-      missingReceiptThreshold: String(
-        receipt?.threshold ??
-          settings?.missingReceiptThreshold ??
-          DEFAULT_MISSING_RECEIPT_THRESHOLD,
-      ),
-      missingReceiptCurrency: (
-        receipt?.currency ??
-        settings?.missingReceiptCurrency ??
-        DEFAULT_MISSING_RECEIPT_CURRENCY
-      ).toUpperCase(),
-      functionalCurrency,
-    },
-  })
-    .filter((finding) => rules.get(finding.ruleKey)?.enabled !== false)
-    .map((finding) => ({
-      ...finding,
-      impact:
-        (rules.get(finding.ruleKey)?.impact as "blocking" | "warning" | undefined) ??
-        finding.impact,
-    }));
+    functionalCurrency,
+  };
+  const enforcedFindings = evaluateCandidateRules(ruleSets.active, ruleInput);
+  const findings = withRuleSetProvenance(enforcedFindings, ruleSets.active.provenance);
   if (findings.length > 0) {
     await db
       .insert(reviewFindings)
@@ -532,7 +515,22 @@ async function reevaluateBookRules(
       )
       .onConflictDoNothing();
   }
-  return findings.length;
+  if (ruleSets.shadow) {
+    await recordShadowRuleEvaluation(db, {
+      orgId,
+      inboxItemId: input.inboxItemId,
+      candidateId: input.candidate.id,
+      candidateRevision: input.revision,
+      active: ruleSets.active,
+      activeFindings: enforcedFindings,
+      shadow: ruleSets.shadow,
+      shadowFindings: withRuleSetProvenance(
+        evaluateCandidateRules(ruleSets.shadow, ruleInput),
+        ruleSets.shadow.provenance,
+      ),
+    });
+  }
+  return { findingCount: findings.length, ruleSet: ruleSets.active.provenance };
 }
 
 async function draftCreatePartyProposal(
@@ -738,7 +736,7 @@ export async function classifyInboxCandidate(
         .where(and(eq(inboxItems.organizationId, input.orgId), eq(inboxItems.id, item.id)));
 
       const classifiedLines = await loadCandidateLines(tx, input.orgId, candidate.id);
-      const findingCount = await reevaluateBookRules(tx, {
+      const { findingCount, ruleSet } = await reevaluateBookRules(tx, {
         orgId: input.orgId,
         inboxItemId: item.id,
         candidate,
@@ -792,6 +790,7 @@ export async function classifyInboxCandidate(
             },
             paymentDetailsChanged,
             findingCount,
+            ruleSet,
           },
         })
         .onConflictDoNothing();

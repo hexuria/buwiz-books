@@ -47,6 +47,15 @@ export const keys = {
       ["review-agents", "findings", ruleKey, params ?? null] as const,
     runs: (ruleKey?: string) => ["review-agents", "runs", ruleKey ?? null] as const,
   },
+  ruleSnapshots: {
+    all: () => ["rule-snapshots"] as const,
+    list: () => ["rule-snapshots", "list"] as const,
+    detail: (id: string) => ["rule-snapshots", "detail", id] as const,
+  },
+  routines: {
+    all: () => ["routines"] as const,
+    list: () => ["routines", "list"] as const,
+  },
   bills: {
     all: () => ["bills"] as const,
     list: (params?: Params) => ["bills", params ?? null] as const,
