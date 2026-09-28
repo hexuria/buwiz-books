@@ -158,6 +158,18 @@ describe("bill mutation wiring", () => {
     expect(saveBlock).toContain("deriveBillBalanceDue(totalAmount, bill.amountPaid)");
   });
 
+  it("saveBillLineItems keeps each line's department and location instead of dropping them", () => {
+    const saveBlock = source.slice(source.indexOf("export const saveBillLineItems"));
+    expect(saveBlock).toContain("departmentId: line.departmentId ?? null");
+    expect(saveBlock).toContain("locationId: line.locationId ?? null");
+    const panel = readFileSync(
+      join(__dirname, "../..", "src/components/bills/EditLineItemsPanel.tsx"),
+      "utf-8",
+    );
+    expect(panel).toContain("departmentId: item.departmentId ?? null");
+    expect(panel).toContain("locationId: item.locationId ?? null");
+  });
+
   it("the AI upload resolves suggestions only against the expense-filtered list", () => {
     const store = readFileSync(join(__dirname, "../..", "src/lib/bill-upload-store.ts"), "utf-8");
     const resolveBlock = store.slice(store.indexOf("const expenseAccounts = accounts.filter"));

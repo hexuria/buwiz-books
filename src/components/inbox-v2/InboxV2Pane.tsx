@@ -32,7 +32,12 @@ import {
 import { getInboxSettings } from "@/routes/api/-inbox-settings";
 import { getMappedAccounts } from "@/routes/api/-category-mappings";
 import { getDocumentViewerData } from "@/routes/api/-documents";
-import { BillEditor, type BillCategoryAccount, type BillEditorHandle } from "../bills/BillEditor";
+import {
+  BillEditor,
+  type BillCategoryAccount,
+  type BillDimensionOptions,
+  type BillEditorHandle,
+} from "../bills/BillEditor";
 import type { BoundingBox } from "../bills/InteractiveDocumentViewer";
 import { DuplicateCasePanel } from "../inbox/DuplicateCasePanel";
 import {
@@ -123,6 +128,38 @@ function billCategoryAccounts(detail: InboxDetail, draft: EditorDraft): BillCate
   return detail.accountOptions.filter(
     (account) => BILL_CATEGORY_TYPES.has(account.accountType) || used.has(account.id),
   );
+}
+
+/**
+ * The org's active departments and locations for the bill's line pickers, plus any a line already
+ * uses (one since deactivated), so a line that has one never displays as having none.
+ */
+function billDimensionOptions(detail: InboxDetail, draft: EditorDraft): BillDimensionOptions {
+  const lines = draft.editor === "bill" ? draft.draft.lineItems : [];
+  const options = (
+    active: ReadonlyArray<{ id: string; name: string }>,
+    used: ReadonlyArray<string | null | undefined>,
+    inactiveLabel: string,
+  ) => {
+    const listed = new Set(active.map(({ id }) => id));
+    const unlisted = [...new Set(used)].flatMap((id) => (id && !listed.has(id) ? [id] : []));
+    return [
+      ...active.map(({ id, name }) => ({ value: id, label: name })),
+      ...unlisted.map((id) => ({ value: id, label: inactiveLabel })),
+    ];
+  };
+  return {
+    departments: options(
+      detail.departmentOptions,
+      lines.map((line) => line.departmentId),
+      "Inactive department",
+    ),
+    locations: options(
+      detail.locationOptions,
+      lines.map((line) => line.locationId),
+      "Inactive location",
+    ),
+  };
 }
 
 interface InboxV2PaneProps {
@@ -617,6 +654,7 @@ export function InboxV2Pane({
               )
             }
             categoryAccounts={billCategoryAccounts(detail, editorDraft)}
+            dimensionOptions={billDimensionOptions(detail, editorDraft)}
             defaultLineAccountId={mappedQuery.data?.default_expense ?? ""}
             pending={saveMutation.isPending}
             submitDisabled={!editable || busy || mappedQuery.isPending}

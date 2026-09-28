@@ -437,8 +437,8 @@ export function billDraftToCorrection(
       debit: amount,
       credit: null,
       lineDescription: line.description.trim() || null,
-      departmentId: line.departmentId ?? null,
-      locationId: line.locationId ?? null,
+      departmentId: line.departmentId || null,
+      locationId: line.locationId || null,
     });
   });
   if (debits.length === 0) {

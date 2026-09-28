@@ -1304,6 +1304,10 @@ const saveBillLineItemsSchema = z.object({
           .regex(/^\d+(?:\.\d+)?$/, "Line amount must be a non-negative number")
           .refine((v) => Number(v) > 0, "Line amount must be greater than zero"),
         accountId: z.string().uuid(),
+        // Kept as the line had them: replacing the lines must not drop the dimensions the
+        // accrual posts with.
+        departmentId: z.string().uuid().nullable().optional(),
+        locationId: z.string().uuid().nullable().optional(),
         sortOrder: z.number().optional(),
       }),
     )
@@ -1352,6 +1356,8 @@ export const saveBillLineItems = createServerFn({ method: "POST" }).handler(
                 description: line.description,
                 amount: line.amount,
                 accountId: line.accountId,
+                departmentId: line.departmentId ?? null,
+                locationId: line.locationId ?? null,
                 sortOrder: line.sortOrder ?? i,
               })),
             )

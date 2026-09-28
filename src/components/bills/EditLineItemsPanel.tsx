@@ -24,6 +24,9 @@ interface LineItem {
   amount: string;
   accountId: string;
   accountName?: string;
+  /** Carried through untouched: this panel has no dimension fields, but the line may. */
+  departmentId?: string | null;
+  locationId?: string | null;
 }
 
 interface EditLineItemsPanelProps {
@@ -36,6 +39,8 @@ interface EditLineItemsPanelProps {
     accountId: string;
     accountName: string;
     accountNumber: string | null;
+    departmentId?: string | null;
+    locationId?: string | null;
   }>;
   onClose: () => void;
   onSave: () => void;
@@ -66,6 +71,8 @@ export function EditLineItemsPanel({
       amount: li.amount,
       accountId: li.accountId,
       accountName: li.accountName,
+      departmentId: li.departmentId,
+      locationId: li.locationId,
     })),
   );
 
@@ -126,6 +133,8 @@ export function EditLineItemsPanel({
             description: item.description || undefined,
             amount: item.amount,
             accountId: item.accountId,
+            departmentId: item.departmentId ?? null,
+            locationId: item.locationId ?? null,
             sortOrder: i,
           })),
         },

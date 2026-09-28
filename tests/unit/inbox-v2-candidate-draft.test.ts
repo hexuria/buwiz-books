@@ -182,6 +182,30 @@ describe("vendor bills", () => {
     ]);
   });
 
+  it("sends the department and location picked on a bill line; an emptied picker sends none", () => {
+    const draft = expectBill(candidateToEditorDraft(billCandidate, "vendor_bill"));
+    const [pens, supplies] = draft.draft.lineItems;
+    const picked = {
+      ...draft.draft,
+      lineItems: [
+        { ...pens, departmentId: "", locationId: LOC },
+        { ...supplies, departmentId: DEPT, locationId: LOC },
+      ],
+    };
+    const correction = billDraftToCorrection(picked, {
+      ...USD,
+      creditLine: draft.creditLine,
+      payableAccountId: null,
+    });
+    expect(
+      correction.lines.map((entry) => [entry.accountId, entry.departmentId, entry.locationId]),
+    ).toEqual([
+      [EXPENSE, null, LOC],
+      [SUPPLIES, DEPT, LOC],
+      [PAYABLE, null, null],
+    ]);
+  });
+
   it("credits the mapped payable when the paper's credit side was never chosen", () => {
     const emailed = candidate({
       referenceNumber: null,

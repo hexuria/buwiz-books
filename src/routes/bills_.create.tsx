@@ -7,17 +7,20 @@
  */
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createBill } from "./api/-bills";
 import { listAccounts } from "./api/-accounts";
+import { listDepartments, listLocations } from "./api/-dimensions";
 import {
   BillEditor,
   emptyBillDraft,
   isSubmittableBillLine,
+  type BillDimensionOptions,
   type BillDraft,
 } from "../components/bills/BillEditor";
 import { getMappedAccounts } from "./api/-category-mappings";
 import { keys as queryKeys } from "../lib/query-keys";
+import { callServerFn } from "../lib/server-fn-client";
 
 // ============================================================================
 // Route
@@ -58,6 +61,24 @@ function BillCreatePage() {
   });
   const defaultExpenseId = mappedAccounts?.default_expense ?? "";
 
+  // Bill lines store a department and a location, which the bill's accrual and its Inbox checks
+  // carry. The lists are the org's active ones, as New transaction's line pickers show them.
+  const { data: departments = [] } = useQuery({
+    queryKey: queryKeys.departments.all(),
+    queryFn: () => callServerFn(listDepartments, { data: {} }),
+  });
+  const { data: locations = [] } = useQuery({
+    queryKey: queryKeys.locations.all(),
+    queryFn: () => callServerFn(listLocations, { data: {} }),
+  });
+  const dimensionOptions = useMemo(
+    (): BillDimensionOptions => ({
+      departments: departments.map(({ id, name }) => ({ value: id, label: name })),
+      locations: locations.map(({ id, name }) => ({ value: id, label: name })),
+    }),
+    [departments, locations],
+  );
+
   const [initialDraft] = useState(emptyBillDraft);
   const submissionIdempotencyKeyRef = useRef<string | null>(null);
 
@@ -92,6 +113,8 @@ function BillCreatePage() {
         description: item.description || undefined,
         amount: Number.parseFloat(item.amount).toFixed(2),
         accountId: item.accountId,
+        departmentId: item.departmentId || undefined,
+        locationId: item.locationId || undefined,
       })),
     });
   };
@@ -102,6 +125,7 @@ function BillCreatePage() {
         draft={initialDraft}
         onSubmit={handleSubmit}
         categoryAccounts={expenseAccounts}
+        dimensionOptions={dimensionOptions}
         defaultLineAccountId={defaultExpenseId}
         // Seed the first line only once the default-category lookup has SETTLED.
         // Gating on `expenseAccounts` alone seeded it while the mapping query was

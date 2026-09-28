@@ -199,6 +199,55 @@ describe("BillEditor in the reading pane", { timeout: 30_000 }, () => {
     renderBill({ submitDisabled: true });
     expect(screen.getByRole("button", { name: "Save & run checks" })).toBeDisabled();
   });
+
+  it("gives each line Department and Location pickers and hands the picks to onSubmit", async () => {
+    const user = userEvent.setup();
+    const { ref, onSubmit } = renderBill({
+      dimensionOptions: {
+        departments: [
+          { value: "dept-1", label: "Operations" },
+          { value: "dept-2", label: "Sales" },
+        ],
+        locations: [{ value: "loc-1", label: "Main Office" }],
+      },
+    });
+    const picker = (name: string) => screen.getByRole("combobox", { name });
+    // Line 1 already has a department; line 2 has neither yet.
+    expect(picker("Department for line 1")).toHaveTextContent("Operations");
+    expect(picker("Location for line 1")).toHaveTextContent("Location");
+    expect(picker("Department for line 2")).toHaveTextContent("Department");
+
+    await user.click(picker("Department for line 2"));
+    await user.click(await screen.findByRole("option", { name: "Sales" }));
+    await user.click(picker("Location for line 2"));
+    await user.click(await screen.findByRole("option", { name: "Main Office" }));
+    expect(picker("Department for line 2")).toHaveTextContent("Sales");
+    expect(picker("Location for line 2")).toHaveTextContent("Main Office");
+    // A department can be taken back off a line.
+    await user.click(picker("Department for line 1"));
+    await user.click(await screen.findByRole("option", { name: "No department" }));
+    expect(picker("Department for line 1")).toHaveTextContent("Department");
+    expect(ref.current!.isDirty()).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].lineItems).toEqual([
+      { id: "l1", description: "Pens", amount: "12.50", accountId: EXPENSE, departmentId: null },
+      {
+        id: "l2",
+        description: "Prepaid",
+        amount: "7.50",
+        accountId: ASSET,
+        departmentId: "dept-2",
+        locationId: "loc-1",
+      },
+    ]);
+  });
+
+  it("shows no dimension pickers unless it is given the options", () => {
+    renderBill();
+    expect(screen.queryByRole("combobox", { name: /for line/ })).toBeNull();
+  });
 });
 
 /** The card header's party picker: a combobox trigger showing the chosen party. */

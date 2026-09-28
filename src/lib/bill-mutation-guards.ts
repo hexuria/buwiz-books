@@ -11,6 +11,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
+import { dimensions } from "@/db/schema/dimensions";
 import { parties } from "@/db/schema/parties";
 import { centsToMoney, moneyToCents } from "@/lib/money";
 
@@ -23,14 +24,21 @@ export const BILL_LINE_ACCOUNT_TYPES = ["expense", "cost_of_revenue", "other_exp
 
 /**
  * Every reference on an incoming bill payload must belong to the caller's
- * organization: the vendor, and each line's account — which must also be
- * active and one of the bill-line account types.
+ * organization: the vendor, each line's account — which must also be
+ * active and one of the bill-line account types — and each line's department
+ * and location, which must be dimensions of that type. (A dimension is not
+ * required to be active: a line keeps the one it was tagged with, as an
+ * Inbox correction does.)
  */
 export async function assertBillReferences(
   db: DbExecutor,
   orgId: string,
   vendorId: string | undefined,
-  lineItems: Array<{ accountId: string }>,
+  lineItems: Array<{
+    accountId: string;
+    departmentId?: string | null;
+    locationId?: string | null;
+  }>,
 ): Promise<void> {
   if (vendorId) {
     const [vendor] = await db
@@ -57,6 +65,25 @@ export async function assertBillReferences(
     }
     if (!(BILL_LINE_ACCOUNT_TYPES as readonly string[]).includes(row.accountType)) {
       throw new Error("Bill lines must post to expense-type accounts");
+    }
+  }
+
+  // bill_line_items' dimension foreign keys are not organization-scoped.
+  const dimensionIds = [
+    ...new Set(lineItems.flatMap((line) => [line.departmentId, line.locationId])),
+  ].filter((id): id is string => Boolean(id));
+  if (dimensionIds.length === 0) return;
+  const dimensionRows = await db
+    .select({ id: dimensions.id, dimensionType: dimensions.dimensionType })
+    .from(dimensions)
+    .where(and(eq(dimensions.organizationId, orgId), inArray(dimensions.id, dimensionIds)));
+  const typeById = new Map(dimensionRows.map((row) => [row.id, row.dimensionType]));
+  for (const line of lineItems) {
+    if (line.departmentId && typeById.get(line.departmentId) !== "department") {
+      throw new Error("A bill line's department is unavailable for this organization");
+    }
+    if (line.locationId && typeById.get(line.locationId) !== "location") {
+      throw new Error("A bill line's location is unavailable for this organization");
     }
   }
 }

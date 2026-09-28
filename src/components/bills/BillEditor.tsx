@@ -9,6 +9,7 @@
  * keeps its own money rules.
  */
 import {
+  Fragment,
   useCallback,
   useImperativeHandle,
   useRef,
@@ -17,6 +18,8 @@ import {
   type Ref,
 } from "react";
 import { VendorCombobox } from "./VendorCombobox";
+import Combobox, { type ComboboxOption } from "../ui/Combobox";
+import { DEPARTMENT_ICON, LOCATION_ICON } from "../transactions/shared/constants";
 import { formatCurrency } from "@/utils/format";
 
 // ============================================================================
@@ -28,7 +31,10 @@ export interface BillDraftLine {
   description: string;
   amount: string;
   accountId: string;
-  /** Carried through untouched: the form has no dimension fields, but an Inbox line may. */
+  /**
+   * The line's department and location. Edited when the editor is given `dimensionOptions`;
+   * otherwise carried through untouched.
+   */
   departmentId?: string | null;
   locationId?: string | null;
 }
@@ -46,6 +52,12 @@ export interface BillCategoryAccount {
   id: string;
   accountNumber?: string | null;
   name: string;
+}
+
+/** The org's departments and locations, as the transaction editor's line pickers list them. */
+export interface BillDimensionOptions {
+  departments: ComboboxOption[];
+  locations: ComboboxOption[];
 }
 
 export interface BillEditorHandle {
@@ -92,6 +104,15 @@ export function emptyBillDraft(): BillDraft {
   };
 }
 
+/** A picker's options, led by a way back to none once the line has a value. */
+function dimensionChoices(
+  options: ComboboxOption[],
+  selected: string | null | undefined,
+  noneLabel: string,
+): ComboboxOption[] {
+  return selected ? [{ value: "", label: noneLabel }, ...options] : options;
+}
+
 /** The create page's rule for a line worth saving: a category and a positive amount. */
 export function isSubmittableBillLine(line: BillDraftLine): boolean {
   return Boolean(line.accountId) && Number.parseFloat(line.amount) > 0;
@@ -106,6 +127,12 @@ export interface BillEditorProps {
   onSubmit: (draft: BillDraft) => void;
   /** The categories a line may use. */
   categoryAccounts: BillCategoryAccount[];
+  /**
+   * Given, every line gets Department and Location pickers under it (the Inbox's Missing
+   * Department / Missing Location checks read them). Omitted, a line's dimensions ride along as
+   * the draft had them.
+   */
+  dimensionOptions?: BillDimensionOptions;
   /** The org's mapped default expense; new lines start on it. */
   defaultLineAccountId?: string;
   /**
@@ -136,6 +163,7 @@ export function BillEditor({
   draft,
   onSubmit,
   categoryAccounts,
+  dimensionOptions,
   defaultLineAccountId = "",
   seedFirstLine = false,
   pending = false,
@@ -190,6 +218,16 @@ export function BillEditor({
       prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)),
     );
   }, []);
+
+  // An emptied picker stores null, as a line that never had one does.
+  const updateLineDimension = useCallback(
+    (id: string, field: "departmentId" | "locationId", value: string) => {
+      setLineItems((prev) =>
+        prev.map((item) => (item.id === id ? { ...item, [field]: value || null } : item)),
+      );
+    },
+    [],
+  );
 
   const addLineItem = useCallback(() => {
     setLineItems((prev) => [...prev, createEmptyBillLine(defaultLineAccountId)]);
@@ -371,76 +409,119 @@ export function BillEditor({
                     </tr>
                   </thead>
                   <tbody>
-                    {lineItems.map((item) => (
-                      <tr key={item.id} className="group">
-                        {/* Description */}
-                        <td className="py-1.5 pr-3">
-                          <input
-                            type="text"
-                            value={item.description}
-                            onChange={(e) => updateLineItem(item.id, "description", e.target.value)}
-                            placeholder="Item description..."
-                            className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white placeholder-[#94a3b8] dark:placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
-                          />
-                        </td>
-                        {/* Category */}
-                        <td className="py-1.5 pr-3">
-                          <select
-                            value={item.accountId}
-                            onChange={(e) => updateLineItem(item.id, "accountId", e.target.value)}
-                            aria-label="Category"
-                            className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
-                          >
-                            {/* Without this a line with no category displays the first account
-                                while its value is still empty. */}
-                            {!item.accountId && (
-                              <option value="" disabled>
-                                Choose a category
-                              </option>
-                            )}
-                            {categoryAccounts.map((a) => (
-                              <option key={a.id} value={a.id}>
-                                {a.accountNumber} — {a.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        {/* Amount */}
-                        <td className="py-1.5">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={item.amount}
-                            onChange={(e) => updateLineItem(item.id, "amount", e.target.value)}
-                            placeholder="0.00"
-                            className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white text-right placeholder-[#94a3b8] dark:placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
-                          />
-                        </td>
-                        {/* Remove */}
-                        <td className="py-1.5 pl-2">
-                          <button
-                            type="button"
-                            onClick={() => removeLineItem(item.id)}
-                            className="p-1 rounded-full text-[#94a3b8] dark:text-white/30 hover:text-[#ef4444] hover:bg-[#fef2f2] dark:hover:bg-red-900/20 transition-all opacity-0 group-hover:opacity-100"
-                            title="Remove line"
-                          >
-                            <svg
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
+                    {lineItems.map((item, index) => (
+                      <Fragment key={item.id}>
+                        <tr className="group">
+                          {/* Description */}
+                          <td className="py-1.5 pr-3">
+                            <input
+                              type="text"
+                              value={item.description}
+                              onChange={(e) =>
+                                updateLineItem(item.id, "description", e.target.value)
+                              }
+                              placeholder="Item description..."
+                              className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white placeholder-[#94a3b8] dark:placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
+                            />
+                          </td>
+                          {/* Category */}
+                          <td className="py-1.5 pr-3">
+                            <select
+                              value={item.accountId}
+                              onChange={(e) => updateLineItem(item.id, "accountId", e.target.value)}
+                              aria-label="Category"
+                              className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
                             >
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
-                          </button>
-                        </td>
-                      </tr>
+                              {/* Without this a line with no category displays the first account
+                                  while its value is still empty. */}
+                              {!item.accountId && (
+                                <option value="" disabled>
+                                  Choose a category
+                                </option>
+                              )}
+                              {categoryAccounts.map((a) => (
+                                <option key={a.id} value={a.id}>
+                                  {a.accountNumber} — {a.name}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          {/* Amount */}
+                          <td className="py-1.5">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              value={item.amount}
+                              onChange={(e) => updateLineItem(item.id, "amount", e.target.value)}
+                              placeholder="0.00"
+                              className="w-full px-2.5 py-2 rounded-md border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] text-base sm:text-sm text-[#1e293b] dark:text-white text-right placeholder-[#94a3b8] dark:placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-[#f59e0b]/30 focus:border-[#f59e0b] transition-all"
+                            />
+                          </td>
+                          {/* Remove */}
+                          <td className="py-1.5 pl-2">
+                            <button
+                              type="button"
+                              onClick={() => removeLineItem(item.id)}
+                              className="p-1 rounded-full text-[#94a3b8] dark:text-white/30 hover:text-[#ef4444] hover:bg-[#fef2f2] dark:hover:bg-red-900/20 transition-all opacity-0 group-hover:opacity-100"
+                              title="Remove line"
+                            >
+                              <svg
+                                width="14"
+                                height="14"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </td>
+                        </tr>
+                        {dimensionOptions && (
+                          <tr>
+                            <td colSpan={3} className="pb-2">
+                              <div className="grid grid-cols-2 gap-3">
+                                <Combobox
+                                  ariaLabel={`Department for line ${index + 1}`}
+                                  value={item.departmentId ?? ""}
+                                  onChange={(value) =>
+                                    updateLineDimension(item.id, "departmentId", value)
+                                  }
+                                  options={dimensionChoices(
+                                    dimensionOptions.departments,
+                                    item.departmentId,
+                                    "No department",
+                                  )}
+                                  placeholder="Department"
+                                  placeholderIcon={DEPARTMENT_ICON}
+                                  searchPlaceholder="Find department..."
+                                />
+                                <Combobox
+                                  ariaLabel={`Location for line ${index + 1}`}
+                                  value={item.locationId ?? ""}
+                                  onChange={(value) =>
+                                    updateLineDimension(item.id, "locationId", value)
+                                  }
+                                  options={dimensionChoices(
+                                    dimensionOptions.locations,
+                                    item.locationId,
+                                    "No location",
+                                  )}
+                                  placeholder="Location"
+                                  placeholderIcon={LOCATION_ICON}
+                                  searchPlaceholder="Find location..."
+                                />
+                              </div>
+                            </td>
+                            <td />
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

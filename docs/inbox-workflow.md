@@ -88,6 +88,11 @@ the same Inbox items, so switching moves no data and open items carry over.
   runs the candidate correction and the book checks; Approve first saves any
   unsaved edits the same way, then approves through the shared posting cores.
   Approve stays off while a blocking check is open.
+- Bill lines have Department and Location pickers, as the New transaction
+  editor's journal and paid-for lines do, so the Missing Department and Missing
+  Location checks clear when a reviewer picks them and saves, rather than
+  needing a resolution note. On a bill they post on the accrual's expense lines
+  and on the bill's own lines.
 - Keyboard: `j` / `k` move, `a` approves, `r` rejects with a reason, `e` jumps
   into the editor. Shortcuts are ignored while typing.
 - A sales invoice from a paper is booked as an entry; approval does not create
