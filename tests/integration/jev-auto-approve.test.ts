@@ -12,12 +12,18 @@
  */
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { describe, expect, it, vi } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   // Nothing here may reach a model: stage 2 runs on a stubbed classifier, and
   // mock mode answers anything else.
   vi.stubEnv("AI_MODE", "mock");
+});
+// Integration files share one process (no file parallelism): put AI_MODE back
+// so the next file resolves its own runtime. Modules are isolated per file, so
+// the façade this file initialized under mock mode goes with it.
+afterAll(() => {
+  vi.unstubAllEnvs();
 });
 
 import { db } from "@/db";

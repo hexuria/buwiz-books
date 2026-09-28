@@ -19,6 +19,10 @@ vi.hoisted(() => {
   // Nothing may reach a model: the memory answers every paper here.
   vi.stubEnv("AI_MODE", "mock");
 });
+// Put AI_MODE back so the next integration file resolves its own runtime.
+afterAll(() => {
+  vi.unstubAllEnvs();
+});
 
 /** What extraction reads off an attachment. */
 interface StubbedExtraction {
