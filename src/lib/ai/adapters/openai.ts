@@ -10,6 +10,19 @@
 // listed as required).
 //
 // Text tasks only — see the OCR-egress decision in redact.ts.
+//
+// A compatible endpoint is a THIRD PARTY chosen by the tenant, so the client
+// built for it sends only what the request needs. Two SDK defaults are
+// switched off there, and only there (first-party OpenAI is unchanged):
+//   • OpenAI-Organization / OpenAI-Project — when these options are left
+//     undefined the SDK fills them from OPENAI_ORG_ID / OPENAI_PROJECT_ID in
+//     OUR environment, handing the operator's OpenAI account identity to an
+//     arbitrary URL. They are set to null, the SDK's "send nothing".
+//   • x-stainless-* — SDK telemetry on every request: OS, CPU architecture,
+//     runtime and version, SDK version, retry count and timeout. The SDK has
+//     no switch for these, so a fetch wrapper removes them at the wire, and
+//     removes the two OpenAI-* headers too in case a later SDK release finds
+//     another way to set them.
 // ============================================================================
 
 import OpenAI, { type ClientOptions } from "openai";
@@ -19,6 +32,23 @@ import type { RedactedPrompt } from "../redact";
 import { toStrictJsonSchema } from "../schema-strict";
 
 const REQUEST_TIMEOUT_MS = 120_000;
+
+function isFirstPartyOnlyHeader(name: string): boolean {
+  // Headers#keys() yields lowercased names.
+  return (
+    name.startsWith("x-stainless-") || name === "openai-organization" || name === "openai-project"
+  );
+}
+
+/** fetch for third-party endpoints: forwards the request minus SDK/operator headers. */
+const thirdPartyFetch: NonNullable<ClientOptions["fetch"]> = (input, init) => {
+  const headers = new Headers(init?.headers);
+  // Collected first: deleting while iterating a Headers object skips entries.
+  const stripped = [...headers.keys()].filter(isFirstPartyOnlyHeader);
+  for (const name of stripped) headers.delete(name);
+  // The global is resolved per call, not captured at module load.
+  return fetch(input, { ...init, headers });
+};
 
 export interface OpenAiCallArgs<TOut> {
   apiKey: string;
@@ -71,7 +101,9 @@ export async function generateStructuredOpenAi<TOut>(
 ): Promise<OpenAiCallResult> {
   const client = new OpenAI({
     apiKey: args.apiKey,
-    ...(args.baseURL ? { baseURL: args.baseURL } : {}),
+    ...(args.baseURL
+      ? { baseURL: args.baseURL, organization: null, project: null, fetch: thirdPartyFetch }
+      : {}),
     timeout: REQUEST_TIMEOUT_MS,
     ...args.clientOptions,
   });

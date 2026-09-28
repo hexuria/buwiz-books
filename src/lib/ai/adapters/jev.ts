@@ -29,7 +29,9 @@
 //   A7  Model id: JEV_MODEL ("jev-1") in chains.ts.
 //   A8  Latency: answers well inside JEV_TIMEOUT_MS with one retry. After
 //       that the chain falls back to Gemini.
-//   A9  Price: unknown. pricing.ts carries a TODO(jev-pricing) placeholder.
+//   A9  Price: unknown. An unrecognized model, including Jev, is metered at
+//       the conservative fallback in pricing.ts so a Jev call still counts
+//       against the spend cap.
 //
 // Not covered by any of the above: rate limits, data residency, retention,
 // and the DPA. The opt-in stays off by default until those are settled.
@@ -81,10 +83,9 @@ export function estimateTokens(text: string): number {
 /**
  * Refuse egress unless the prompt is a fixed point of redaction.
  *
- * The RedactedPrompt brand is compile-time only, so a cast defeats it. A
- * single redaction pass is also not idempotent: PII glued to an already
- * masked run can survive it. In both cases the prompt still holds something
- * the redactor would mask, so Jev must not receive it. The refusal escalates
+ * The RedactedPrompt brand is compile-time only, so a cast defeats it. The
+ * redactor itself repeats until the text stops changing; this check is the
+ * runtime backstop for a prompt that skipped that pass. The refusal escalates
  * the chain (nothing was sent, the key is not at fault) and names PII kinds,
  * never values.
  */

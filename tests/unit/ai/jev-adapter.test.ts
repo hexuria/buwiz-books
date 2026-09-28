@@ -299,17 +299,20 @@ describe("Jev adapter — redaction enforcement", () => {
     expect(content).toContain("6789");
   });
 
-  it("refuses PII a single redaction pass leaves behind (redaction is not idempotent)", async () => {
-    // The SSN is glued to a masked-looking run, so the first pass cannot see
-    // its word boundary; a second pass would mask it. Jev must not receive it.
+  it("sends the fixed-point mask of PII that a single pass used to leave behind", async () => {
+    // The SSN is glued to a masked-looking run. Redaction repeats until the
+    // text stops changing, so the SSN is masked once the X-run becomes stars,
+    // and that result is a fixed point Jev may receive.
     const { prompt } = toRedactedPrompt("Filename: 219-44-2138XXXX-5620-1278.pdf");
-    expect(String(prompt)).toContain("219-44-2138");
-    expect(() => assertRedactedForJev(String(prompt))).toThrow(AiProviderError);
+    expect(String(prompt)).toBe("Filename: *****2138****1278.pdf");
+    expect(() => assertRedactedForJev(String(prompt))).not.toThrow();
 
-    const { fetch } = stubFetch(() => jsonResponse(chatCompletion(TRIAGE_JSON)));
-    const error = await captureError(generateStructuredJev(callArgs({ fetch, prompt })));
-    expect(error.errorClass).toBe("egress_refused");
-    expect(fetch).not.toHaveBeenCalled();
+    const { fetch, requests } = stubFetch(() => jsonResponse(chatCompletion(TRIAGE_JSON)));
+    await generateStructuredJev(callArgs({ fetch, prompt }));
+    const content = JSON.stringify(requests[0].body.messages);
+    expect(content).toContain("*****2138****1278");
+    expect(content).not.toContain("219-44-2138");
+    expect(content).not.toContain("5620");
   });
 
   it("a refused Jev hop falls back to Gemini through the façade, and Jev never sees the text", async () => {
@@ -325,11 +328,16 @@ describe("Jev adapter — redaction enforcement", () => {
       }),
       invokeHop: async (input) => {
         if (input.hop.provider === "jev") {
+          // The façade redacts before this hop, and that pass is now a fixed
+          // point, so a real filename no longer leaves residual PII. This
+          // cast is the remaining way a prompt still holds an SSN: Jev must
+          // refuse it without a network call so the chain can fall back.
+          const smuggled = "Filename: payroll.csv\nSSN 123-45-6789" as RedactedPrompt;
           const result = await generateStructuredJev({
             apiKey: API_KEY,
             baseURL: BASE_URL,
             model: input.hop.model,
-            prompt: input.prompt,
+            prompt: smuggled,
             schema: input.schema,
             schemaName: "ingest_triage",
             fetch,
@@ -343,7 +351,7 @@ describe("Jev adapter — redaction enforcement", () => {
 
     const result = await createAiComplete(runtime)({
       task: "ingest_triage",
-      input: { filename: "219-44-2138XXXX-5620-1278.pdf", mimeType: "application/pdf" },
+      input: { filename: "payroll.csv", mimeType: "application/pdf" },
       ctx: { orgId: "org-jev-redaction" },
     });
 
