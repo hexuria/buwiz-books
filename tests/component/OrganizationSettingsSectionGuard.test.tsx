@@ -41,6 +41,16 @@ vi.mock("../../src/routes/api/-inbox-memory", () => ({
   rememberCorrection: vi.fn(),
   previewMemoryScope: vi.fn(),
 }));
+// Settings → Jev approval reads these; not under test here.
+vi.mock("../../src/routes/api/-jev-lanes", () => ({
+  listJevLanes: vi.fn(),
+  promoteJevLane: vi.fn(),
+  demoteJevLane: vi.fn(),
+  updateJevLaneLimits: vi.fn(),
+  updateJevApprovalSettingsFn: vi.fn(),
+  getJevEntryApproval: vi.fn(),
+  undoJevApprovalFn: vi.fn(),
+}));
 
 vi.mock("../../src/routes/api/-org-settings", () => ({
   getOrgSettings: vi.fn(async () => ({ id: "org-1", name: "Acme Books", slug: "acme" })),

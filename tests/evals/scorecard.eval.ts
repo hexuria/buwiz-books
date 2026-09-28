@@ -110,7 +110,33 @@ describe("rule scorecard gate (recorded mode — no network, no database)", () =
       locked_cases_total: report.locked_cases_total,
       locked_cases_passing: report.locked_cases_total,
       memory_hit_rate: null,
+      jev_approvals_undone: report.jev_approvals_undone,
       cost_per_100: null,
     });
+    expect(printed.jev_lanes).toEqual(report.jev_lanes);
+  });
+
+  it("reports per-lane agreement: Jev approvals a human would undo", () => {
+    // Measured, not gated like locked cases — pinned so a change to the
+    // approval predicate or the golden pile shows up here first.
+    expect(report.jev_approvals_undone).toBe(1);
+    const lanes = new Map(report.jev_lanes.map((lane) => [lane.lane, lane]));
+    expect(lanes.get("party-acme · expense")).toMatchObject({
+      proposals: 9,
+      labeled: 9,
+      agreed: 4,
+      would_approve: 4,
+      // confident-but-wrong: 91% sure, no check fired, and a person changed it.
+      would_approve_undone: 1,
+    });
+    expect(lanes.get("party-acme · vendor_bill")).toMatchObject({
+      would_approve: 0,
+      agreed: 2,
+    });
+    expect(lanes.get("party-globex · money_in")).toMatchObject({
+      would_approve: 1,
+      would_approve_undone: 0,
+    });
+    expect(lanes.get("(no party) · expense")).toMatchObject({ would_approve: 0 });
   });
 });

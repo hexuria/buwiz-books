@@ -15,7 +15,12 @@
 
 import { and, count, eq, sql } from "drizzle-orm";
 import type { DbExecutor } from "../../db";
-import { aiActionProposals, aiRunFeedback, type AiProposalKind } from "../../db/schema/ai";
+import {
+  aiActionProposals,
+  aiRunFeedback,
+  type AiProposalKind,
+  type AutonomyLaneKey,
+} from "../../db/schema/ai";
 
 /**
  * Kinds that stay human-applied regardless of settings or accuracy.
@@ -118,8 +123,19 @@ export async function computeAutonomyEligibility(
     .innerJoin(aiActionProposals, eq(aiRunFeedback.proposalId, aiActionProposals.id))
     .where(and(eq(aiRunFeedback.organizationId, orgId), eq(aiActionProposals.kind, kind)));
 
-  const total = Number(row?.total ?? 0);
-  const accepted = Number(row?.accepted ?? 0);
+  return judgeAutonomyEligibility(Number(row?.total ?? 0), Number(row?.accepted ?? 0));
+}
+
+/**
+ * The graduation verdict for a feedback history, by AUTONOMY_CRITERIA. Pure:
+ * per-kind autonomy (above) and per-lane autonomy (src/lib/ai/autonomy-lanes.ts)
+ * both judge their own counts with it, so the bar can never differ.
+ */
+export function judgeAutonomyEligibility(
+  total: number,
+  accepted: number,
+  noun = "proposals",
+): AutonomyEligibility {
   const acceptanceRate = total > 0 ? accepted / total : 0;
 
   if (total < AUTONOMY_CRITERIA.minProposals) {
@@ -129,7 +145,7 @@ export async function computeAutonomyEligibility(
       accepted,
       acceptanceRate,
       remaining: AUTONOMY_CRITERIA.minProposals - total,
-      reason: `Needs ${AUTONOMY_CRITERIA.minProposals - total} more reviewed proposals (${total}/${AUTONOMY_CRITERIA.minProposals}).`,
+      reason: `Needs ${AUTONOMY_CRITERIA.minProposals - total} more reviewed ${noun} (${total}/${AUTONOMY_CRITERIA.minProposals}).`,
     };
   }
 
@@ -150,7 +166,7 @@ export async function computeAutonomyEligibility(
     accepted,
     acceptanceRate,
     remaining: 0,
-    reason: `Eligible: ${(acceptanceRate * 100).toFixed(1)}% accepted across ${total} proposals.`,
+    reason: `Eligible: ${(acceptanceRate * 100).toFixed(1)}% accepted across ${total} ${noun}.`,
   };
 }
 
@@ -172,9 +188,19 @@ export async function shouldDemote(
     .orderBy(sql`${aiRunFeedback.createdAt} DESC`)
     .limit(AUTONOMY_CRITERIA.demotionWindow);
 
-  if (recent.length < AUTONOMY_CRITERIA.demotionWindow) return false;
-  const accepted = recent.filter((r) => r.verdict === "accepted").length;
-  return accepted / recent.length < AUTONOMY_CRITERIA.demotionRate;
+  return shouldDemoteFromVerdicts(recent.map((r) => r.verdict));
+}
+
+/**
+ * The demotion verdict for a trailing window of labels, newest first. Pure and
+ * shared with per-lane demotion. A window shorter than demotionWindow never
+ * demotes: there is not yet enough evidence either way.
+ */
+export function shouldDemoteFromVerdicts(verdictsNewestFirst: readonly string[]): boolean {
+  const window = verdictsNewestFirst.slice(0, AUTONOMY_CRITERIA.demotionWindow);
+  if (window.length < AUTONOMY_CRITERIA.demotionWindow) return false;
+  const accepted = window.filter((verdict) => verdict === "accepted").length;
+  return accepted / window.length < AUTONOMY_CRITERIA.demotionRate;
 }
 
 /**
@@ -194,4 +220,30 @@ export function canAutoApply(input: {
   if (input.confidence == null) return false;
   const threshold = input.threshold ?? 0.9;
   return input.confidence >= threshold;
+}
+
+// ============================================================================
+// Lanes (Inbox v2 §8). A lane's auto level lets Jev approve a whole paper, and
+// approving a paper applies proposal kinds on the model's behalf. A lane may
+// only act when none of the kinds it applies is structurally manual.
+// ============================================================================
+
+/**
+ * What approving a paper on each lane applies on Jev's behalf. An Inbox
+ * approval posts the category Jev chose (`categorize`). The counterparty it
+ * matched is an existing party, never a new one: papers that would create a
+ * party are held by the approval checks themselves, so `create_party` is not
+ * applied here, and neither is `date_fix` — Jev never moves a paper's date.
+ */
+export const LANE_APPLIED_KINDS: Readonly<Record<AutonomyLaneKey, readonly AiProposalKind[]>> = {
+  inbox_approve: ["categorize"],
+};
+
+/**
+ * The kinds a lane would apply that are still structurally manual for it.
+ * While this is non-empty the lane can be promoted all the way to `auto`, and
+ * every other check can pass, but nothing it approves is ever posted.
+ */
+export function laneWalledKinds(laneKey: AutonomyLaneKey): AiProposalKind[] {
+  return LANE_APPLIED_KINDS[laneKey].filter((kind) => STRUCTURAL_MANUAL_KINDS.has(kind));
 }

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  postingAuditActorId,
   requireUserActor,
   reviewDecisionActor,
   SystemActorNotSupportedError,
   type PostingActor,
 } from "@/lib/posting/actor";
+import { mintJevApprovalGrant, type JevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   assertPostableLines,
   BILL_ACCRUAL_SHAPE_MESSAGE,
@@ -62,7 +64,7 @@ describe("posting actor", () => {
     expect(requireUserActor(USER, "postTransactionCore")).toBe("user-1");
   });
 
-  it("refuses a system actor until an autonomy lane can authorize one", () => {
+  it("refuses a system actor without a lane grant", () => {
     expect(() => requireUserActor(JEV, "createBillCore")).toThrow(SystemActorNotSupportedError);
     expect(() => requireUserActor(JEV, "createBillCore")).toThrow(/createBillCore.*"jev"/);
   });
@@ -130,6 +132,123 @@ describe("posting actor", () => {
         discountAmount: "0",
         taxAmount: "0",
         lineItems: [],
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+  });
+});
+
+describe("the Jev lane grant", () => {
+  const grant = mintJevApprovalGrant({
+    laneId: "lane-1",
+    candidateId: "candidate-1",
+    candidateRevision: 3,
+    confidence: 0.97,
+  });
+  const GRANTED: PostingActor = { type: "system", key: "jev", grant };
+  const FORGED: PostingActor = {
+    type: "system",
+    key: "jev",
+    grant: { ...grant } as JevApprovalGrant,
+  };
+  const balanced = [
+    line(EXPENSE, { debit: "10.00" }),
+    line(BANK, { credit: "10.00" }, { sortOrder: 1 }),
+  ];
+
+  it("names Jev in audit columns only when the grant was minted, not merely shaped like one", () => {
+    expect(postingAuditActorId(GRANTED, "postTransactionCore")).toBe("system:jev");
+    expect(postingAuditActorId(USER, "postTransactionCore")).toBe("user-1");
+    expect(() => postingAuditActorId(JEV, "postTransactionCore")).toThrow(
+      SystemActorNotSupportedError,
+    );
+    expect(() => postingAuditActorId(FORGED, "postTransactionCore")).toThrow(
+      SystemActorNotSupportedError,
+    );
+    // A grant is frozen: nothing can re-point it at another paper.
+    expect(Object.isFrozen(grant)).toBe(true);
+  });
+
+  it("lets a granted system actor past the actor check of the approval path's cores", async () => {
+    // Reaching the executor proves the actor check passed.
+    await expect(
+      postTransactionCore(untouchable, "org-1", GRANTED, {
+        idempotencyKey: "k",
+        transactionDate: "2026-07-20",
+        transactionType: "pay_out",
+        source: "document",
+        functionalCurrency: "USD",
+        lines: balanced,
+      }),
+    ).rejects.toThrow(/The executor was used/);
+    await expect(
+      createBillCore(untouchable, "org-1", GRANTED, {
+        vendorId: "v",
+        billDate: "2026-07-20",
+        dueDate: "2026-07-20",
+        accrual: {
+          kind: "post",
+          journal: {
+            idempotencyKey: "k",
+            transactionType: "journal",
+            source: "email",
+            functionalCurrency: "USD",
+            lines: balanced,
+          },
+        },
+      }),
+    ).rejects.toThrow(/The executor was used/);
+  });
+
+  it("keeps refusing a granted system actor everywhere off the approval path", async () => {
+    await expect(
+      createBillCore(untouchable, "org-1", GRANTED, {
+        vendorId: "v",
+        billDate: "2026-07-20",
+        dueDate: "2026-07-20",
+        accrual: { kind: "review", billId: "b", status: "in_review", lineItems: [] },
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+    await expect(
+      accrueReviewedBillCore(untouchable, "org-1", GRANTED, {
+        billId: "b",
+        vendorId: "v",
+        journal: {
+          idempotencyKey: "k",
+          transactionDate: "2026-07-20",
+          transactionType: "journal",
+          source: "bill",
+          functionalCurrency: "USD",
+          lines: [],
+        },
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+    await expect(
+      submitBillForReviewCore(untouchable, "org-1", GRANTED, {
+        idempotencyKey: "k",
+        vendorId: "v",
+        billDate: "2026-07-20",
+        dueDate: "2026-07-20",
+        lineItems: [],
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+    await expect(
+      createInvoiceCore(untouchable, "org-1", GRANTED, {
+        customerId: "c",
+        issueDate: "2026-07-20",
+        dueDate: "2026-07-20",
+        discountAmount: "0",
+        taxAmount: "0",
+        lineItems: [],
+      }),
+    ).rejects.toThrow(SystemActorNotSupportedError);
+    await expect(
+      postTransactionCore(untouchable, "org-1", FORGED, {
+        idempotencyKey: "k",
+        transactionDate: "2026-07-20",
+        transactionType: "pay_out",
+        source: "document",
+        functionalCurrency: "USD",
+        lines: balanced,
       }),
     ).rejects.toThrow(SystemActorNotSupportedError);
   });

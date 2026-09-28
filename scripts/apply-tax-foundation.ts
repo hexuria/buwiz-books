@@ -56,6 +56,10 @@ try {
     // Inbox v2 memory (step 10). Creates classification_memories itself, so
     // push finds nothing left to prompt about.
     "0059_classification_memories.sql",
+    // Inbox v2 Jev approval lanes. Creates `ai_autonomy_lanes` before push can
+    // prompt about it and adds the lane columns to ai_run_feedback and
+    // organization_ai_settings, which exist long before this runs.
+    "0060_ai_autonomy_lanes.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

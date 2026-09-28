@@ -11,9 +11,12 @@
  *   needs_fix   an open blocking finding, or an entry still missing lines or accounts
  *   jev_unsure  a real model-unsure signal: a low-confidence category, or an answer stage 2
  *               could not use (a category or counterparty below the threshold, or none at all)
- *   spot_check  a held-back sample of what Jev would have approved (step 11; never yet)
+ *   spot_check  a held-back sample of what Jev would have approved: its lane is at auto and
+ *               every check passed, but the paper was sampled to stay with a person (step 11)
  *   ready       nothing above: a clean entry (typed by hand, a confident paper, or one a
- *               classification memory answered) waiting for approval
+ *               classification memory answered) waiting for approval; on a lane at suggest,
+ *               the strip says when Jev would approve it (ahead of saying it was remembered:
+ *               the row's badge already does)
  *
  * Memories (step 10): a remembered answer carries no model doubt, so a memory-answered entry
  * that no check blocks is Ready to approve, said as such. Two memories that disagree raise the
@@ -60,7 +63,8 @@ export type InboxV2ReasonDetail =
   | "model_unsure"
   | "spot_check"
   | "ready"
-  | "remembered";
+  | "remembered"
+  | "jev_would_approve";
 
 export interface InboxV2OpenFinding {
   ruleKey: string;
@@ -99,10 +103,15 @@ export interface InboxV2ReasonInput {
   openFindings: readonly InboxV2OpenFinding[];
   entry: InboxV2EntryShape;
   modelUnsureSignals?: readonly ModelUnsureSignal[];
-  /** STEP 11 HOOK: a held-back autonomy sample. Always false until lanes exist. */
+  /**
+   * Held back as a spot check at its current revision: Jev would have approved it
+   * (src/lib/inbox/jev-approval). Read from the recorded decision, never recomputed.
+   */
   spotCheck?: boolean;
   /** A classification memory answered the entry (a line's evidence source is "memory"). */
   remembered?: boolean;
+  /** Jev's lane (at suggest or auto) would approve the paper as it stands. */
+  jevWouldApprove?: boolean;
 }
 
 export interface InboxV2ReasonResult {
@@ -230,7 +239,11 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
 
   if (input.spotCheck) return result("spot_check", "spot_check", signals);
 
-  return result("ready", input.remembered ? "remembered" : "ready", signals);
+  return result(
+    "ready",
+    input.jevWouldApprove ? "jev_would_approve" : input.remembered ? "remembered" : "ready",
+    signals,
+  );
 }
 
 /**
@@ -286,11 +299,13 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
     case "model_unsure":
       return describeModelDoubts(reason.signals);
     case "spot_check":
-      return "Spot check: Jev would have approved this. Your answer keeps its approvals honest.";
+      return "Jev would approve this — spot check.";
     case "ready":
       return "No check blocks it. Review the entry and approve it.";
     case "remembered":
       return "Answered from a correction you asked Jev to remember. No check blocks it. Review the entry and approve it.";
+    case "jev_would_approve":
+      return "Jev would approve this. Review the entry and approve it.";
   }
 }
 

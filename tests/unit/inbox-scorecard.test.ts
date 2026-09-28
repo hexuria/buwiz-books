@@ -15,6 +15,8 @@ import {
   runScorecard,
   ScorecardInputError,
   scoreCase,
+  scoreJevCase,
+  summarizeJevLanes,
   summarizeScorecard,
   type ScorecardCase,
 } from "@/lib/inbox/scorecard";
@@ -140,6 +142,7 @@ describe("summarizeScorecard", () => {
       locked_cases_passing: 2,
       memory_hit_rate: null,
       jev_approvals_undone: null,
+      jev_lanes: [],
       cost_per_100: null,
       failing_locked_cases: [
         {
@@ -158,6 +161,115 @@ describe("summarizeScorecard", () => {
 
   it("refuses mismatched cases and outcomes", () => {
     expect(() => summarizeScorecard([label("a")], [], META)).toThrow(/exactly one outcome/);
+  });
+});
+
+describe("Jev lanes on the scorecard", () => {
+  const paper = (
+    id: string,
+    fields: Partial<ScorecardCase> & { confidence?: string; amount?: string } = {},
+  ) =>
+    parseScorecardPile(
+      JSON.stringify({
+        id,
+        candidate: {
+          transactionDate: "2026-09-14",
+          transactionType: "pay_out",
+          originalCurrency: "USD",
+          functionalCurrency: "USD",
+        },
+        lines: [
+          {
+            accountId: "office",
+            debit: fields.amount ?? "40.00",
+            categoryConfidence: fields.confidence ?? "0.9500",
+          },
+          { accountId: "bank", credit: fields.amount ?? "40.00" },
+        ],
+        party: { id: "party-acme", partyType: "vendor" },
+        outcome: fields.outcome ?? { decision: "approved", edits: 0 },
+        jev: fields.jev ?? { kind: "expense" },
+      }),
+    )[0];
+
+  it("replays a proposal through the predicate's paper checks, as its lane would", () => {
+    expect(scoreJevCase(paper("clean"), result("clean", []))).toEqual({
+      id: "clean",
+      lane: "party-acme · expense",
+      party: "party-acme",
+      kind: "expense",
+      wouldApprove: true,
+      holds: [],
+      agreed: true,
+    });
+    // Below the provisional threshold, flagged, over the lane's cap, a new party.
+    expect(
+      scoreJevCase(paper("unsure", { confidence: "0.8500" }), result("unsure", [])),
+    ).toMatchObject({
+      wouldApprove: false,
+      holds: ["below_threshold"],
+    });
+    expect(
+      scoreJevCase(paper("flagged"), result("flagged", [["uncategorized", "blocking"]])),
+    ).toMatchObject({ wouldApprove: false, holds: ["blocking_finding"] });
+    expect(
+      scoreJevCase(
+        paper("capped", { jev: { kind: "expense", amountCap: "39.99", newParty: false } }),
+        result("capped", []),
+      ),
+    ).toMatchObject({ wouldApprove: false, holds: ["over_cap"] });
+    expect(
+      scoreJevCase(
+        paper("new-party", { jev: { kind: "expense", newParty: true } }),
+        result("new-party", []),
+      ),
+    ).toMatchObject({ wouldApprove: false, holds: ["new_party"] });
+    expect(scoreJevCase({ ...paper("plain"), jev: null }, result("plain", []))).toBeNull();
+  });
+
+  it("counts would-approve papers a person changed or rejected, per lane", () => {
+    const outcomes = [
+      scoreJevCase(paper("agreed"), result("agreed", [])),
+      scoreJevCase(
+        paper("edited", { outcome: { decision: "approved", edits: 1 } }),
+        result("edited", []),
+      ),
+      scoreJevCase(
+        paper("rejected", { outcome: { decision: "rejected", edits: 0 } }),
+        result("rejected", []),
+      ),
+      scoreJevCase(
+        paper("pending", { outcome: { decision: "pending", edits: 0 } }),
+        result("pending", []),
+      ),
+      scoreJevCase(
+        paper("held", { confidence: "0.5000", outcome: { decision: "approved", edits: 1 } }),
+        result("held", []),
+      ),
+    ].flatMap((outcome) => (outcome ? [outcome] : []));
+    expect(summarizeJevLanes(outcomes)).toEqual([
+      {
+        lane: "party-acme · expense",
+        party: "party-acme",
+        kind: "expense",
+        proposals: 5,
+        labeled: 4,
+        agreed: 1,
+        agreement: 0.25,
+        would_approve: 4,
+        would_approve_undone: 2,
+      },
+    ]);
+    const report = summarizeScorecard(
+      outcomes.map((outcome) => label(outcome.id)),
+      outcomes.map((outcome) => scoreCase(label(outcome.id), result(outcome.id, []))),
+      META,
+      outcomes,
+    );
+    expect(report.jev_approvals_undone).toBe(2);
+    expect(formatScorecardReport(report)).toContain(
+      "lane party-acme · expense: agreement 25% (1/4); Jev would approve 4, a human would undo 2",
+    );
   });
 });
 
