@@ -5,16 +5,26 @@ import { EXPORT_VERSION } from "@/lib/export-versions";
 // Load fixture files
 import v1Sample from "../../fixtures/export-v1-sample.json";
 import v2Sample from "../../fixtures/export-v2-sample.json";
+import v5Sample from "../../fixtures/export-v5-sample.json";
+
+/** What v4 → v5 adds to every older file: the Inbox configuration, empty. */
+const V5_EMPTY = {
+  ruleSnapshots: [],
+  routines: [],
+  classificationMemories: [],
+  aiAutonomyLanes: [],
+};
 
 describe("export-migrations", () => {
   // ── migrateToLatest ───────────────────────────────────────────────────────
 
   describe("migrateToLatest", () => {
     // P5 deliberate change: v3 added the PH tax entities, so a v2 file now
-    // MIGRATES (data untouched, meta lifted) instead of passing through.
-    it("lifts v2 data to the current version without touching it", () => {
+    // MIGRATES (data untouched, meta lifted) instead of passing through. v5
+    // then adds the Inbox configuration entities as empty arrays.
+    it("lifts v2 data to the current version, adding only the empty v5 entities", () => {
       const result = migrateToLatest(v2Sample);
-      expect(result.data).toEqual(v2Sample.data);
+      expect(result.data).toEqual({ ...v2Sample.data, ...V5_EMPTY });
       expect(result.meta.version).toBe(EXPORT_VERSION);
     });
 
@@ -88,7 +98,7 @@ describe("export-migrations", () => {
       const result = migrateToLatest(emptyV1);
       expect(result.meta.version).toBe(EXPORT_VERSION);
       expect(result.meta.entities).toEqual([]);
-      expect(result.data).toEqual({});
+      expect(result.data).toEqual(V5_EMPTY);
     });
 
     it("handles v1 with missing exportedAt gracefully", () => {
@@ -96,6 +106,57 @@ describe("export-migrations", () => {
       const broken = { entities: { banks: [] } };
       // This should be version 0 since exportedAt is missing
       expect(() => migrateToLatest(broken)).toThrow(/Unrecognized export file format/);
+    });
+  });
+
+  // ── v4 → v5: Inbox configuration ──────────────────────────────────────────
+
+  describe("v4 → v5", () => {
+    const v4 = {
+      meta: {
+        version: 4,
+        exportedAt: "2026-09-01T00:00:00.000Z",
+        organizationName: "Before Inbox v2",
+        organizationSlug: "before",
+        entities: ["vendors", "phOrgTaxProfile"],
+      },
+      data: {
+        vendors: [{ name: "Old Vendor" }],
+        phOrgTaxProfile: [{ registeredName: "OLD CORP", tin: "123456789" }],
+        someFutureKey: { kept: true },
+      },
+    };
+
+    it("gives an old file empty routines, rule snapshots, memories and Jev lanes", () => {
+      const result = migrateToLatest(v4);
+      expect(result.meta).toEqual({ ...v4.meta, version: 5 });
+      expect(result.data).toEqual({ ...v4.data, ...V5_EMPTY });
+    });
+
+    it("never mutates the file it was given", () => {
+      const copy = structuredClone(v4);
+      migrateToLatest(copy);
+      expect(copy).toEqual(v4);
+    });
+
+    it("keeps any of the v5 arrays a v4 file somehow already has", () => {
+      const withRoutines = { ...v4, data: { ...v4.data, routines: [{ name: "Kept" }] } };
+      const result = migrateToLatest(withRoutines);
+      expect(result.data.routines).toEqual([{ name: "Kept" }]);
+      expect(result.data.ruleSnapshots).toEqual([]);
+    });
+
+    it("chains a v1 file through to v5", () => {
+      const result = migrateToLatest(v1Sample);
+      expect(result.meta.version).toBe(5);
+      expect(result.data).toMatchObject(V5_EMPTY);
+      expect((result.data.banks as unknown[]).length).toBe(1);
+    });
+
+    it("passes a v5 file through unchanged", () => {
+      const result = migrateToLatest(v5Sample);
+      expect(result).toBe(v5Sample);
+      expect((result.data.routines as unknown[]).length).toBe(2);
     });
   });
 });

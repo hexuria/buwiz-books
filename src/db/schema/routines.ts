@@ -16,8 +16,10 @@
  * `rule_snapshots` ON DELETE RESTRICT, so a pinned or shadowed snapshot cannot
  * disappear underneath a routine.
  *
- * Export/import: routines are org configuration and join the export in the
- * version-5 bump (spec build step 12). They are deliberately NOT exported yet.
+ * Export/import: routines are org configuration, exported since version 5
+ * (src/lib/export-inbox.ts) without their runtime state (cursor, run times,
+ * last error). `routine_secrets` is never exported: an imported signed webhook
+ * arrives disabled with no secret.
  */
 import { sql } from "drizzle-orm";
 import {

@@ -4,7 +4,7 @@
  */
 
 /** Current export format version. Bump when adding new entities or changing field shapes. */
-export const EXPORT_VERSION = 4;
+export const EXPORT_VERSION = 5;
 
 /**
  * All entity types supported by the versioned export format.
@@ -41,6 +41,13 @@ export const EXPORTABLE_ENTITIES = [
   "phPayrollLines",
   "phPayrollYearState",
   "phComputedReturns",
+  // v5: Inbox v2 organization configuration (src/lib/export-inbox.ts). Order matters: rule
+  // snapshots before the routines that pin them; memories and Jev's approval lanes after the
+  // parties (and, for memories, categories) they resolve against.
+  "ruleSnapshots",
+  "routines",
+  "classificationMemories",
+  "aiAutonomyLanes",
 ] as const;
 
 export type ExportableEntity = (typeof EXPORTABLE_ENTITIES)[number];
@@ -80,6 +87,10 @@ export const ENTITY_LABELS: Record<ExportableEntity, string> = {
   phPayrollLines: "PH Payroll Lines",
   phPayrollYearState: "PH Payroll Year State",
   phComputedReturns: "PH Computed Returns (as-filed)",
+  ruleSnapshots: "Rule Snapshots",
+  routines: "Routines",
+  classificationMemories: "Classification Memories",
+  aiAutonomyLanes: "Jev Approval Lanes",
 };
 
 /** Metadata block included in every versioned export file */

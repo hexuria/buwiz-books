@@ -98,6 +98,23 @@ export async function findAutonomyLane(
 }
 
 /**
+ * Serialize work on one lane identity until the caller's transaction ends. Every path that
+ * creates a lane takes it (here, and the export/import in src/lib/export-inbox.ts), so a lane is
+ * never created twice — the unique indexes treat NULLs as distinct.
+ */
+export async function lockAutonomyLaneIdentity(
+  db: DbExecutor,
+  orgId: string,
+  identity: AutonomyLaneIdentity,
+): Promise<void> {
+  await db.execute(sql`
+    SELECT pg_advisory_xact_lock(
+      hashtextextended(${`ai-autonomy-lane:${orgId}:${identity.laneKey}:${identity.partyId ?? ""}:${identity.docKind ?? ""}`}, 0::bigint)
+    )
+  `);
+}
+
+/**
  * The lane for an identity, created at `watch` on first sight. The party must
  * belong to the organization. Serialized per identity, so two papers seen at
  * once cannot create the same lane twice.
@@ -115,11 +132,7 @@ export async function ensureAutonomyLane(
       .limit(1);
     if (!party) throw new Error("The lane's party does not belong to this organization.");
   }
-  await db.execute(sql`
-    SELECT pg_advisory_xact_lock(
-      hashtextextended(${`ai-autonomy-lane:${orgId}:${identity.laneKey}:${identity.partyId ?? ""}:${identity.docKind ?? ""}`}, 0::bigint)
-    )
-  `);
+  await lockAutonomyLaneIdentity(db, orgId, identity);
   const existing = await findAutonomyLane(db, orgId, identity);
   if (existing) return existing;
   const [created] = await db

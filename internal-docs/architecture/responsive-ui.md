@@ -218,8 +218,8 @@ Rules:
   left, title centered or left, primary action right; body scrolls; footer actions pinned above the
   safe area and full-width.
 - **Bottom sheets** get a grab handle, drag-to-dismiss, backdrop tap-to-close, and `max-h-[85dvh]`.
-- Use `dvh`, never `vh` — mobile browser chrome makes `100vh` overflow. The codebase currently uses
-  `h-[calc(100vh-0px)]` in `inbox.tsx`, which is exactly this bug.
+- Use `dvh`, never `vh` — mobile browser chrome makes `100vh` overflow. The classic `inbox.tsx`
+  (since replaced by the Inbox v2 screen) used `h-[calc(100vh-0px)]`, which was exactly this bug.
 - Lock body scroll while open, and **preserve scroll position** on close.
 - Focus trap, ESC to close, `aria-modal`, labelled by the title, focus restored to the trigger.
 - Never nest a modal in a modal on mobile — push a second full-screen layer with a back affordance.
@@ -361,8 +361,8 @@ Resolved in this pass, kept here only so the entries are not re-opened:
   keeps its own anchored popover above `md` and mounts `FilterBar` only below it, because
   `FilterBar`'s desktop branch lays its children out inline and these toolbars are single-line.
 - `AdaptiveButton`, `PageHeader`, the column-driven `DataTable` and `ConfirmDialog` are deleted —
-  all four ended the rollout with zero importers. The local `PageHeader` inside `review-agents.tsx`
-  is a route-private function and is unrelated. Confirms are written directly against
+  all four ended the rollout with zero importers. The local `PageHeader` that lived inside the
+  retired Review Agents page (`review-agents.tsx`, now a redirect) was route-private and unrelated. Confirms are written directly against
   `<Modal mobile="center" size="sm">`.
 
 ## 11. Definition of done

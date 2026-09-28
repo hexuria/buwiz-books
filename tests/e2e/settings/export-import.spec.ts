@@ -49,6 +49,11 @@ test.describe("Settings Export & Import", () => {
         "Number Sequences",
         "PH Tax Profile",
         "PH Computed Returns (as-filed)",
+        // v5: Inbox configuration
+        "Rule Snapshots",
+        "Routines",
+        "Classification Memories",
+        "Jev Approval Lanes",
       ];
 
       for (const label of expectedLabels) {
@@ -83,7 +88,9 @@ test.describe("Settings Export & Import", () => {
       await expect(page.getByText(/Include inactive records/i)).toBeVisible();
     });
 
-    test("should export selected entities as JSON and produce valid v2 file", async ({ page }) => {
+    test("should export selected entities as JSON and produce a valid versioned file", async ({
+      page,
+    }) => {
       // Deselect all first
       await page.getByText("Deselect All", { exact: true }).first().click();
 
@@ -120,9 +127,9 @@ test.describe("Settings Export & Import", () => {
       const content = fs.readFileSync(filePath, "utf-8");
       const exported = JSON.parse(content);
 
-      // Verify v2 format with meta block
+      // Verify the versioned format (v5) with meta block
       expect(exported.meta).toBeDefined();
-      expect(exported.meta.version).toBe(2);
+      expect(exported.meta.version).toBe(5);
       expect(typeof exported.meta.exportedAt).toBe("string");
       expect(typeof exported.meta.organizationName).toBe("string");
       expect(exported.meta.organizationSlug).toBeDefined();
@@ -181,6 +188,10 @@ test.describe("Settings Export & Import", () => {
         "Products & Services",
         "PH Tax Profile",
         "PH Computed Returns (as-filed)",
+        "Rule Snapshots",
+        "Routines",
+        "Classification Memories",
+        "Jev Approval Lanes",
       ];
 
       for (const opt of expectedOptions) {

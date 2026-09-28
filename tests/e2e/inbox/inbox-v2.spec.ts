@@ -1,7 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * Inbox v2 behind the per-organization `inbox_v2` flag (research spec §10-11).
+ * The Inbox (research spec §10). Since the cutover it is the only Inbox: no per-organization
+ * switch, no classic page.
  *
  * Run it against the offline AI runtime so nothing the pages render can reach a model:
  *
@@ -9,26 +10,11 @@ import { test, expect, type Page } from "@playwright/test";
  *
  * (Playwright hands its environment to the `dev:test` server it starts.) The entries here are
  * typed by hand, so no step depends on model output.
- *
- * The flag is organization-wide: this file turns it on through Settings and back off when it is
- * done. The classic Inbox spec in this folder expects it off, so run the suite with one worker
- * (as CI does) or run this file on its own.
  */
 
 test.skip(process.env.AI_MODE !== "mock", "Inbox v2 E2E runs with AI_MODE=mock");
 test.describe.configure({ mode: "serial" });
 test.use({ storageState: "tests/e2e/.auth/user.json" });
-
-async function setInboxV2(page: Page, on: boolean) {
-  await page.goto("/inbox");
-  await page.getByRole("link", { name: "Settings" }).first().click();
-  const toggle = page.getByRole("switch", { name: "New Inbox" });
-  await expect(toggle).toBeVisible({ timeout: 15_000 });
-  if ((await toggle.getAttribute("aria-checked")) !== String(on)) {
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-checked", String(on));
-  }
-}
 
 async function pickOption(page: Page, trigger: string, search: string, option: RegExp) {
   await page.getByText(trigger, { exact: true }).locator("visible=true").first().click();
@@ -56,22 +42,16 @@ function row(page: Page, id: string) {
   return page.locator(`[data-item-id="${id}"]`);
 }
 
-test.describe("Inbox v2", () => {
-  test.afterAll(async ({ browser }) => {
-    const context = await browser.newContext({ storageState: "tests/e2e/.auth/user.json" });
-    await setInboxV2(await context.newPage(), false);
-    await context.close();
-  });
-
-  test("the org flag swaps /inbox between the classic page and Inbox v2", async ({ page }) => {
-    await setInboxV2(page, false);
+test.describe("Inbox", () => {
+  test("/inbox is the triage screen, with no classic page and no switch", async ({ page }) => {
     await page.goto("/inbox");
-    await expect(page.getByText("Review queue")).toBeVisible({ timeout: 15_000 });
-
-    await setInboxV2(page, true);
-    await page.goto("/inbox");
-    await expect(page.getByRole("toolbar", { name: "Filter by reason" })).toBeVisible();
+    await expect(page.getByRole("toolbar", { name: "Filter by reason" })).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByText("Review queue")).toHaveCount(0);
+    // An old classic-Inbox link with a state filter lands on the same screen.
+    await page.goto("/inbox?state=approved");
+    await expect(page.getByRole("toolbar", { name: "Filter by reason" })).toBeVisible();
     for (const chip of [
       "All",
       "Needs a fix",
@@ -91,7 +71,6 @@ test.describe("Inbox v2", () => {
   test("an entry lands with a reason, is fixed through its checks, and approves with 'a'", async ({
     page,
   }) => {
-    await setInboxV2(page, true);
     const memo = `E2E inbox v2 approve ${Date.now()}`;
     const id = await submitExpense(page, { memo, amount: "9.37", vendor: "Amazon Web Services" });
 
@@ -101,7 +80,7 @@ test.describe("Inbox v2", () => {
     await expect(row(page, id).locator("[data-reason]")).toHaveCount(1);
 
     // Resolve whatever checks block it (department, location, …) with a documented exception,
-    // the same action the classic page offers. Approve stays off until none block.
+    // the documented-exception action. Approve stays off until none block.
     const approve = page.getByRole("button", { name: "Approve", exact: true });
     const notes = page.getByPlaceholder("Resolution or documented exception");
     for (
@@ -129,7 +108,6 @@ test.describe("Inbox v2", () => {
   });
 
   test("r rejects with a reason and the item leaves the Inbox", async ({ page }) => {
-    await setInboxV2(page, true);
     const id = await submitExpense(page, {
       memo: `E2E inbox v2 reject ${Date.now()}`,
       amount: "4.21",
@@ -150,7 +128,6 @@ test.describe("Inbox v2", () => {
   });
 
   test("j and k move through the list", async ({ page }) => {
-    await setInboxV2(page, true);
     await submitExpense(page, { memo: `E2E inbox v2 first ${Date.now()}`, amount: "3.11" });
     await submitExpense(page, { memo: `E2E inbox v2 second ${Date.now()}`, amount: "3.12" });
     await page.goto("/inbox");
@@ -164,7 +141,6 @@ test.describe("Inbox v2", () => {
   });
 
   test("below lg the reading pane is a full-height drawer", async ({ page }) => {
-    await setInboxV2(page, true);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/inbox");
     const rows = page.getByRole("list", { name: "Items that need you" }).getByRole("button");

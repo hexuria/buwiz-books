@@ -64,4 +64,12 @@ test.describe("Settings Email Tab", () => {
     await page.getByRole("button", { name: "Hide" }).click();
     await expect(resendInput).toHaveAttribute("type", "password");
   });
+
+  // The inbound address moved here from the classic Inbox's left rail at the Inbox cutover.
+  test("shows the Inbox's inbound email address card", async ({ page }) => {
+    const card = page.getByRole("region", { name: "Inbound email" });
+    await expect(card).toBeVisible();
+    await expect(card.getByLabel("Inbound address")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Generate" })).toBeVisible();
+  });
 });

@@ -234,9 +234,10 @@ describe("PH export registry", () => {
     }
   });
 
-  it("v4 is current, and the migration chain lifts older files to it", () => {
-    // P13 bumped v3 → v4 (party_tax_profiles.nationality, passthrough).
-    expect(EXPORT_VERSION).toBe(4);
+  it("v5 is current, and the migration chain lifts older files to it", () => {
+    // P13 bumped v3 → v4 (party_tax_profiles.nationality, passthrough);
+    // Inbox v2 step 12 bumped v4 → v5 (Inbox configuration entities).
+    expect(EXPORT_VERSION).toBe(5);
     const v2 = {
       meta: {
         version: 2,
@@ -248,7 +249,7 @@ describe("PH export registry", () => {
       data: { vendors: [{ name: "Old Vendor" }] },
     };
     const migrated = migrateToLatest(v2);
-    expect(migrated.meta.version).toBe(4);
+    expect(migrated.meta.version).toBe(5);
     expect((migrated.data as Record<string, unknown>).vendors).toEqual([{ name: "Old Vendor" }]);
   });
 

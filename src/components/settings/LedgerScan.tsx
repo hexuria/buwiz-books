@@ -565,7 +565,7 @@ function FindingRow({
               {finding.inboxItemId && (
                 <Link
                   to="/inbox"
-                  search={{ selected: finding.inboxItemId, state: "all" }}
+                  search={{ selected: finding.inboxItemId }}
                   className="mt-1 inline-flex items-center gap-1 font-medium text-[#0d9488] dark:text-teal-400 hover:underline"
                 >
                   Open in Inbox
