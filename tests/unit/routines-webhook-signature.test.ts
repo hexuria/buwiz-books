@@ -1,7 +1,7 @@
 /**
  * HMAC verification for generic webhook routines (Inbox v2 §3).
  *
- * Pure: signs `${timestamp}.${rawBody}` and checks it in constant time within
+ * Pure: signs `${timestamp}.${eventId}.${rawBody}` and checks it in constant time within
  * a 300-second window. The route test pins the HTTP behavior; this file pins
  * the edges — tampering, wrong key, both clock directions, the exact boundary,
  * and malformed input that must never reach the comparison.
@@ -18,14 +18,17 @@ const SECRET = "bwz_whsec_test-secret-value";
 const NOW = new Date("2026-09-27T12:00:00.000Z");
 const NOW_SECONDS = Math.floor(NOW.getTime() / 1000);
 const BODY = JSON.stringify({ invoice: "INV-1", amount: "12.50" });
+const EVENT = "evt_0001";
 
 function verify(overrides: Partial<Parameters<typeof verifyRoutineWebhookSignature>[0]> = {}) {
   const timestamp = overrides.timestamp ?? String(NOW_SECONDS);
   const rawBody = overrides.rawBody ?? BODY;
+  const eventId = overrides.eventId ?? EVENT;
   return verifyRoutineWebhookSignature({
     secret: SECRET,
     timestamp,
-    signature: overrides.signature ?? signRoutineWebhook(SECRET, timestamp, rawBody),
+    eventId,
+    signature: overrides.signature ?? signRoutineWebhook(SECRET, timestamp, eventId, rawBody),
     rawBody,
     now: NOW,
     toleranceSeconds: 300,
@@ -34,20 +37,32 @@ function verify(overrides: Partial<Parameters<typeof verifyRoutineWebhookSignatu
 }
 
 describe("routine webhook signatures", () => {
-  it("signs timestamp.body with HMAC-SHA256 as lowercase hex", () => {
-    const expected = createHmac("sha256", SECRET).update(`${NOW_SECONDS}.${BODY}`).digest("hex");
-    expect(signRoutineWebhook(SECRET, String(NOW_SECONDS), BODY)).toBe(expected);
-    expect(signRoutineWebhook(SECRET, String(NOW_SECONDS), Buffer.from(BODY))).toBe(expected);
+  it("signs timestamp.eventId.body with HMAC-SHA256 as lowercase hex", () => {
+    const expected = createHmac("sha256", SECRET)
+      .update(`${NOW_SECONDS}.${EVENT}.${BODY}`)
+      .digest("hex");
+    expect(signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY)).toBe(expected);
+    expect(signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, Buffer.from(BODY))).toBe(
+      expected,
+    );
+  });
+
+  it("binds the event id: a valid signature cannot be replayed under a new event id", () => {
+    const signature = signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY);
+    expect(verify({ signature, eventId: "evt_0002" })).toEqual({
+      ok: false,
+      reason: "signature_mismatch",
+    });
   });
 
   it("accepts a valid signature, in either hex case", () => {
     expect(verify()).toEqual({ ok: true });
-    const upper = signRoutineWebhook(SECRET, String(NOW_SECONDS), BODY).toUpperCase();
+    const upper = signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY).toUpperCase();
     expect(verify({ signature: upper })).toEqual({ ok: true });
   });
 
   it("rejects a tampered body", () => {
-    const signature = signRoutineWebhook(SECRET, String(NOW_SECONDS), BODY);
+    const signature = signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY);
     expect(verify({ signature, rawBody: BODY.replace("12.50", "1250.00") })).toEqual({
       ok: false,
       reason: "signature_mismatch",
@@ -55,13 +70,13 @@ describe("routine webhook signatures", () => {
   });
 
   it("rejects a signature made with another secret", () => {
-    const signature = signRoutineWebhook("another-secret", String(NOW_SECONDS), BODY);
+    const signature = signRoutineWebhook("another-secret", String(NOW_SECONDS), EVENT, BODY);
     expect(verify({ signature })).toEqual({ ok: false, reason: "signature_mismatch" });
   });
 
   it("binds the timestamp: a valid signature cannot be moved to a fresh timestamp", () => {
     const old = String(NOW_SECONDS - 10);
-    const signature = signRoutineWebhook(SECRET, old, BODY);
+    const signature = signRoutineWebhook(SECRET, old, EVENT, BODY);
     expect(verify({ timestamp: String(NOW_SECONDS), signature })).toEqual({
       ok: false,
       reason: "signature_mismatch",
@@ -90,7 +105,7 @@ describe("routine webhook signatures", () => {
   });
 
   it("rejects malformed signatures without comparing", () => {
-    const good = signRoutineWebhook(SECRET, String(NOW_SECONDS), BODY);
+    const good = signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY);
     for (const signature of [
       "",
       good.slice(0, 63),

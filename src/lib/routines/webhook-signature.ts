@@ -1,18 +1,20 @@
 /**
  * HMAC-SHA256 signatures for generic webhook routines (Inbox v2 spec §3).
  *
- * The sender signs `${timestamp}.${rawBody}` with the routine's secret and
- * sends:
+ * The sender signs `${timestamp}.${eventId}.${rawBody}` with the routine's
+ * secret and sends:
  *
  *   X-Buwiz-Timestamp: <unix seconds>
  *   X-Buwiz-Signature: <lowercase or uppercase hex of the 32-byte HMAC>
  *   X-Buwiz-Event-Id:  <sender's unique id for this event>
  *
  * The key is the UTF-8 bytes of the whole secret string, exactly as returned
- * by the rotate-secret server function. The timestamp is inside the signed
- * material, so a captured request cannot be replayed with a fresh timestamp,
- * and it must be within the tolerance window, so an old one cannot be replayed
- * at all. Comparison is constant-time.
+ * by the rotate-secret server function. The timestamp and the event id are
+ * both inside the signed material: a captured request cannot be replayed with
+ * a fresh timestamp, and it cannot be replayed under a new event id to slip
+ * past the per-event dedupe. The timestamp must also be within the tolerance
+ * window, so an old request cannot be replayed at all. Comparison is
+ * constant-time.
  *
  * Pure on purpose: no database, no clock except the injectable `now`.
  */
@@ -40,9 +42,13 @@ export type WebhookSignatureCheck =
 export function signRoutineWebhook(
   secret: string,
   timestamp: string,
+  eventId: string,
   rawBody: Uint8Array | string,
 ): string {
-  return createHmac("sha256", secret).update(`${timestamp}.`).update(rawBody).digest("hex");
+  return createHmac("sha256", secret)
+    .update(`${timestamp}.${eventId}.`)
+    .update(rawBody)
+    .digest("hex");
 }
 
 /**
@@ -65,6 +71,7 @@ export function checkWebhookTimestamp(
 export function verifyRoutineWebhookSignature(input: {
   secret: string;
   timestamp: string;
+  eventId: string;
   signature: string;
   rawBody: Uint8Array | string;
   now: Date;
@@ -78,7 +85,7 @@ export function verifyRoutineWebhookSignature(input: {
   if (!SIGNATURE_PATTERN.test(input.signature)) return { ok: false, reason: "malformed_signature" };
 
   const expected = Buffer.from(
-    signRoutineWebhook(input.secret, input.timestamp, input.rawBody),
+    signRoutineWebhook(input.secret, input.timestamp, input.eventId, input.rawBody),
     "hex",
   );
   const provided = Buffer.from(input.signature, "hex");

@@ -2,8 +2,10 @@
  * Nitro route: POST /api/routines/:routineId/webhook
  *
  * The generic webhook routine (Inbox v2 spec §3). A sender signs
- * `${timestamp}.${rawBody}` with the routine's secret (HMAC-SHA256, hex) and
- * sends X-Buwiz-Timestamp, X-Buwiz-Signature and X-Buwiz-Event-Id.
+ * `${timestamp}.${eventId}.${rawBody}` with the routine's secret (HMAC-SHA256,
+ * hex) and sends X-Buwiz-Timestamp, X-Buwiz-Signature and X-Buwiz-Event-Id.
+ * The event id is signed, so a captured request cannot be replayed under a new
+ * id to get past the per-event dedupe.
  *
  * Order matters, and every rejection happens before any row is written:
  *   1. malformed routine id, missing headers, stale/future timestamp
@@ -14,9 +16,18 @@
  *      secret and verify the signature in constant time
  * Only then is the payload recorded as an ingestion event, deduplicated per
  * (organization, routine, event id), and handed to the `routine_webhook` job.
+ * A disabled routine answers 503 with Retry-After and writes nothing, so the
+ * sender keeps retrying and the delivery goes through once it is turned on.
  */
 import { createHash } from "node:crypto";
-import { createError, defineEventHandler, getHeader, getRouterParam, type H3Event } from "h3";
+import {
+  createError,
+  defineEventHandler,
+  getHeader,
+  getRouterParam,
+  setResponseHeader,
+  type H3Event,
+} from "h3";
 import { and, eq, sql } from "drizzle-orm";
 import { db, withOrgContext } from "../../../../../src/db";
 import {
@@ -174,6 +185,7 @@ export default defineEventHandler(async (event) => {
       ? verifyRoutineWebhookSignature({
           secret,
           timestamp,
+          eventId,
           signature,
           rawBody,
           now: receivedAt,
@@ -191,6 +203,17 @@ export default defineEventHandler(async (event) => {
 
     // ---- Verified. Nothing above wrote a row. ----
     const payload = parsePayload(rawBody);
+    if (!routine.enabled) {
+      // Not accepted: a 2xx would tell the sender to stop retrying, and nothing
+      // would ever pick the payload up. Refuse before any row is written, so a
+      // retry after the routine is turned back on is an ordinary first delivery.
+      logger.warn("Routine webhook refused: routine is disabled", {
+        organizationId: owner.organizationId,
+        routineId: routine.id,
+        eventId,
+      });
+      return { disabled: true as const };
+    }
     const payloadHash = createHash("sha256").update(rawBody).digest("hex");
     const provider = routineWebhookEventProvider(routine.id);
 
@@ -228,9 +251,8 @@ export default defineEventHandler(async (event) => {
         payloadHash,
         payload,
         headers: { "x-buwiz-event-id": eventId, "x-buwiz-timestamp": timestamp },
-        status: routine.enabled ? "received" : "skipped",
+        status: "received",
         occurredAt: new Date(freshness.epochSeconds * 1000),
-        processedAt: routine.enabled ? null : receivedAt,
       })
       .onConflictDoNothing()
       .returning();
@@ -241,7 +263,11 @@ export default defineEventHandler(async (event) => {
       // distinct delivery attempt (senders re-sign retries with a fresh
       // timestamp); a byte-identical replay collapses into the same row.
       const [existing] = await tx
-        .select({ id: ingestionEvents.id, payloadHash: ingestionEvents.payloadHash })
+        .select({
+          id: ingestionEvents.id,
+          payloadHash: ingestionEvents.payloadHash,
+          status: ingestionEvents.status,
+        })
         .from(ingestionEvents)
         .where(
           and(
@@ -252,6 +278,23 @@ export default defineEventHandler(async (event) => {
         )
         .limit(1);
       if (!existing) throw new Error("Duplicate routine webhook event could not be resolved.");
+      if (existing.status === "skipped") {
+        // Recorded while the routine was disabled (before disabled deliveries
+        // were refused). The routine is on now, so this retry processes it.
+        await tx
+          .update(ingestionEvents)
+          .set({ status: "received", processedAt: null })
+          .where(eq(ingestionEvents.id, existing.id));
+        await tx.insert(processingJobs).values({
+          organizationId: owner.organizationId,
+          routineId: routine.id,
+          ingestionEventId: existing.id,
+          jobType: ROUTINE_WEBHOOK_JOB_TYPE,
+          dedupeKey: `routine-webhook:${existing.id}`,
+          payload: { routineId: routine.id, ingestionEventId: existing.id },
+        });
+        return { received: true, ingestionEventId: existing.id, queued: true };
+      }
       await tx
         .insert(workflowEvents)
         .values({
@@ -273,32 +316,6 @@ export default defineEventHandler(async (event) => {
       return { received: true, duplicate: true, ingestionEventId: existing.id, queued: false };
     }
 
-    if (!routine.enabled) {
-      await tx
-        .insert(workflowEvents)
-        .values({
-          organizationId: owner.organizationId,
-          entityType: "ingestion_event",
-          entityId: ingestionEvent.id,
-          action: "routine_disabled_skipped",
-          actorType: "system",
-          idempotencyKey: `routine-disabled:ingestion:${ingestionEvent.id}`,
-          data: {
-            routineId: routine.id,
-            eventId,
-            reason: "The routine is disabled; the payload was recorded, not processed.",
-          },
-        })
-        .onConflictDoNothing();
-      return {
-        received: true,
-        processed: false,
-        reason: "routine_disabled",
-        ingestionEventId: ingestionEvent.id,
-        queued: false,
-      };
-    }
-
     await tx.insert(processingJobs).values({
       organizationId: owner.organizationId,
       routineId: routine.id,
@@ -315,6 +332,14 @@ export default defineEventHandler(async (event) => {
     return { received: true, ingestionEventId: ingestionEvent.id, queued: true };
   });
 
+  if ("disabled" in outcome) {
+    // Temporary: retry later. Nothing was stored.
+    setResponseHeader(event, "Retry-After", "300");
+    throw createError({
+      statusCode: 503,
+      message: "This routine is turned off. Retry later; the delivery was not stored.",
+    });
+  }
   // Kick the worker only after the enqueue transaction committed.
   if (outcome.queued) triggerWorker([ROUTINE_WEBHOOK_JOB_TYPE]);
   return outcome;

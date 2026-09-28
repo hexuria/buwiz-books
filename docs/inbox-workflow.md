@@ -149,14 +149,17 @@ update, enable, disable, rotate secret; writes need `integration:authorize`).
 
   ```text
   X-Buwiz-Timestamp: <unix seconds, within 300 s of our clock>
-  X-Buwiz-Signature: <hex HMAC-SHA256 of "<timestamp>.<raw body>">
+  X-Buwiz-Signature: <hex HMAC-SHA256 of "<timestamp>.<event id>.<raw body>">
   X-Buwiz-Event-Id:  <the sender's unique id for this event>
   ```
 
   The HMAC key is the whole secret string returned by the rotate-secret server function — the only
   time it is ever shown. It is stored encrypted in `routine_secrets` and referenced from the
-  routine by `secret_ref`; rotating retires the previous secret immediately. Every rejection (401
-  signature or timestamp, 413 size, 404 routine) happens before any row is written. An accepted
+  routine by `secret_ref`; rotating retires the previous secret immediately. The event id is part of
+  the signed string, so a captured request cannot be replayed under a new id to get past the
+  per-event dedupe. Every rejection (401 signature or timestamp, 413 size, 404 routine, and 503 with
+  `Retry-After` while the routine is turned off) happens before any row is written, so a sender's
+  retry after the routine is turned back on is processed like a first delivery. An accepted
   payload becomes an ingestion event and a `routine_webhook` job whose handler creates a source
   record and an Inbox item. Event ids are deduplicated per routine; a suppressed duplicate returns
   `duplicate: true` and writes an `exact_replay_suppressed` workflow event (flagging a replayed id

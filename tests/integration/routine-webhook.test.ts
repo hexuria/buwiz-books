@@ -110,15 +110,17 @@ function nowSeconds() {
 function deliver(fixture: Pick<Fixture, "routineId" | "secret">, delivery: Delivery = {}) {
   const body = delivery.body ?? JSON.stringify({ vendor: "Acme", total: "84.25" });
   const timestamp = delivery.timestamp ?? nowSeconds();
+  const eventId = delivery.eventId === null ? null : (delivery.eventId ?? randomUUID());
   const signature =
-    delivery.signature ?? signRoutineWebhook(delivery.secret ?? fixture.secret, timestamp, body);
+    delivery.signature ??
+    signRoutineWebhook(delivery.secret ?? fixture.secret, timestamp, eventId ?? "", body);
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "x-buwiz-timestamp": timestamp,
     "x-buwiz-signature": signature,
     ...delivery.headers,
   };
-  if (delivery.eventId !== null) headers["x-buwiz-event-id"] = delivery.eventId ?? randomUUID();
+  if (eventId !== null) headers["x-buwiz-event-id"] = eventId;
   const event = mockEvent(`http://localhost/api/routines/${fixture.routineId}/webhook`, {
     method: "POST",
     headers,
@@ -438,45 +440,51 @@ describeDb("routine webhook", () => {
     });
   });
 
-  it("records but does not process a payload for a disabled routine", async () => {
+  it("refuses a delivery to a disabled routine with 503, stores nothing, and takes the retry once enabled", async () => {
     const paused = await createFixture("webhook-disabled");
-    await withOrgContext(paused.orgId, paused.userId, "admin", (tx) =>
-      setRoutineEnabled(tx, {
-        orgId: paused.orgId,
-        actorId: paused.userId,
-        routineId: paused.routineId,
-        enabled: false,
-      }),
-    );
-    const result = await deliver(paused, { eventId: "evt-paused" });
-    expect(result).toMatchObject({
-      received: true,
-      processed: false,
-      reason: "routine_disabled",
-      queued: false,
+    const setEnabled = (enabled: boolean) =>
+      withOrgContext(paused.orgId, paused.userId, "admin", (tx) =>
+        setRoutineEnabled(tx, {
+          orgId: paused.orgId,
+          actorId: paused.userId,
+          routineId: paused.routineId,
+          enabled,
+        }),
+      );
+    await setEnabled(false);
+    await expect(deliver(paused, { eventId: "evt-paused" })).rejects.toMatchObject({
+      statusCode: 503,
     });
     expect(triggerWorker).not.toHaveBeenCalled();
+    expect(await eventsFor(paused.orgId)).toHaveLength(0);
+    expect(
+      await db.select().from(processingJobs).where(eq(processingJobs.organizationId, paused.orgId)),
+    ).toHaveLength(0);
 
+    // The sender retries after the routine is turned back on: an ordinary first delivery.
+    await setEnabled(true);
+    const retried = await deliver(paused, { eventId: "evt-paused" });
+    expect(retried).toMatchObject({ received: true, queued: true });
     const [event] = await eventsFor(paused.orgId);
-    expect(event).toMatchObject({
-      routineId: paused.routineId,
-      status: "skipped",
-      payload: { vendor: "Acme", total: "84.25" },
-    });
-    const jobs = await db
-      .select()
-      .from(processingJobs)
-      .where(eq(processingJobs.organizationId, paused.orgId));
-    expect(jobs).toHaveLength(0);
-    const [skipped] = await db
-      .select()
-      .from(workflowEvents)
-      .where(
-        and(
-          eq(workflowEvents.organizationId, paused.orgId),
-          eq(workflowEvents.action, "routine_disabled_skipped"),
-        ),
-      );
-    expect(skipped).toMatchObject({ entityType: "ingestion_event", entityId: event.id });
+    expect(event).toMatchObject({ routineId: paused.routineId, status: "received" });
+    expect(
+      await db.select().from(processingJobs).where(eq(processingJobs.organizationId, paused.orgId)),
+    ).toHaveLength(1);
+  });
+
+  it("refuses a captured request replayed under a new event id, and writes nothing", async () => {
+    const fixture = await createFixture("webhook-replay-new-id");
+    const timestamp = nowSeconds();
+    const body = JSON.stringify({ vendor: "Acme", total: "84.25" });
+    const signature = signRoutineWebhook(fixture.secret, timestamp, "evt-original", body);
+    await expect(
+      deliver(fixture, { timestamp, body, signature, eventId: "evt-original" }),
+    ).resolves.toMatchObject({ received: true, queued: true });
+    await expect(
+      deliver(fixture, { timestamp, body, signature, eventId: "evt-forged" }),
+    ).rejects.toMatchObject({ statusCode: 401 });
+    const events = await eventsFor(fixture.orgId);
+    expect(events).toHaveLength(1);
+    expect(events[0].providerEventId).toBe("evt-original");
   });
 });
