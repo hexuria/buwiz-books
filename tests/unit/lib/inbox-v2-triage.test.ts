@@ -404,4 +404,13 @@ describe("memory answers (Inbox v2 step 10)", () => {
       "2 remembered answers for this file disagree about this paper.",
     );
   });
+
+  it("names a payee-bank change or a possible duplicate before a memory conflict", () => {
+    const conflict = blocking("memory_conflict", "2 remembered answers disagree.");
+    for (const ruleKey of ["party_payment_details_changed", "possible_duplicate"]) {
+      expect(
+        reasonFor({ openFindings: [conflict, blocking(ruleKey, "Stop and look.")] }),
+      ).toMatchObject({ reason: "needs_fix", detail: "blocking_finding", ruleKey });
+    }
+  });
 });

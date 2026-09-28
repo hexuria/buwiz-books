@@ -282,6 +282,7 @@ export const memoryApplicationSchema = z.object({
 
 export type MemoryApplyFailure =
   | "direction_mismatch"
+  | "currency_differs"
   | "split_currency_differs"
   | "split_amounts_differ"
   | "answer_incomplete";
@@ -300,6 +301,13 @@ export function applyMemoryAnswer(answer: MemoryAnswer, draft: MemoryDraft): App
   }
   const total = parseMoneyToScaled(draft.total);
   const currency = draft.currency.trim().toUpperCase();
+  // An answer remembered in one currency is not an answer for a paper in
+  // another: the remembered bank or payable account is that currency's. A
+  // one-line side would otherwise take the new paper's total and book, say, a
+  // EUR paper to a USD bank account.
+  if (answer.lines.some((line) => line.currency.trim().toUpperCase() !== currency)) {
+    return { ok: false, reason: "currency_differs" };
+  }
   const lines: AppliedMemoryLine[] = [];
   for (const side of ["debit", "credit"] as const) {
     const sideLines = answer.lines

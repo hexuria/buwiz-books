@@ -31,6 +31,7 @@ function preview(overrides: Record<string, unknown> = {}) {
     keyLabel: "File receipt-4242.pdf",
     requiresAdmin: false,
     allowed: true,
+    turnedOffNeedsAdmin: false,
     matched: 3,
     changed: 2,
     examined: 40,
@@ -162,8 +163,23 @@ describe("RememberThisPrompt", () => {
       "No past papers in the last 12 months match.",
     );
     expect(screen.getByText(/replaces the answer already remembered/u)).toHaveTextContent(
-      "it is turned off; saving turns it on",
+      "it is turned off; an owner or admin saving it turns it back on",
     );
+  });
+
+  it("holds Save when the memory is turned off and the reviewer is not an admin", async () => {
+    api.previewMemoryScope.mockResolvedValue(
+      preview({
+        allowed: false,
+        turnedOffNeedsAdmin: true,
+        existingMemory: { id: "m1", enabled: false },
+      }),
+    );
+    renderPrompt();
+    expect(await screen.findByText(/This memory is turned off/u)).toHaveTextContent(
+      "Only an owner or admin can save over it",
+    );
+    expect(saveButton()).toBeDisabled();
   });
 
   it("notes when the preview only read the newest papers", async () => {

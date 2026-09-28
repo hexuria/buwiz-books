@@ -100,6 +100,7 @@ describe("classification memory wiring", () => {
     // Delete lives in the session-free core the deleteBill server function calls.
     expect(bills).toContain("deleteBillCore(db, orgId, userId, parsed.id)");
     expect(read("src/lib/posting/bill-delete.ts")).toContain('reason: "bill_deleted",');
+    expect(read("src/routes/api/-invoices.ts")).toContain('reason: "invoice_voided",');
   });
 
   it("gates the server functions: approvers save, admins manage", () => {

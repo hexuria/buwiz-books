@@ -241,7 +241,7 @@ describe("applyMemoryAnswer", () => {
     const result = applyMemoryAnswer(RECEIPT, {
       direction: "outflow",
       total: "120.10",
-      currency: "EUR",
+      currency: "USD",
     });
     expect(result).toEqual({
       ok: true,
@@ -291,7 +291,14 @@ describe("applyMemoryAnswer", () => {
     ).toEqual({ ok: false, reason: "split_amounts_differ" });
     expect(
       applyMemoryAnswer(SPLIT, { direction: "outflow", total: "84.25", currency: "EUR" }),
-    ).toEqual({ ok: false, reason: "split_currency_differs" });
+    ).toEqual({ ok: false, reason: "currency_differs" });
+  });
+
+  it("never replays a one-line answer onto a paper in another currency", () => {
+    // The remembered bank account is a USD account; a EUR paper must not land there.
+    expect(
+      applyMemoryAnswer(RECEIPT, { direction: "outflow", total: "120.10", currency: "EUR" }),
+    ).toEqual({ ok: false, reason: "currency_differs" });
   });
 
   it("never flips money the other way", () => {

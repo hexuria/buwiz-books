@@ -19,7 +19,7 @@
 //     authored, task inbox_memory) whose replay must reproduce the answer.
 // ============================================================================
 
-import { and, asc, desc, eq, gte, inArray, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
@@ -41,6 +41,7 @@ import { roleHasPermission } from "@/lib/permission-policy";
 import { counterpartyRoleFor } from "../classification-plan";
 import { parseMoneyToScaled, scaledToMoney } from "../money";
 import {
+  accountSignature,
   buildMemoryAnswer,
   departsFromApplication,
   isMemoryDocKind,
@@ -125,6 +126,7 @@ const REJECTION_MESSAGES: Record<MemoryRejection, string> = {
   party_not_expected: "This kind of paper has no counterparty, but the answer names one.",
   doc_kind_not_editable: "The kind of paper in the answer cannot be set on this source.",
   direction_mismatch: "The answer is for money going the other way.",
+  currency_differs: "The answer was remembered in another currency.",
   split_currency_differs: "The answer splits amounts in another currency.",
   split_amounts_differ: "The answer splits amounts that do not add up to this paper's total.",
   answer_incomplete: "The saved answer is missing a side of the entry.",
@@ -139,13 +141,21 @@ export function answerForScope(answer: MemoryAnswer, scope: MemoryMatchKind): Me
 }
 
 /**
- * Whether a memory at this scope could answer more than one party's papers:
- * these words always can; a sender memory can unless its answer names the
- * party. Those are admin-only.
+ * Whether a memory at this scope is broad enough to be admin-only: these words
+ * always are; a sender memory is unless its answer names the party AND its key
+ * carries a printed tax id. A sender key without one ("email|") covers every
+ * untaxed paper from that address, which is as broad as a words memory. A key
+ * too long to keep verbatim is digested, and is treated as broad.
  */
-export function isCrossPartyScope(scope: MemoryMatchKind, answerPartyId: string | null): boolean {
+export function isCrossPartyScope(
+  scope: MemoryMatchKind,
+  answerPartyId: string | null,
+  matchKey?: string | null,
+): boolean {
   if (scope === "line_text") return true;
-  return scope === "sender_party" && answerPartyId === null;
+  if (scope !== "sender_party") return false;
+  if (answerPartyId === null) return true;
+  return !matchKey || matchKey.startsWith("sha256:") || matchKey.endsWith("|");
 }
 
 function canSaveCrossParty(role: string): boolean {
@@ -404,11 +414,11 @@ export async function rememberCorrection(
   if (input.expectedRevision !== undefined && candidate.revision !== input.expectedRevision) {
     throw new Error("This draft changed after you opened it. Refresh and review it again.");
   }
-  if (isCrossPartyScope(input.scope, answer.partyId) && !canSaveCrossParty(ctx.role)) {
-    throw new AuthorizationError(MEMORY_ADMIN_PERMISSION.resource, MEMORY_ADMIN_PERMISSION.action);
-  }
   const matchKey = await keyForScope(db, orgId, candidate, input.scope);
   if (!matchKey) throw new Error(SCOPE_UNAVAILABLE[input.scope]);
+  if (isCrossPartyScope(input.scope, answer.partyId, matchKey) && !canSaveCrossParty(ctx.role)) {
+    throw new AuthorizationError(MEMORY_ADMIN_PERMISSION.resource, MEMORY_ADMIN_PERMISSION.action);
+  }
 
   const [previous] = await db
     .select()
@@ -420,31 +430,70 @@ export async function rememberCorrection(
         eq(classificationMemories.matchKey, matchKey),
       ),
     )
-    .limit(1);
-  const values = {
-    answerDocKind: answer.docKind,
-    answerPartyId: answer.partyId,
-    answerLines: answer.lines,
-    createdBy: userId,
-    sourceFeedbackId: null,
-    uses: 0,
-    undos: 0,
-    consecutiveUndos: 0,
-    enabled: true,
-    updatedAt: new Date(),
-  };
-  const [memory] = await db
-    .insert(classificationMemories)
-    .values({ organizationId: orgId, matchKind: input.scope, matchKey, ...values })
-    .onConflictDoUpdate({
-      target: [
-        classificationMemories.organizationId,
-        classificationMemories.matchKind,
-        classificationMemories.matchKey,
-      ],
-      set: values,
-    })
-    .returning();
+    .limit(1)
+    .for("update");
+  // A memory that is off — turned off by an admin, or by its own undo streak —
+  // stays off until someone who manages memories turns it back on. Saving
+  // over it is not a way around that.
+  if (previous && !previous.enabled && !canSaveCrossParty(ctx.role)) {
+    throw new Error(
+      "This memory is turned off. An owner or admin can turn it back on in Settings → Review Rules.",
+    );
+  }
+  const sameAnswer =
+    previous !== undefined &&
+    previous.answerDocKind === answer.docKind &&
+    previous.answerPartyId === answer.partyId &&
+    accountSignature(
+      (previous.answerLines ?? []).map((line) => ({
+        side: line.lineMatch.side,
+        accountId: line.accountId,
+      })),
+    ) ===
+      accountSignature(
+        answer.lines.map((line) => ({ side: line.lineMatch.side, accountId: line.accountId })),
+      );
+
+  let memory: typeof classificationMemories.$inferSelect;
+  if (previous && sameAnswer) {
+    // The same answer again: its uses and undo counts are the memory's own
+    // history, not this click's. A memory that was off is only reachable here
+    // by someone who manages memories, and their save turns it back on, exactly
+    // as the Settings switch would.
+    [memory] = await db
+      .update(classificationMemories)
+      .set({
+        updatedAt: new Date(),
+        ...(previous.enabled ? {} : { enabled: true, consecutiveUndos: 0 }),
+      })
+      .where(eq(classificationMemories.id, previous.id))
+      .returning();
+  } else {
+    if (previous) {
+      // A different answer is a different memory: a new id, so the old
+      // answer's open applications (and their undos or approvals) can never be
+      // counted against this one. The old answer stays in the event below.
+      // The old memory's lock row stays, as it does on delete: an audit record.
+      await db.delete(classificationMemories).where(eq(classificationMemories.id, previous.id));
+    }
+    [memory] = await db
+      .insert(classificationMemories)
+      .values({
+        organizationId: orgId,
+        matchKind: input.scope,
+        matchKey,
+        answerDocKind: answer.docKind,
+        answerPartyId: answer.partyId,
+        answerLines: answer.lines,
+        createdBy: userId,
+        sourceFeedbackId: null,
+        uses: 0,
+        undos: 0,
+        consecutiveUndos: 0,
+        enabled: true,
+      })
+      .returning();
+  }
 
   // The test lock: replaying this answer onto this very paper must always
   // reproduce it. buildMemoryLock throws before anything commits if not.
@@ -460,6 +509,8 @@ export async function rememberCorrection(
       currency: candidate.originalCurrency.trim().toUpperCase(),
     },
   });
+  // One current lock per memory: a re-save replaces it rather than appending.
+  await deleteMemoryLocks(db, orgId, memory.id);
   const [evalCase] = await db
     .insert(aiEvalCases)
     .values({
@@ -468,8 +519,9 @@ export async function rememberCorrection(
       inputRef: lock.inputRef,
       expected: { ...lock.expected },
       provenance: MEMORY_LOCK_PROVENANCE,
-      // Ids, amounts and a digest of the key only: nothing to redact.
-      piiRedacted: true,
+      // Ids, amounts and a digest of the key only. Nothing went through
+      // redact.ts, and the column means exactly that, so it says false.
+      piiRedacted: false,
       promptVersionAtCapture: MEMORY_REPLAY_VERSION,
     })
     .returning({ id: aiEvalCases.id });
@@ -529,6 +581,19 @@ export async function rememberCorrection(
   };
 }
 
+/** The lock rows ("Remember this?" test cases) a memory wrote. */
+async function deleteMemoryLocks(db: DbExecutor, orgId: string, memoryId: string): Promise<void> {
+  await db
+    .delete(aiEvalCases)
+    .where(
+      and(
+        eq(aiEvalCases.organizationId, orgId),
+        eq(aiEvalCases.task, MEMORY_LOCK_TASK),
+        sql`${aiEvalCases.inputRef} -> 'memory' ->> 'id' = ${memoryId}`,
+      ),
+    );
+}
+
 export type MemoryScopePreview =
   | {
       available: false;
@@ -545,6 +610,8 @@ export type MemoryScopePreview =
       requiresAdmin: boolean;
       /** Whether this caller may save it. */
       allowed: boolean;
+      /** The memory saved for this key is off, and only an owner or admin may save over it. */
+      turnedOffNeedsAdmin: boolean;
       /** Past papers (not this one) with the same key, in the window. */
       matched: number;
       /** Of those, papers whose settled answer differs from this one. */
@@ -585,7 +652,7 @@ export async function previewMemoryScope(
   if (!matchKey) {
     return { available: false, scope: input.scope, reason: SCOPE_UNAVAILABLE[input.scope] };
   }
-  const requiresAdmin = isCrossPartyScope(input.scope, answer.partyId);
+  const requiresAdmin = isCrossPartyScope(input.scope, answer.partyId, matchKey);
 
   const since = new Date(now);
   since.setUTCMonth(since.getUTCMonth() - MEMORY_PREVIEW_WINDOW_MONTHS);
@@ -681,7 +748,8 @@ export async function previewMemoryScope(
     scope: input.scope,
     keyLabel: await labelMatchKey(db, orgId, input.scope, matchKey),
     requiresAdmin,
-    allowed: !requiresAdmin || canSaveCrossParty(ctx.role),
+    allowed: canSaveCrossParty(ctx.role) || (!requiresAdmin && !(existing && !existing.enabled)),
+    turnedOffNeedsAdmin: Boolean(existing && !existing.enabled && !canSaveCrossParty(ctx.role)),
     matched: matched.length,
     changed,
     examined: papers.length,

@@ -148,8 +148,12 @@ const MISSING_PARTY_RULES = new Set(["missing_vendor", "missing_customer"]);
  * after, in the order the list reads it (first seen, then rule key).
  */
 const FIX_PRECEDENCE: readonly string[] = [
+  // Unsafe to book at all: say these first, whatever else is open.
   "party_payment_details_changed",
   "possible_duplicate",
+  // Disagreeing memories come before the book rules: the Uncategorized line a
+  // conflict leaves behind is its symptom, not the fix.
+  MEMORY_CONFLICT_RULE,
   ...BOOK_RULE_KEYS,
 ];
 
@@ -219,14 +223,11 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
   );
   const unsureParty = signals.some((signal) => signal.subject === "party");
 
-  // Disagreeing memories are the fix to name: the Uncategorized line they leave is their symptom.
-  const blocking =
-    findings.find((finding) => finding.blocking && finding.ruleKey === MEMORY_CONFLICT_RULE) ??
-    firstFix(
-      findings.filter(
-        (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
-      ),
-    );
+  const blocking = firstFix(
+    findings.filter(
+      (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
+    ),
+  );
   if (blocking) return result("needs_fix", "blocking_finding", signals, blocking);
   // Judged on the entry, not the lifecycle state: stage 2 fills lines without moving an item
   // out of needs_information. A line with no account is missing a detail unless it is a

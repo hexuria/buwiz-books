@@ -342,6 +342,7 @@ beforeEach(() => {
     keyLabel: "File receipt.pdf",
     requiresAdmin: false,
     allowed: true,
+    turnedOffNeedsAdmin: false,
     matched: 2,
     changed: 1,
     examined: 12,

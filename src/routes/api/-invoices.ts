@@ -33,6 +33,7 @@ import {
 } from "../../lib/operational-idempotency";
 import { recordManualInvoicePayment } from "../../lib/manual-invoice-payment";
 import { createArJournalEntry } from "../../lib/invoice-journal";
+import { noteReversedMemoryEntries } from "../../lib/inbox/memory/tracking";
 import { assertInvoiceReferences, createInvoiceCore } from "../../lib/posting/invoice-core";
 
 // ============================================================================
@@ -643,6 +644,13 @@ export const transitionInvoiceStatus = createServerFn({
               eq(journalHeaders.status, "posted"),
             ),
           );
+        // Voiding an invoice an Inbox memory answered is an undo for that memory.
+        await noteReversedMemoryEntries(db, {
+          orgId,
+          journalHeaderIds: linkedHeaders.map((header) => header.id),
+          reason: "invoice_voided",
+          actorId: userId,
+        });
       }
 
       // Activity log for the transition itself

@@ -916,6 +916,11 @@ export interface ClassifyCandidateDeps {
    * the job commit together or not at all.
    */
   beforeCommit?: (tx: DbExecutor) => Promise<boolean>;
+  /**
+   * Test seam: runs after the read transaction commits and before the apply
+   * transaction opens — the window where models run and memories can change.
+   */
+  afterRead?: () => Promise<void>;
 }
 
 /** Classify one candidate revision: read, ask the memories then the models, apply. */
@@ -934,6 +939,7 @@ export async function classifyInboxCandidate(
   // The model calls run OUTSIDE any transaction — and not at all when a
   // memory answered or two memories disagreed.
   const models = answeredByMemory(context) ? NO_MODEL_RESULTS : await runModels(context, complete);
+  await deps.afterRead?.();
 
   try {
     return await orgTx(async (tx) => {
@@ -960,8 +966,11 @@ export async function classifyInboxCandidate(
       const chart = await loadChart(tx, input.orgId);
 
       // A memory decision is re-made under lock against the chart as it is
-      // now. If anything moved (a memory turned off, an account deactivated),
-      // nothing is applied: no model ran, so the line degrades to no fit.
+      // now, and the locked answer is the one applied. A memory replaced
+      // while this ran (a new correction gets a new id) still answers; when
+      // nothing answers any more (a memory turned off, an account
+      // deactivated) the outcome is "changed" and, since no model ran, the
+      // line degrades to no fit.
       let memoryDecision = context.memory.decision;
       let memoryOutcome: ClassificationMemorySummary["outcome"] = memoryDecision
         ? memoryDecision.kind
@@ -982,8 +991,11 @@ export async function classifyInboxCandidate(
           { lock: true },
         );
         if (!sameMemoryDecision(memoryDecision, recheck.decision)) {
-          memoryOutcome = "changed";
           memoryDecision = recheck.decision;
+          memoryOutcome =
+            recheck.decision?.kind === "hit" || recheck.decision?.kind === "conflict"
+              ? recheck.decision.kind
+              : "changed";
         }
       }
       const hit = memoryOutcome === "hit" && memoryDecision?.kind === "hit" ? memoryDecision : null;

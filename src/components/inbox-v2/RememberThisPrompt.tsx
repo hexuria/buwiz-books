@@ -36,12 +36,12 @@ export const MEMORY_SCOPE_OPTIONS: ReadonlyArray<{
   {
     value: "sender_party",
     label: "This sender",
-    hint: "Every paper from this sender and tax id.",
+    hint: "Every paper from this sender email and tax id. Without a tax id it can match more than one party, so owners and admins only.",
   },
   {
     value: "party",
     label: "This party",
-    hint: "Every paper matched to this vendor or customer.",
+    hint: "Every paper already linked to this vendor or customer by an exact match or a person. The usual department and location checks still apply.",
   },
   {
     value: "line_text",
@@ -144,7 +144,7 @@ export function RememberThisPrompt({
   }
   // A hand-entered entry that no kind of paper fits cannot be remembered at all.
   if (kindOptions !== null && kindOptions.length === 0) return null;
-  const blockedByRole = available !== null && available.requiresAdmin && !available.allowed;
+  const blockedByRole = available !== null && !available.allowed;
   const canSave = available !== null && !blockedByRole && !save.isPending;
 
   return (
@@ -252,7 +252,10 @@ export function RememberThisPrompt({
             {available.existingMemory && (
               <p className="text-[#64748b] dark:text-white/50">
                 Saving replaces the answer already remembered for this
-                {available.existingMemory.enabled ? "" : " (it is turned off; saving turns it on)"}.
+                {available.existingMemory.enabled
+                  ? ""
+                  : " (it is turned off; an owner or admin saving it turns it back on)"}
+                .
               </p>
             )}
             {blockedByRole && (
@@ -262,8 +265,9 @@ export function RememberThisPrompt({
               >
                 <LockIcon size={14} className="mt-0.5 shrink-0" />
                 <span>
-                  This would answer papers from more than one party, so only an owner or admin can
-                  save it.
+                  {available.turnedOffNeedsAdmin
+                    ? "This memory is turned off. Only an owner or admin can save over it or turn it back on in Settings → Review Rules."
+                    : "This would answer papers from more than one party, so only an owner or admin can save it."}
                 </span>
               </p>
             )}

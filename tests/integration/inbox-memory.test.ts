@@ -410,10 +410,11 @@ async function classify(
   fixture: Fixture,
   candidate: { id: string; revision: number },
   complete: AiCompleteFn,
+  afterRead?: () => Promise<void>,
 ) {
   return classifyInboxCandidate(
     { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: candidate.revision },
-    { complete },
+    { complete, afterRead },
   );
 }
 
@@ -584,7 +585,8 @@ integrationDescribe("memory answers the next paper, with no model", () => {
       organizationId: fixture.orgId,
       task: "inbox_memory",
       provenance: "authored",
-      piiRedacted: true,
+      // The lock keeps the paper's own words (line text, sender key), so it is not redacted.
+      piiRedacted: false,
     });
     expect(lock.expected).toEqual({
       docKind: "purchase",
@@ -876,6 +878,58 @@ integrationDescribe("memory hits are still drafts", () => {
   });
 });
 
+integrationDescribe("a memory that changes while the paper is classified", () => {
+  it("applies the memory that answers under lock, even when it was replaced mid-run", async () => {
+    const fixture = await createOrganizationWithChart("memory-race-replaced");
+    const { chart, vendor, first, saved } = await rememberedReceipt(fixture, "file_hash");
+    const second = await paperCarrying(fixture, [first.document]);
+    let replacement: { memoryId: string } | null = null;
+    const { complete, calls } = stubbedComplete();
+    const result = await classify(fixture, second.candidate, complete, async () => {
+      // A reviewer re-corrects the first paper to Computers and remembers it again.
+      await correct(fixture, first.inboxItemId, {
+        partyId: vendor.id,
+        lines: [
+          { accountId: chart.computers.id, debit: "84.25" },
+          { accountId: chart.bank.id, credit: "84.25" },
+        ],
+      });
+      replacement = await remember(fixture, first.candidate.id, "file_hash");
+    });
+
+    expect(replacement).not.toBeNull();
+    const replacedId = replacement!.memoryId;
+    expect(replacedId).not.toBe(saved.memoryId);
+    expect(calls).toEqual([]);
+    expect(result).toMatchObject({
+      status: "classified",
+      memory: { outcome: "hit", matchKind: "file_hash", memoryIds: [replacedId] },
+    });
+    const [debit] = await linesOf(second.candidate.id);
+    expect(debit.accountId).toBe(chart.computers.id);
+    expect(debit.predictionEvidence).toMatchObject({ source: "memory", memoryId: replacedId });
+  });
+
+  it("applies nothing when the memory was turned off mid-run", async () => {
+    const fixture = await createOrganizationWithChart("memory-race-off");
+    const { chart, first, saved } = await rememberedReceipt(fixture, "file_hash");
+    const second = await paperCarrying(fixture, [first.document]);
+    const result = await classify(
+      fixture,
+      second.candidate,
+      stubbedComplete().complete,
+      async () => {
+        asCaller(fixture);
+        await api.disableMemory({ data: { memoryId: saved.memoryId } });
+      },
+    );
+
+    expect(result).toMatchObject({ status: "classified", memory: { outcome: "changed" } });
+    const [debit] = await linesOf(second.candidate.id);
+    expect(debit.accountId).not.toBe(chart.office.id);
+  });
+});
+
 integrationDescribe("a remembered answer that settles the entry", () => {
   async function listedItem(fixture: Fixture, inboxItemId: string) {
     const list = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
@@ -1050,6 +1104,51 @@ integrationDescribe("undo tracking", () => {
     asCaller(fixture);
     const listed = (await api.listMemories()).find((item) => item.id === saved.memoryId);
     expect(listed).toMatchObject({ enabled: false, autoDisabled: true, undos: 2 });
+  });
+
+  it("an undo of the old answer never counts against the memory that replaced it", async () => {
+    const fixture = await createOrganizationWithChart("memory-replace-undo");
+    const { chart, vendor, first, saved } = await rememberedReceipt(fixture, "file_hash");
+    const paper = await paperCarrying(fixture, [first.document]);
+    expect(await classify(fixture, paper.candidate, stubbedComplete().complete)).toMatchObject({
+      memory: { outcome: "hit", memoryIds: [saved.memoryId] },
+    });
+
+    // The reviewer changes their mind on the first paper and remembers it again.
+    await correct(fixture, first.inboxItemId, {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.computers.id, debit: "84.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    });
+    const replaced = await remember(fixture, first.candidate.id, "file_hash");
+    expect(replaced).toMatchObject({ replaced: true });
+    expect(replaced.memoryId).not.toBe(saved.memoryId);
+    expect(await memoryRow(saved.memoryId)).toBeUndefined();
+
+    // Correcting the paper the OLD answer filled is not an undo of the new one.
+    await correct(fixture, paper.inboxItemId, {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.card.id, debit: "84.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    });
+    expect(await memoryRow(replaced.memoryId)).toMatchObject({
+      enabled: true,
+      uses: 0,
+      undos: 0,
+      consecutiveUndos: 0,
+    });
+    // One current test lock per memory: the replacement's.
+    const locks = await db
+      .select()
+      .from(aiEvalCases)
+      .where(
+        and(eq(aiEvalCases.organizationId, fixture.orgId), eq(aiEvalCases.task, "inbox_memory")),
+      );
+    expect(locks.map((lock) => lock.id)).toContain(replaced.evalCaseId);
   });
 
   /**
@@ -1242,6 +1341,67 @@ integrationDescribe("permissions", () => {
       memory: { outcome: "hit", matchKind: "line_text" },
       party: { outcome: "exact", linkedPartyId: otherVendor.id },
     });
+  });
+
+  it("an approver cannot save over a turned-off memory; an admin's save turns it back on", async () => {
+    const fixture = await createOrganizationWithChart("memory-resave-off");
+    const { first, saved } = await rememberedReceipt(fixture, "file_hash");
+    asCaller(fixture);
+    await api.disableMemory({ data: { memoryId: saved.memoryId } });
+    await db
+      .update(classificationMemories)
+      .set({ consecutiveUndos: 2 })
+      .where(eq(classificationMemories.id, saved.memoryId));
+
+    const approverId = await addMember(fixture, "client_approver");
+    await expect(remember(fixture, first.candidate.id, "file_hash", approverId)).rejects.toThrow(
+      /This memory is turned off/u,
+    );
+    asCaller(fixture, approverId);
+    expect(
+      await api.previewMemoryScope({
+        data: { candidateId: first.candidate.id, scope: "file_hash" },
+      }),
+    ).toMatchObject({ allowed: false, turnedOffNeedsAdmin: true, requiresAdmin: false });
+    expect(await memoryRow(saved.memoryId)).toMatchObject({ enabled: false });
+
+    const adminId = await addMember(fixture, "admin");
+    const again = await remember(fixture, first.candidate.id, "file_hash", adminId);
+    // The same answer keeps its id and history; the admin's save turns it on.
+    expect(again.memoryId).toBe(saved.memoryId);
+    expect(await memoryRow(saved.memoryId)).toMatchObject({
+      enabled: true,
+      consecutiveUndos: 0,
+    });
+  });
+
+  it("a sender memory with no tax id to pin the party is admin-only", async () => {
+    const fixture = await createOrganizationWithChart("memory-sender-notax");
+    const chart = await chartOf(fixture);
+    const vendor = await addParty(fixture.orgId, { name: "Staples" });
+    const approverId = await addMember(fixture, "client_approver");
+    const fix = {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.office.id, debit: "84.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    };
+
+    const noTax = await uploadReceipt(fixture, { partyEmail: "receipts@staples.test" });
+    await correct(fixture, noTax.inboxItemId, fix);
+    await expect(remember(fixture, noTax.candidate.id, "sender_party", approverId)).rejects.toThrow(
+      /Permission denied: configure on agentRule/u,
+    );
+
+    const withTax = await uploadReceipt(fixture, {
+      partyEmail: "billing@staples.test",
+      partyTaxId: "123-456-789-000",
+    });
+    await correct(fixture, withTax.inboxItemId, fix);
+    await expect(
+      remember(fixture, withTax.candidate.id, "sender_party", approverId),
+    ).resolves.toMatchObject({ matchKind: "sender_party" });
   });
 
   it("turning memories on and off, and deleting them, is admin-only", async () => {

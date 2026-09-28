@@ -313,7 +313,7 @@
         "paper": {
           "direction": "inflow",
           "total": "980.00000001",
-          "currency": "PHP"
+          "currency": "USD"
         }
       },
       "expected": {
@@ -437,7 +437,7 @@
         "paper": {
           "direction": "outflow",
           "total": "19.99",
-          "currency": "EUR"
+          "currency": "USD"
         }
       },
       "expected": {
