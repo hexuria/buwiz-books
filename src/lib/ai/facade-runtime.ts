@@ -3,8 +3,9 @@ import { withOrgContext, type DbExecutor } from "../../db";
 import { organization } from "../../db/schema/auth";
 import { generateStructuredAnthropic } from "./adapters/anthropic";
 import { generateStructured } from "./adapters/gemini";
+import { generateStructuredJev } from "./adapters/jev";
 import { generateStructuredOpenAi } from "./adapters/openai";
-import { getOrgCredentials } from "./credentials";
+import { getOrgCredentials, type ResolvedCredential } from "./credentials";
 import { AiProviderError, classifyGeminiError, toAiProviderError } from "./errors";
 import type { AiCompletionRuntime, AiHopInvocation } from "./facade-core";
 import { logProviderInvocation, recordValidationOutcome } from "./invoke";
@@ -23,6 +24,36 @@ async function loadOrgMetadata(executor: DbExecutor, orgId: string): Promise<str
     return row?.metadata ?? null;
   } catch {
     return null;
+  }
+}
+
+/** One non-Gemini text hop. Every adapter receives the RedactedPrompt only. */
+async function callTextProvider<TOut>(
+  args: AiHopInvocation<TOut>,
+  credential: ResolvedCredential,
+): Promise<{
+  text: string;
+  usage: { tokensIn: number | null; tokensOut: number | null };
+  usageEstimated?: boolean;
+}> {
+  const common = {
+    apiKey: credential.apiKey,
+    model: args.hop.model,
+    prompt: args.prompt,
+    schema: args.schema,
+    temperature: args.generation?.temperature,
+    maxOutputTokens: args.generation?.maxOutputTokens,
+  };
+  const schemaName = args.entry.prompt.id.replace(/-/g, "_");
+  switch (args.hop.provider) {
+    case "anthropic":
+      return generateStructuredAnthropic(common);
+    case "jev":
+      // The Jev adapter has no media parameter: document bytes attached to
+      // this call never reach Jev, whatever the caller passed.
+      return generateStructuredJev({ ...common, baseURL: credential.baseUrl, schemaName });
+    default:
+      return generateStructuredOpenAi({ ...common, baseURL: credential.baseUrl, schemaName });
   }
 }
 
@@ -77,26 +108,7 @@ async function invokeHop<TOut>(
 
   const started = Date.now();
   try {
-    const result =
-      hop.provider === "anthropic"
-        ? await generateStructuredAnthropic({
-            apiKey: credential.apiKey,
-            model: hop.model,
-            prompt: args.prompt,
-            schema: args.schema,
-            temperature: args.generation?.temperature,
-            maxOutputTokens: args.generation?.maxOutputTokens,
-          })
-        : await generateStructuredOpenAi({
-            apiKey: credential.apiKey,
-            model: hop.model,
-            baseURL: credential.baseUrl,
-            prompt: args.prompt,
-            schema: args.schema,
-            schemaName: entry.prompt.id.replace(/-/g, "_"),
-            temperature: args.generation?.temperature,
-            maxOutputTokens: args.generation?.maxOutputTokens,
-          });
+    const result = await callTextProvider(args, credential);
 
     await health.recordSuccess(ctx.orgId, credential.fingerprint);
     const invocationId = await logProviderInvocation({
@@ -113,7 +125,11 @@ async function invokeHop<TOut>(
       tokensOut: result.usage.tokensOut,
       latencyMs: Date.now() - started,
       requestId: ctx.requestId,
-      configSnapshot: { redactionHits: args.redactionHits },
+      configSnapshot: {
+        redactionHits: args.redactionHits,
+        // Token counts were estimated because the provider omitted usage.
+        ...(result.usageEstimated ? { usageEstimated: true } : {}),
+      },
     });
     return { text: result.text, invocationId, model: hop.model };
   } catch (error) {

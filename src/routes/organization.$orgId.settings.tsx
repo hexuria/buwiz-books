@@ -1550,11 +1550,17 @@ function AICredentialsSection({
 // Multi-provider AI credentials + governance
 //
 // Gemini keeps the multi-key editor above (it is still stored in
-// organization_secrets). Anthropic / OpenAI / OpenAI-compatible are row-based
-// BYOK credentials: add + revoke, masked display only.
+// organization_secrets). Anthropic / OpenAI / OpenAI-compatible / Jev are
+// row-based BYOK credentials: add + revoke, masked display only.
 // ============================================================================
 
-type AiProviderId = "gemini" | "anthropic" | "openai" | "openai_compatible";
+type AiProviderId = "gemini" | "anthropic" | "openai" | "openai_compatible" | "jev";
+
+// Jev is a new data processor, so turning it on is confirmed like the kill
+// switch. The server enforces the rest: admin-only, redacted text only,
+// classification tasks only.
+const JEV_OPT_IN_CONFIRM =
+  "Allow Jev (TypeSafe AI) to classify this organization's documents? Jev will run first for inbox triage and document classification, with Gemini as the fallback. It receives redacted text only (the filename and a text preview), never document images.";
 
 const AI_PROVIDER_META: {
   id: AiProviderId;
@@ -1587,6 +1593,13 @@ const AI_PROVIDER_META: {
     blurb: "Self-hosted or gateway model (vLLM, Ollama, OpenRouter). Requires a base URL.",
     needsBaseUrl: true,
     keyPlaceholder: "token or sk-...",
+  },
+  {
+    id: "jev",
+    name: "Jev (TypeSafe AI)",
+    blurb:
+      "Opt-in first pass for inbox triage and document classification, with Gemini as the fallback. Receives redacted text only.",
+    keyPlaceholder: "Jev API key",
   },
 ];
 
@@ -1647,6 +1660,7 @@ const PROVIDER_SHORT: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   openai_compatible: "Compatible",
+  jev: "Jev",
 };
 
 function formatMaybeDate(value: unknown): string | null {
@@ -1732,7 +1746,7 @@ function OtherProvidersSection({ orgId, queryClient }: { orgId: string; queryCli
           Other AI Providers
         </h3>
         <p className="text-xs text-[#64748b] dark:text-white/50">
-          Optional fallbacks for text-only tasks. Keys are encrypted at rest and are never shown
+          Optional providers for text-only tasks. Keys are encrypted at rest and are never shown
           again after they are saved.
         </p>
       </div>
@@ -1922,7 +1936,10 @@ function AiGovernanceSection({ orgId, queryClient }: { orgId: string; queryClien
     if (id === "gemini") return; // Gemini is required for document/OCR work.
     const next = new Set(allowed);
     if (next.has(id)) next.delete(id);
-    else next.add(id);
+    else {
+      if (id === "jev" && !window.confirm(JEV_OPT_IN_CONFIRM)) return;
+      next.add(id);
+    }
     mutation.mutate({ providerAllowlist: [...next] });
   };
 

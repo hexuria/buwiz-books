@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { estimateCostUsd, priceFor } from "../../../src/lib/ai/pricing";
+import { JEV_MODEL } from "../../../src/lib/ai/chains";
+import { JEV_PLACEHOLDER_PRICE, estimateCostUsd, priceFor } from "../../../src/lib/ai/pricing";
 
 describe("priceFor", () => {
   it("matches pinned snapshot ids via their family prefix", () => {
@@ -49,5 +50,44 @@ describe("estimateCostUsd", () => {
     const flash = estimateCostUsd({ model: "gemini-3.1-flash-image-preview", ...usage })!;
     const opus = estimateCostUsd({ model: "claude-opus-4-8", ...usage })!;
     expect(flash).toBeLessThan(opus / 10);
+  });
+});
+
+// The monthly cap sums cost_usd and SUM skips nulls, so an unpriced call never
+// counts. Jev's price is unknown, and the safe answer is to over-count it.
+describe("Jev pricing (placeholder, TODO(jev-pricing))", () => {
+  it("is never unpriced: any Jev model id falls back to the placeholder", () => {
+    expect(priceFor(JEV_MODEL, "jev")).toEqual(JEV_PLACEHOLDER_PRICE);
+    expect(priceFor("some-future-jev-id", "jev")).toEqual(JEV_PLACEHOLDER_PRICE);
+    expect(priceFor(null, "jev")).toEqual(JEV_PLACEHOLDER_PRICE);
+  });
+
+  it("prices at the top of the table, so the cap trips early rather than late", () => {
+    const priciest = priceFor("claude-opus-4-8")!;
+    expect(JEV_PLACEHOLDER_PRICE.inputPerMTok).toBeGreaterThanOrEqual(priciest.inputPerMTok);
+    expect(JEV_PLACEHOLDER_PRICE.outputPerMTok).toBeGreaterThanOrEqual(priciest.outputPerMTok);
+  });
+
+  it("gives every Jev invocation a positive cost that reaches the cap", () => {
+    const cost = estimateCostUsd({
+      model: JEV_MODEL,
+      provider: "jev",
+      tokensIn: 300,
+      tokensOut: 40,
+    });
+    expect(cost).not.toBeNull();
+    expect(cost!).toBeGreaterThan(0);
+  });
+
+  it("leaves other providers' unknown models unpriced, as before", () => {
+    expect(priceFor("mystery-model", "openai_compatible")).toBeNull();
+    expect(
+      estimateCostUsd({
+        model: "mystery-model",
+        provider: "anthropic",
+        tokensIn: 10,
+        tokensOut: 10,
+      }),
+    ).toBeNull();
   });
 });

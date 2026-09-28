@@ -9,8 +9,10 @@
 // the seed cases below cover the known failure classes called out in the
 // research (rotated/odd receipts, multi-currency, ambiguous dates).
 // ============================================================================
+import type { AiProvider } from "../../../src/lib/ai/errors";
 import type { AiTaskName } from "../../../src/lib/ai/types";
 import {
+  confidenceOnUnitScale,
   dateExact,
   money,
   exact,
@@ -30,8 +32,18 @@ import { COA_EXISTING } from "./prompt-inputs";
 export interface RecordedCase {
   name: string;
   task: AiTaskName;
+  /** Provider that produced the response. Absent ⇒ the historic Gemini corpus. */
+  provider?: AiProvider;
   /** Verbatim provider text, exactly as an adapter would return it. */
   recordedResponse: string;
+  /**
+   * Raw HTTP response body, for providers whose adapter maps a wire format
+   * (jev). Recorded mode replays it through the real adapter with a stubbed
+   * fetch and requires the adapter to yield exactly `recordedResponse`.
+   */
+  recordedWire?: Record<string, unknown>;
+  /** Prompt input the response answered; the wire replay rebuilds the prompt from it. */
+  input?: unknown;
   expected: Record<string, unknown>;
   fields: FieldSpec[];
   /**
@@ -40,6 +52,53 @@ export interface RecordedCase {
    */
   invariants?: OutputInvariant[];
 }
+
+// ── Jev (TypeSafe AI) ────────────────────────────────────────────────────────
+//
+// SYNTHETIC wire bodies. Jev's API is unverified (see the ASSUMPTION header in
+// src/lib/ai/adapters/jev.ts), so these are shaped as OpenAI Chat Completions
+// to exercise the adapter's response mapping in recorded mode. Replace each
+// with a captured Jev response once TypeSafe AI confirms the format; the
+// expectations, graders, and invariants stay as they are.
+function jevChatCompletion(
+  content: string,
+  usage?: { prompt_tokens: number; completion_tokens: number },
+): Record<string, unknown> {
+  return {
+    id: "chatcmpl-jev-recorded",
+    object: "chat.completion",
+    created: 1_790_000_000,
+    model: "jev-1",
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: "stop" }],
+    ...(usage
+      ? { usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens } }
+      : {}),
+  };
+}
+
+const JEV_TRIAGE_STATEMENT = JSON.stringify({
+  docKind: "statement",
+  confidence: 0.96,
+  reasoning: "Bank-export CSV header: Date, Description, Amount",
+});
+// JEV_TRIAGE_BILL and JEV_CLASSIFY_INVOICE are also the AI_MODE=mock Jev
+// answers (src/lib/ai/fixtures/mock-responses.ts); keep the two in step.
+const JEV_TRIAGE_BILL = JSON.stringify({
+  docKind: "bill",
+  confidence: 0.93,
+  reasoning: "Filename carries a vendor bill number",
+});
+const JEV_CLASSIFY_INVOICE = JSON.stringify({
+  documentType: "invoice",
+  confidence: 0.95,
+  reasoning: "INVOICE header with invoice number and amount due",
+});
+// A bare 1: on the pinned scale that means certain, and readers say so.
+const JEV_CLASSIFY_PAYSLIP = JSON.stringify({
+  documentType: "payslip",
+  confidence: 1,
+  reasoning: "Payslip header with pay period and net pay",
+});
 
 const COA_KEYS = COA_EXISTING.map((account) => account.key);
 const COA_TYPE_BY_KEY = Object.fromEntries(
@@ -338,5 +397,73 @@ export const RECORDED_CASES: RecordedCase[] = [
     }),
     expected: { documentType: "tax_form" },
     fields: [{ path: "documentType", grader: exact, critical: true }],
+  },
+  {
+    name: "Jev: CSV bank export classifies as statement",
+    task: "ingest_triage",
+    provider: "jev",
+    input: {
+      filename: "statement-jan.csv",
+      mimeType: "text/csv",
+      textPreview: "Date,Description,Amount\n2026-01-05,ACH DEPOSIT ACCT 123456789012,2500.00",
+    },
+    recordedResponse: JEV_TRIAGE_STATEMENT,
+    recordedWire: jevChatCompletion(JEV_TRIAGE_STATEMENT, {
+      prompt_tokens: 212,
+      completion_tokens: 31,
+    }),
+    expected: { docKind: "statement" },
+    fields: [{ path: "docKind", grader: exact, critical: true }],
+    invariants: [confidenceOnUnitScale()],
+  },
+  {
+    name: "Jev: vendor bill PDF classifies as bill (no usage reported)",
+    task: "ingest_triage",
+    provider: "jev",
+    input: { filename: "acme-bill-0042.pdf", mimeType: "application/pdf" },
+    recordedResponse: JEV_TRIAGE_BILL,
+    // No usage block: the adapter estimates tokens so the spend cap still counts it.
+    recordedWire: jevChatCompletion(JEV_TRIAGE_BILL),
+    expected: { docKind: "bill" },
+    fields: [{ path: "docKind", grader: exact, critical: true }],
+    invariants: [confidenceOnUnitScale()],
+  },
+  {
+    name: "Jev: invoice PDF classifies as invoice",
+    task: "classify_document",
+    provider: "jev",
+    input: {
+      filename: "acme-invoice-2026.pdf",
+      contentPreview: "INVOICE\nInvoice #: INV-2026-0142\nAmount due: 340.12",
+    },
+    recordedResponse: JEV_CLASSIFY_INVOICE,
+    recordedWire: jevChatCompletion(JEV_CLASSIFY_INVOICE, {
+      prompt_tokens: 188,
+      completion_tokens: 27,
+    }),
+    expected: { documentType: "invoice" },
+    fields: [{ path: "documentType", grader: exact, critical: true }],
+    invariants: [confidenceOnUnitScale()],
+  },
+  {
+    name: "Jev: payslip preview classifies as payslip (bare 1 on the pinned scale)",
+    task: "classify_document",
+    provider: "jev",
+    input: {
+      filename: "payslip-2026-06.pdf",
+      contentPreview:
+        "PAYSLIP\nPay period: 2026-06-01 to 2026-06-15\nNet pay: 28,450.00\nAcct: 00123456789",
+    },
+    recordedResponse: JEV_CLASSIFY_PAYSLIP,
+    recordedWire: jevChatCompletion(JEV_CLASSIFY_PAYSLIP, {
+      prompt_tokens: 196,
+      completion_tokens: 29,
+    }),
+    expected: { documentType: "payslip", confidence: 1 },
+    fields: [
+      { path: "documentType", grader: exact, critical: true },
+      { path: "confidence", grader: exact },
+    ],
+    invariants: [confidenceOnUnitScale()],
   },
 ];

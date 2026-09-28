@@ -302,3 +302,20 @@ export function coverageAtLeast(minimum: number, path = "accounts"): OutputInvar
     },
   };
 }
+
+/**
+ * Confidence sits on the pinned 0..1 scale (inbox v2 review finding 9).
+ * Readers of these tasks pass normalizeConfidence's unit hint, which reads a
+ * bare 1 as certain; that is only sound when the answer is on the pinned
+ * scale, so a 0-100 answer fails here rather than in a threshold later.
+ */
+export function confidenceOnUnitScale(path = "confidence"): OutputInvariant {
+  return {
+    name: `${path} is on the 0..1 scale`,
+    check(output) {
+      const value = get(output, path);
+      if (typeof value !== "number" || !Number.isFinite(value)) return `${path} is not a number`;
+      return value >= 0 && value <= 1 ? null : `${path} = ${value} is outside 0..1`;
+    },
+  };
+}
