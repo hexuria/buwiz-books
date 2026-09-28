@@ -113,21 +113,41 @@ function last4(value: string | null | undefined): string | null {
   return cleaned.length > 0 ? cleaned.slice(-4) : null;
 }
 
+/** An IBAN: country code, two check digits, then the domestic account, with a valid mod-97 check. */
+function isValidIban(value: string): boolean {
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{8,30}$/u.test(value)) return false;
+  const rearranged = value.slice(4) + value.slice(0, 4);
+  let remainder = 0;
+  for (const char of rearranged) {
+    const code = char.charCodeAt(0);
+    const digits = code >= 65 ? String(code - 55) : char;
+    for (const digit of digits) remainder = (remainder * 10 + Number(digit)) % 97;
+  }
+  return remainder === 1;
+}
+
+/** Fewest trailing digits of a masked number that can stand for the account. */
+const MIN_MASKED_TAIL = 4;
+
 /**
  * null when the two values cannot be compared; otherwise whether they name
- * the same account. An IBAN ends with the domestic account number it wraps,
- * so a suffix of at least six characters counts as the same account.
+ * the same account. This decides whether party_payment_details_changed fires,
+ * so doubt resolves to "changed" (a person looks) rather than "same":
+ *   • full numbers must be equal, except that a real IBAN (valid mod-97) may
+ *     end with the domestic account number it wraps (at least six characters);
+ *   • a masked number agrees only by its visible tail, and a tail shorter than
+ *     four digits cannot establish agreement.
  */
 function sameAccountNumber(stored: string | null, printed: string | null): boolean | null {
   const left = parseBankIdentifier(stored);
   const right = parseBankIdentifier(printed);
   if (!left?.full || !right) return null;
-  if (right.tail) return left.full.endsWith(right.tail);
+  if (right.tail) return right.tail.length >= MIN_MASKED_TAIL && left.full.endsWith(right.tail);
   const a = left.full;
   const b = right.full!;
   if (a === b) return true;
   const [short, long] = a.length <= b.length ? [a, b] : [b, a];
-  return short.length >= 6 && long.endsWith(short);
+  return short.length >= 6 && isValidIban(long) && long.endsWith(short);
 }
 
 /** BIC8 and BIC11 with the "XXX" primary-office branch are the same institution. */

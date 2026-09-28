@@ -371,6 +371,12 @@ export async function enrichCandidateFromExtractedFacts(
       originalTotal,
       functionalTotal,
       revision: nextRevision,
+      // Replacing system-written lines also drops the system's party link, so
+      // the next classification pass matches the party on these facts instead
+      // of keeping the previous pass's payee (and checking payment details
+      // against it). A reviewer's party never gets here: a reviewer's
+      // correction makes the lines non-system, and this branch is refused.
+      ...(hasSystemPlaceholderLines ? { partyId: null } : {}),
       updatedAt: new Date(),
     })
     .where(

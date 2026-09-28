@@ -118,7 +118,8 @@ describe("collectDocumentFacts", () => {
       kind: "bill",
       partyName: "Acme Supply Co",
       partyTaxId: "123-456-789-000",
-      partyEmails: ["billing@acme.test", "ap@acme.test"],
+      // The paper names its party, so the forwarder's address is not an identity key.
+      partyEmails: ["billing@acme.test"],
       payeeBankAccountNumber: "9876543210",
       payeeBankRoutingNumber: "026009593",
       paymentDetailsDocumentId: "doc-1",
@@ -153,6 +154,25 @@ describe("collectDocumentFacts", () => {
       lineItems: [{ description: "Consulting", amount: "1234.56" }],
       payeeBankAccountNumber: null,
     });
+  });
+
+  it("uses the sender address as a key only when the paper names no party and prints no email", () => {
+    expect(collectDocumentFacts([], { from: '"Acme AP" <ap@acme.test>' }).partyEmails).toEqual([
+      "ap@acme.test",
+    ]);
+    const named = collectDocumentFacts(
+      [
+        {
+          id: "doc-1",
+          documentType: "receipt",
+          metadata: inboxExtraction({ party: "Staples" }),
+          aiTransactionCache: null,
+        },
+      ],
+      { from: '"Colleague" <me@ourfirm.test>' },
+    );
+    expect(named.partyName).toBe("Staples");
+    expect(named.partyEmails).toEqual([]);
   });
 
   it("uses a sender display name only when it is not a mailbox label", () => {

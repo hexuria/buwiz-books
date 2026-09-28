@@ -1088,7 +1088,9 @@ export async function classifyInboxCandidate(
           const lineId = context.plan.lineIdByIndex.get(decision.lineIndex);
           const line = lines.find((candidateLine) => candidateLine.id === lineId);
           if (!line) continue;
-          const resolved = resolveCategoryLine(decision, noFitAccount, context.minConfidence);
+          const resolved = resolveCategoryLine(decision, noFitAccount, context.minConfidence, {
+            listTruncated: context.codes?.truncated ?? false,
+          });
           await tx
             .update(transactionCandidateLines)
             .set({
@@ -1293,6 +1295,10 @@ export async function classifyInboxCandidate(
               confidence: outcome && "confidence" in outcome ? (outcome.confidence ?? null) : null,
               candidateCount: outcome && "candidates" in outcome ? outcome.candidates.length : 0,
               reason: outcome?.kind === "unresolved" ? outcome.reason : null,
+              // The model's below-threshold pick, kept as a non-binding hint for a
+              // reviewer (server-side id; the model only ever saw P1–P5).
+              suggestedPartyId:
+                outcome?.kind === "unresolved" ? (outcome.suggestion?.id ?? null) : null,
             },
             memory: { ...memorySummary },
             // The keys this paper was looked up by. "Remember this?" saves a

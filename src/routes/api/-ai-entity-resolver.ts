@@ -41,10 +41,13 @@ import {
   normalizeTaxId,
 } from "../../lib/party-match/normalize";
 import {
-  matchParty,
+  decidePartyMatch,
+  findPartyCandidates,
   type ExactTier,
+  type PartyCandidateSearch,
   type PartyMatchOutcome,
   type PartyMatchQuery,
+  type PartyPickResult,
 } from "../../lib/party-match/pipeline";
 import { loadPartyPaymentDetails, partyLookups } from "../../lib/party-match/queries";
 import type { ExtractedEntity } from "./-ai-transaction-parse";
@@ -152,7 +155,11 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
     resolveExtractedEntitiesSchema.parse(data),
   )
   .handler(async ({ data: rawData }: { data: unknown }) => {
-    return withMutationPermissionOrgContext(
+    // Three phases so a model call never holds a database connection (Jev's
+    // 30 s timeout plus the Gemini fallback, once per entity): look up in one
+    // short transaction, ask the model with none open, then decide and write
+    // proposals in a second short transaction.
+    const prepared = await withMutationPermissionOrgContext(
       "aiTask",
       "run",
       { routeKey: "ai:entity-resolve", limit: 30, windowMs: 300_000 },
@@ -164,7 +171,52 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
         assertRolePermission(role, "party", "create");
         const input = resolveExtractedEntitiesSchema.parse(rawData);
         const minConfidence = await loadLowConfidenceThreshold(db, orgId);
+        const lookups = partyLookups(db, orgId);
+        const searches: Array<
+          | { ok: true; query: PartyMatchQuery; search: PartyCandidateSearch }
+          | { ok: false; error: unknown }
+        > = [];
+        for (const entity of input.entities) {
+          try {
+            const query = queryFor(entity);
+            searches.push({ ok: true, query, search: await findPartyCandidates(query, lookups) });
+          } catch (error) {
+            searches.push({ ok: false, error });
+          }
+        }
+        return { orgId, userId, input, minConfidence, searches };
+      },
+    );
 
+    // Outside any transaction: one model pick per entity that has look-alikes.
+    const picks: Array<PartyPickResult | null> = [];
+    for (const prepared_ of prepared.searches) {
+      if (!prepared_.ok || prepared_.search.kind !== "candidates") {
+        picks.push(null);
+        continue;
+      }
+      const { candidates } = prepared_.search;
+      picks.push(
+        candidates.length === 0
+          ? null
+          : await pickPartyWithModel(prepared_.query, candidates, {
+              orgId: prepared.orgId,
+              userId: prepared.userId,
+              complete: aiComplete,
+            }),
+      );
+    }
+
+    return withMutationPermissionOrgContext(
+      "aiTask",
+      "run",
+      { routeKey: "ai:entity-resolve-apply", limit: 30, windowMs: 300_000 },
+      async ({ orgId, userId, role, db }) => {
+        assertRolePermission(role, "party", "create");
+        if (orgId !== prepared.orgId) {
+          throw new Error("The active organization changed while resolving entities. Try again.");
+        }
+        const { input, minConfidence } = prepared;
         const result: EntityResolutionResult = {
           entities: [],
           proposals: [],
@@ -174,9 +226,19 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
           errors: [],
         };
 
-        for (const entity of input.entities) {
+        for (const [index, entity] of input.entities.entries()) {
           try {
-            const match = await matchOne(db, entity, { orgId, userId, minConfidence });
+            const prepared_ = prepared.searches[index];
+            if (!prepared_.ok) throw prepared_.error;
+            const outcome: PartyMatchOutcome =
+              prepared_.search.kind === "exact"
+                ? {
+                    kind: "exact",
+                    tier: prepared_.search.tier,
+                    party: prepared_.search.party,
+                  }
+                : decidePartyMatch(prepared_.search.candidates, picks[index], minConfidence);
+            const match = await finishMatch(db, entity, prepared_.query, outcome, orgId);
 
             if (match.status === "matched") {
               result.entities.push(match.resolved);
@@ -286,33 +348,25 @@ function creationDraft(
   };
 }
 
-async function matchOne(
-  db: DbExecutor,
-  entity: ResolverEntity,
-  options: { orgId: string; userId: string; minConfidence: number },
-): Promise<MatchOutcome> {
-  const { orgId } = options;
-  const query: PartyMatchQuery = {
+/** The lookup query for one extracted entity. */
+function queryFor(entity: ResolverEntity): PartyMatchQuery {
+  return {
     name: entity.name,
     entityType: entity.entityType,
     taxId: taxIdFor(entity),
     emails: entity.email ? [entity.email] : [],
     hintPartyId: entity.matchedPartyId || null,
   };
-  const outcome: PartyMatchOutcome = await matchParty(
-    query,
-    {
-      ...partyLookups(db, orgId),
-      pick: (pickQuery, candidates) =>
-        pickPartyWithModel(pickQuery, candidates, {
-          orgId,
-          userId: options.userId,
-          complete: aiComplete,
-        }),
-    },
-    { minConfidence: options.minConfidence },
-  );
+}
 
+/** Everything after the match decision: payment-details check, bank infrastructure. */
+async function finishMatch(
+  db: DbExecutor,
+  entity: ResolverEntity,
+  query: PartyMatchQuery,
+  outcome: PartyMatchOutcome,
+  orgId: string,
+): Promise<MatchOutcome> {
   if (outcome.kind !== "exact" && outcome.kind !== "model") {
     return {
       status: "needs_creation",

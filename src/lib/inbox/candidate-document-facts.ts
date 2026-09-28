@@ -126,9 +126,16 @@ export function collectDocumentFacts(
         .filter((item) => item.description);
     }
   }
+  // The paper's own identity outranks whoever emailed it. A forwarded receipt's
+  // From is the forwarder (often a colleague whose address may sit on some
+  // party), so the sender address is an exact key only when the document named
+  // no party and printed no email; otherwise it would link that party ahead of
+  // the vendor on the paper and point the payment-details check at the wrong
+  // payee.
+  const documentNamedParty = Boolean(facts.partyName) || emails.length > 0;
   facts.partyName ??= senderDisplayName(sender.from);
   const senderEmail = extractEmailAddress(sender.from);
-  if (senderEmail) emails.push(senderEmail);
+  if (senderEmail && !documentNamedParty) emails.push(senderEmail);
   facts.partyEmails = [
     ...new Set(emails.map((email) => extractEmailAddress(email)).filter((e): e is string => !!e)),
   ];

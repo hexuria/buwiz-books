@@ -395,10 +395,17 @@ describe("entity resolver wiring", () => {
     "utf-8",
   );
 
-  it("matches through the shared pipeline, model step included", () => {
-    expect(source).toContain("matchParty(");
+  it("matches through the shared pipeline, with the model step outside any transaction", () => {
+    // Lookups and the decision are the pipeline's own halves; the model pick
+    // runs between the two org-context transactions, never inside one.
+    expect(source).toContain("findPartyCandidates(query, lookups)");
     expect(source).toContain("partyLookups(db, orgId)");
-    expect(source).toContain("pickPartyWithModel(");
+    expect(source).toContain("decidePartyMatch(");
+    const [lookupPhase, rest] = source.split("// Outside any transaction:");
+    expect(rest).toBeDefined();
+    expect(lookupPhase).not.toContain("await pickPartyWithModel(");
+    const [modelPhase] = rest.split("withMutationPermissionOrgContext(");
+    expect(modelPhase).toContain("await pickPartyWithModel(");
   });
 
   it("stays write-free: creation is only ever a create_party proposal", () => {
@@ -406,5 +413,30 @@ describe("entity resolver wiring", () => {
     expect(source).not.toMatch(/\.update\(/);
     expect(source).not.toContain("createPartyFromEntity");
     expect(source).toContain('kind: "create_party"');
+  });
+
+  it("does not treat a longer number that merely ends with the stored one as the same account", () => {
+    expect(
+      detectPaymentDetailsChange(
+        { bankAccountNumber: "1234567890", bankRoutingNumber: null },
+        { accountNumber: "9991234567890", routingNumber: null },
+      )?.fields,
+    ).toEqual(["bank_account_number"]);
+    // An IBAN-shaped value with a bad checksum is not an IBAN.
+    expect(
+      detectPaymentDetailsChange(
+        { bankAccountNumber: "31926819", bankRoutingNumber: null },
+        { accountNumber: "GB00 NWBK 6016 1331 9268 19", routingNumber: null },
+      )?.fields,
+    ).toEqual(["bank_account_number"]);
+  });
+
+  it("does not let a masked tail shorter than four digits stand for the account", () => {
+    expect(
+      detectPaymentDetailsChange(
+        { bankAccountNumber: "0001-2345-6789", bankRoutingNumber: null },
+        { accountNumber: "*****789", routingNumber: null },
+      )?.fields,
+    ).toEqual(["bank_account_number"]);
   });
 });

@@ -436,6 +436,25 @@ describe("no fit resolves to the mapped uncategorized account, and the rule bloc
     ).toMatchObject({ impact: "blocking", evidence: { lineIndexes: [0, 1] } });
   });
 
+  it("keeps a confident pick from a truncated list as a hint, not an answer", () => {
+    const resolved = resolveCategoryLine(
+      { lineIndex: 0, outcome: "picked", accountId: "office", code: "67200", confidence: 0.97 },
+      noFitAccount,
+      0.8,
+      { listTruncated: true },
+    );
+    expect(resolved).toMatchObject({
+      accountId: noFitAccount.id,
+      categoryConfidence: null,
+      evidence: {
+        outcome: "low_confidence",
+        reason: "list_truncated",
+        suggestedAccountId: "office",
+        confidence: 0.97,
+      },
+    });
+  });
+
   it("applies a confident pick, which leaves only the payment side blocking", () => {
     const resolved = resolveCategoryLine(
       { lineIndex: 0, outcome: "picked", accountId: "office", code: "67200", confidence: 0.93 },

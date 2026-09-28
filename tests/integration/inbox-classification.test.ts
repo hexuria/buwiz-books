@@ -37,7 +37,11 @@ import { planCoaPreset } from "@/lib/coa/plan-preset";
 import { COA_PRESETS } from "@/lib/coa/presets";
 import { loadCoaSnapshot } from "@/lib/coa/snapshot";
 import { hashDocumentContent } from "@/lib/documents/ensure-document";
-import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
+import {
+  correctInboxCandidate,
+  enrichCandidateFromExtractedFacts,
+} from "@/lib/inbox/candidate-correction";
+import { deriveDocumentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import {
   CLASSIFY_INBOX_CANDIDATE_JOB_TYPE,
   candidateClassificationDedupeKey,
@@ -485,6 +489,74 @@ integrationDescribe("inbox stage 2 — entity checks", () => {
       .where(eq(parties.organizationId, fixture.orgId));
     expect(created).toHaveLength(0);
     expect((await openFindings(inboxItemId)).map((row) => row.ruleKey)).toContain("missing_vendor");
+  });
+
+  it("re-reading a paper drops the system's party link, so the new facts' party is matched", async () => {
+    const fixture = await createOrganizationWithChart("stage2-reenrich-party");
+    const staples = await addParty(fixture.orgId, { name: "Staples" });
+    const officeDepot = await addParty(fixture.orgId, { name: "Office Depot" });
+    const { candidate, document: uploaded } = await uploadReceipt(fixture, {});
+    const first = stubbedComplete({ categorize: categorizeAs("67200") });
+    await classifyInboxCandidate(
+      { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: candidate.revision },
+      { complete: first.complete },
+    );
+    const [linked] = await db
+      .select()
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, candidate.id));
+    expect(linked.partyId).toBe(staples.id);
+
+    // The same document is re-extracted and now reads a different vendor and amount.
+    const [original] = await db.select().from(documents).where(eq(documents.id, uploaded.id));
+    const [document] = await db
+      .update(documents)
+      .set({
+        metadata: {
+          inboxExtraction: {
+            version: 1,
+            cachedAt: "2026-07-25T00:00:00.000Z",
+            result: {
+              economicEventClass: "purchase",
+              direction: "outflow",
+              amount: "91.10",
+              currency: "USD",
+              date: "2026-07-23",
+              party: "Office Depot",
+              reference: "R-REREAD",
+              description: "Printer paper and toner",
+            },
+          },
+        } as never,
+      })
+      .where(eq(documents.id, original.id))
+      .returning();
+    const facts = deriveDocumentSourceFacts({
+      externalId: `reread:${randomUUID()}`,
+      provider: "upload",
+      filename: document.originalFilename,
+      documentType: document.documentType,
+      document,
+      fallbackDate: "2026-07-24",
+      originalCurrency: "USD",
+      functionalCurrency: "USD",
+    });
+    const reread = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      enrichCandidateFromExtractedFacts({ db: tx, orgId: fixture.orgId }, candidate.id, [facts]),
+    );
+    expect(reread).toMatchObject({ enriched: true });
+    const [cleared] = await db
+      .select()
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, candidate.id));
+    expect(cleared.partyId).toBeNull();
+
+    const second = stubbedComplete({ categorize: categorizeAs("67200") });
+    const result = await classifyInboxCandidate(
+      { orgId: fixture.orgId, candidateId: candidate.id, candidateRevision: cleared.revision },
+      { complete: second.complete },
+    );
+    expect(result).toMatchObject({ party: { outcome: "exact", linkedPartyId: officeDepot.id } });
   });
 
   it("an exact tax id match beats a closer-looking name", async () => {

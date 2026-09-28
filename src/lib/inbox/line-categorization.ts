@@ -318,12 +318,33 @@ export function formatConfidence(confidence: number): string {
  * Turn one decision into the line's account, confidence, and evidence. Only
  * a confident pick of a listed account is applied; every other outcome takes
  * the no-fit account (or stays unselected when there is none).
+ *
+ * When the closed list was truncated (the chart has more eligible accounts
+ * than the prompt can carry), the right account may not have been offered at
+ * all, so even a confident pick is kept as a hint, exactly like a
+ * below-threshold one, and the line reads as the model being unsure.
  */
 export function resolveCategoryLine(
   decision: LineCategoryDecision,
   noFitAccount: NoFitAccount | null,
   minConfidence: number,
+  options: { listTruncated?: boolean } = {},
 ): ResolvedCategoryLine {
+  if (decision.outcome === "picked" && options.listTruncated) {
+    return {
+      accountId: noFitAccount?.id ?? null,
+      categoryConfidence: null,
+      evidence: {
+        selection: noFitAccount ? "no_fit_mapped_uncategorized" : "no_fit_unselected",
+        outcome: "low_confidence",
+        reason: "list_truncated",
+        suggestedAccountId: decision.accountId,
+        code: decision.code,
+        confidence: decision.confidence,
+        threshold: minConfidence,
+      },
+    };
+  }
   if (decision.outcome === "picked") {
     return {
       accountId: decision.accountId,
