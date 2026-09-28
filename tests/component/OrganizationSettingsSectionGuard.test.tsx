@@ -46,6 +46,7 @@ vi.mock("../../src/routes/api/-org-settings", () => ({
   getOwnerEmail: vi.fn(),
   updateOrgBusinessInfo: vi.fn(),
   updateOrgImageGenerationSetting: vi.fn(),
+  updateOrgInboxV2Setting: vi.fn(),
   getOrgAiCredentials: vi.fn(),
   addOrgAiCredential: vi.fn(),
   revokeOrgAiCredential: vi.fn(),
@@ -77,6 +78,8 @@ vi.mock("../../src/lib/auth-client", () => ({
 }));
 vi.mock("../../src/lib/use-permission", () => ({
   usePermission: () => ({ canAccess: true, isLoading: false }),
+  // General's New Inbox switch is admin-only.
+  useRole: () => ({ role: "owner", isLoading: false }),
 }));
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),

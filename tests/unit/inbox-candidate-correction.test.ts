@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/db", () => ({ db: {} }));
 
-import { correctedSourceClassification } from "@/lib/inbox/candidate-correction";
+import {
+  correctedSourceClassification,
+  resolveCorrectionLinePartyIds,
+} from "@/lib/inbox/candidate-correction";
 
 describe("candidate correction economic-event identity", () => {
   it.each([
@@ -79,5 +82,61 @@ describe("candidate correction economic-event identity", () => {
         sourceIsReviewerEditable: true,
       }),
     ).toThrow("conflicts with the transaction type");
+  });
+});
+
+describe("candidate correction line parties", () => {
+  const EXPENSE = "expense-account";
+  const BANK = "bank-account";
+  const PAYABLE = "payable-account";
+  const context = {
+    entryPartyId: "vendor-now",
+    counterpartyAccountIds: new Set([PAYABLE]),
+  };
+
+  it("puts the entry's party on payable and receivable lines when none is given", () => {
+    expect(
+      resolveCorrectionLinePartyIds(
+        [
+          { accountId: EXPENSE, originalDebit: "10" },
+          { accountId: PAYABLE, originalDebit: null },
+        ],
+        [{ accountId: PAYABLE, originalDebit: null, partyId: "vendor-before" }],
+        context,
+      ),
+    ).toEqual([null, "vendor-now"]);
+  });
+
+  it("keeps each other line's party from its predecessor on the same account and side, once", () => {
+    expect(
+      resolveCorrectionLinePartyIds(
+        [
+          { accountId: EXPENSE, originalDebit: "4" },
+          { accountId: EXPENSE, originalDebit: "6" },
+          { accountId: EXPENSE, originalDebit: "1" },
+          { accountId: BANK, originalDebit: null },
+        ],
+        [
+          { accountId: EXPENSE, originalDebit: "5", partyId: "courier" },
+          { accountId: EXPENSE, originalDebit: "5", partyId: "printer" },
+          // Same account, other side: not a predecessor of a debit line.
+          { accountId: BANK, originalDebit: "1", partyId: "bank-side" },
+        ],
+        context,
+      ),
+    ).toEqual(["courier", "printer", null, null]);
+  });
+
+  it("lets an explicit party win, null included", () => {
+    expect(
+      resolveCorrectionLinePartyIds(
+        [
+          { accountId: PAYABLE, originalDebit: null, partyId: null },
+          { accountId: EXPENSE, originalDebit: "3", partyId: "chosen" },
+        ],
+        [{ accountId: EXPENSE, originalDebit: "3", partyId: "courier" }],
+        context,
+      ),
+    ).toEqual([null, "chosen"]);
   });
 });

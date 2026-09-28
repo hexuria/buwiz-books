@@ -5,6 +5,7 @@ import { createTestDb } from "../utils/db-utils";
 import { organization } from "../../src/db/schema/auth";
 import { accounts } from "../../src/db/schema/accounts";
 import { parties } from "../../src/db/schema/parties";
+import { dimensions } from "../../src/db/schema/dimensions";
 import { assertBillReferences } from "../../src/lib/bill-mutation-guards";
 
 const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
@@ -27,6 +28,9 @@ describeDb("bill reference guards", () => {
   let assetAccountId: string;
   let inactiveExpenseId: string;
   let foreignExpenseId: string;
+  let departmentId: string;
+  let locationId: string;
+  let foreignDepartmentId: string;
 
   async function addAccount(orgId: string, opts: Partial<Record<string, unknown>>) {
     const [row] = await db
@@ -77,6 +81,17 @@ describeDb("bill reference guards", () => {
       name: "Their Supplies",
       accountType: "expense",
     });
+    const [department, location, foreignDepartment] = await db
+      .insert(dimensions)
+      .values([
+        { organizationId: ORG, dimensionType: "department", name: "Operations" },
+        { organizationId: ORG, dimensionType: "location", name: "Main Office" },
+        { organizationId: FOREIGN_ORG, dimensionType: "department", name: "Their Operations" },
+      ])
+      .returning({ id: dimensions.id });
+    departmentId = department.id;
+    locationId = location.id;
+    foreignDepartmentId = foreignDepartment.id;
   });
 
   afterAll(async () => {
@@ -111,6 +126,34 @@ describeDb("bill reference guards", () => {
     await expect(
       assertBillReferences(db, ORG, foreignVendorId, [{ accountId: expenseAccountId }]),
     ).rejects.toThrow(/vendor/i);
+  });
+
+  it("accepts a line's own department and location", async () => {
+    await expect(
+      assertBillReferences(db, ORG, vendorId, [
+        { accountId: expenseAccountId, departmentId, locationId },
+        { accountId: expenseAccountId, departmentId: null, locationId: null },
+      ]),
+    ).resolves.toBeUndefined();
+  });
+
+  it("refuses another organization's department, and a location given as a department", async () => {
+    // bill_line_items' dimension foreign keys are not organization-scoped.
+    await expect(
+      assertBillReferences(db, ORG, vendorId, [
+        { accountId: expenseAccountId, departmentId: foreignDepartmentId },
+      ]),
+    ).rejects.toThrow(/department is unavailable/i);
+    await expect(
+      assertBillReferences(db, ORG, vendorId, [
+        { accountId: expenseAccountId, departmentId: locationId },
+      ]),
+    ).rejects.toThrow(/department is unavailable/i);
+    await expect(
+      assertBillReferences(db, ORG, vendorId, [
+        { accountId: expenseAccountId, locationId: departmentId },
+      ]),
+    ).rejects.toThrow(/location is unavailable/i);
   });
 
   it("a mixed batch fails when ANY account is bad", async () => {
