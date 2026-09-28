@@ -758,9 +758,12 @@ export const reviewDecisions = pgTable(
       .references(() => inboxItems.id, { onDelete: "cascade" })
       .notNull(),
     decision: varchar("decision", { length: 32 }).notNull(),
-    actorId: text("actor_id")
-      .references(() => user.id)
-      .notNull(),
+    // Who decided (migration 0053). A person is `user` + actor_id; a system
+    // actor (Jev, through an autonomy lane) is `system` + actor_key and has no
+    // user id to borrow. The CHECKs below keep each kind attributable.
+    actorType: varchar("actor_type", { length: 16 }).default("user").notNull(),
+    actorId: text("actor_id").references(() => user.id),
+    actorKey: varchar("actor_key", { length: 64 }),
     candidateRevision: integer("candidate_revision").notNull(),
     reason: text("reason"),
     beforeState: varchar("before_state", { length: 32 }).notNull(),
@@ -768,7 +771,20 @@ export const reviewDecisions = pgTable(
     journalHeaderId: uuid("journal_header_id").references(() => journalHeaders.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("review_decisions_inbox_created_idx").on(table.inboxItemId, table.createdAt)],
+  (table) => [
+    index("review_decisions_inbox_created_idx").on(table.inboxItemId, table.createdAt),
+    // Declared here as well as in 0053: drizzle-kit push drops CHECKs the
+    // schema does not declare, so a migration-only CHECK would not survive it.
+    check("review_decisions_actor_type_check", sql`${table.actorType} in ('user', 'system')`),
+    check(
+      "review_decisions_user_actor_check",
+      sql`${table.actorType} <> 'user' or ${table.actorId} is not null`,
+    ),
+    check(
+      "review_decisions_system_actor_check",
+      sql`${table.actorType} <> 'system' or ${table.actorKey} is not null`,
+    ),
+  ],
 );
 
 export const workflowEvents = pgTable(

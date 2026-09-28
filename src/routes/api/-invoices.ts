@@ -10,16 +10,14 @@ import {
   sweepOverdueInvoices,
 } from "../../lib/invoices/overdue";
 import { serverBrand } from "@/config/brand";
-import type { DbExecutor } from "../../db";
 import { invoices, invoiceLineItems } from "../../db/schema/invoices";
 import { parties } from "../../db/schema/parties";
 import { accounts } from "../../db/schema/accounts";
-import { journalHeaders, journalLines } from "../../db/schema/journals";
-import { reconciliations, statementLines } from "../../db/schema/reconciliations";
+import { journalHeaders } from "../../db/schema/journals";
 import { activityLogs } from "../../db/schema/activity-logs";
-import { eq, desc, asc, and, inArray } from "drizzle-orm";
+import { eq, desc, asc, and } from "drizzle-orm";
 import { z } from "zod";
-import { allocateInvoiceNumber, peekNextInvoiceNumber } from "../../lib/sequence";
+import { peekNextInvoiceNumber } from "../../lib/sequence";
 import { getClosedThrough, isDateLocked } from "../../lib/period-close";
 import { journalsClearedByFinalizedReconciliation } from "../../lib/reconciliation-claimed-lines";
 import { resolveFunctionalCurrency } from "../../lib/functional-currency";
@@ -35,6 +33,7 @@ import {
 } from "../../lib/operational-idempotency";
 import { recordManualInvoicePayment } from "../../lib/manual-invoice-payment";
 import { createArJournalEntry } from "../../lib/invoice-journal";
+import { assertInvoiceReferences, createInvoiceCore } from "../../lib/posting/invoice-core";
 
 // ============================================================================
 // Types
@@ -244,45 +243,6 @@ const lineItemSchema = z.object({
   sortOrder: z.number().default(0),
 });
 
-async function assertInvoiceReferences(
-  db: DbExecutor,
-  orgId: string,
-  customerId: string | undefined,
-  lineItems: Array<{ revenueAccountId?: string | null }> | undefined,
-): Promise<void> {
-  if (customerId) {
-    const [customer] = await db
-      .select({ id: parties.id })
-      .from(parties)
-      .where(and(eq(parties.id, customerId), eq(parties.organizationId, orgId)))
-      .limit(1);
-    if (!customer) throw new Error("Customer is unavailable for this organization");
-  }
-
-  const accountIds = [
-    ...new Set(
-      (lineItems ?? [])
-        .map((line) => line.revenueAccountId)
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  if (accountIds.length > 0) {
-    const validAccounts = await db
-      .select({ id: accounts.id })
-      .from(accounts)
-      .where(
-        and(
-          eq(accounts.organizationId, orgId),
-          eq(accounts.isActive, true),
-          inArray(accounts.id, accountIds),
-        ),
-      );
-    if (validAccounts.length !== accountIds.length) {
-      throw new Error("A revenue account is unavailable for this organization");
-    }
-  }
-}
-
 const createInvoiceSchema = z.object({
   // Optional: omitted (the normal path) means the server assigns the next
   // sequence number at save time; a provided value is honored as a custom
@@ -306,72 +266,11 @@ export const createInvoice = createServerFn({ method: "POST" }).handler(
       "invoice",
       "create",
       { routeKey: "invoice:create", limit: 30, windowMs: 60_000 },
-      async ({ orgId, db }) => {
+      async ({ orgId, userId, db }) => {
         const parsed = createInvoiceSchema.parse(rawData);
-        await assertInvoiceReferences(db, orgId, parsed.customerId, parsed.lineItems);
-        const amounts = calculateInvoiceAmounts(
-          parsed.lineItems,
-          parsed.discountAmount,
-          parsed.taxAmount,
-        );
-
-        // Allocation happens HERE, not on the draft screen's GET (checkpoint
-        // C6: peek on open, assign on save). Historical custom numbers can
-        // occupy sequence values, so skip over collisions; the per-org unique
-        // constraint stays the true guard under concurrency.
-        let invoiceNumber = parsed.invoiceNumber?.trim() || null;
-        if (!invoiceNumber) {
-          for (let attempt = 0; attempt < 5 && !invoiceNumber; attempt++) {
-            const candidate = await allocateInvoiceNumber(orgId, db);
-            const [clash] = await db
-              .select({ id: invoices.id })
-              .from(invoices)
-              .where(and(eq(invoices.organizationId, orgId), eq(invoices.invoiceNumber, candidate)))
-              .limit(1);
-            if (!clash) invoiceNumber = candidate;
-          }
-          if (!invoiceNumber) {
-            throw new Error("Could not assign an invoice number. Please try again.");
-          }
-        }
-
-        return await db.transaction(async (tx) => {
-          const [invoice] = await tx
-            .insert(invoices)
-            .values({
-              organizationId: orgId,
-              invoiceNumber,
-              customerId: parsed.customerId,
-              issueDate: parsed.issueDate,
-              dueDate: parsed.dueDate,
-              status: "draft",
-              subtotal: amounts.subtotal,
-              discountAmount: amounts.discountAmount,
-              taxAmount: amounts.taxAmount,
-              total: amounts.total,
-              balanceDue: amounts.total,
-              amountPaid: "0",
-              notes: parsed.notes,
-              paymentTerms: parsed.paymentTerms,
-            })
-            .returning();
-
-          if (parsed.lineItems.length > 0) {
-            await tx.insert(invoiceLineItems).values(
-              parsed.lineItems.map((item, idx) => ({
-                invoiceId: invoice.id,
-                description: item.description ?? "",
-                quantity: String(item.quantity),
-                unitPrice: String(item.unitPrice),
-                amount: amounts.lineAmounts[idx],
-                revenueAccountId: item.revenueAccountId ?? undefined,
-                sortOrder: item.sortOrder ?? idx,
-              })),
-            );
-          }
-
-          return invoice;
-        });
+        // Validation, invoice-number allocation and the writes live in the
+        // session-free core.
+        return createInvoiceCore(db, orgId, { type: "user", userId }, parsed);
       },
     );
   },

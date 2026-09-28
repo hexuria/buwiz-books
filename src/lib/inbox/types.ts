@@ -75,6 +75,12 @@ export interface InboxServiceContext {
   role: string;
 }
 
+/**
+ * Submitting a candidate never consults the caller's role, so session-free
+ * posting cores can submit without one. Wrappers that have a role may pass it.
+ */
+export type CandidateSubmissionContext = Omit<InboxServiceContext, "role"> & { role?: string };
+
 export interface ReviewFindingDraft {
   ruleKey: string;
   impact: "blocking" | "warning";

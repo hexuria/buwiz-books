@@ -81,8 +81,15 @@ describe("background db discipline", () => {
     );
     expect(getBlock).toContain("peekNextInvoiceNumber(orgId, db)");
     expect(getBlock).not.toContain("allocateInvoiceNumber(");
+    // createInvoice delegates to the session-free invoice core (Inbox v2
+    // step 3), which is where the allocation now lives.
     const createBlock = source.slice(source.indexOf("export const createInvoice"));
-    expect(createBlock).toContain("allocateInvoiceNumber(orgId, db)");
+    expect(createBlock).toContain("createInvoiceCore(db, orgId,");
+    expect(source).not.toContain("allocateInvoiceNumber(");
+    const core = read("src/lib/posting/invoice-core.ts");
+    expect(core.slice(core.indexOf("export async function createInvoiceCore"))).toContain(
+      "allocateInvoiceNumber(orgId, db)",
+    );
   });
 });
 

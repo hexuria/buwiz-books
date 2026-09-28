@@ -27,6 +27,26 @@ database. Operational deployment, backfill, matcher thresholds, and safe merge
 behavior are described in
 [Transaction deduplication operations](./transaction-deduplication.md).
 
+### Vendor bills
+
+Approval writes a bill as well as its journal when the item is a vendor bill:
+a Bills-editor submission, or an emailed or uploaded paper whose accounting
+source is classified `bill_accrual` and whose entry touches Accounts Payable.
+The bill goes through the same core the Bills editor uses
+(`src/lib/posting/bill-core.ts`), lands in `awaiting_payment` linked to its
+accrual journal, and appears in Bills and A/P aging. The entry must credit the
+mapped A/P account on one line, with every other line an expense debit, and
+every amount must be whole cents: bills store two decimals, so a sub-cent
+amount blocks approval instead of being rounded. A `bill_accrual` paper booked
+straight against cash posts as an ordinary journal with no bill. Nothing
+extracts a due date yet, so these bills are due on the bill date until their
+terms are set on the bill.
+
+A Bills-editor bill can also be approved, scheduled, paid, voided or deleted on
+the Bills page while its Inbox item is still pending. Those actions already
+post, cancel or remove its accrual, so the Inbox refuses to approve that item;
+reject it instead.
+
 ## Review policy
 
 - **Book rules** detect missing or invalid accounting data. A finding with
