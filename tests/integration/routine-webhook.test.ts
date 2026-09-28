@@ -28,6 +28,7 @@ import {
   workflowEvents,
 } from "@/db/schema/inbox";
 import { executeCoaPlan } from "@/lib/coa/execute-plan";
+import { loadJevPaperFacts } from "@/lib/inbox/jev-approval/proposal";
 import { planCoaPreset } from "@/lib/coa/plan-preset";
 import { COA_PRESETS } from "@/lib/coa/presets";
 import { loadCoaSnapshot } from "@/lib/coa/snapshot";
@@ -221,6 +222,11 @@ describeDb("routine webhook", () => {
       status: "current",
       transactionDate: orgDateOf(event.occurredAt!, "Asia/Manila"),
     });
+    // The routine signs its requests (HMAC): not email, so Jev has no sender to verify.
+    const facts = await withOrgContext(fixture.orgId, "system", "admin", (tx) =>
+      loadJevPaperFacts(tx, fixture.orgId, candidate.id),
+    );
+    expect(facts?.sender).toBeNull();
     const findings = await db
       .select()
       .from(reviewFindings)

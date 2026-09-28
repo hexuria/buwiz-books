@@ -37,6 +37,7 @@ import { ensureDocumentMatchingExtraction } from "@/lib/inbox/email-attachment-e
 import { isPdfPasswordRequiredError } from "@/lib/pdf-unlock";
 import { deriveEmailAttachmentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import type { DocumentSourceFacts } from "@/lib/inbox/email-attachment-source";
+import { evaluateSenderAuthentication } from "@/lib/inbox/sender-authentication";
 import { createLogger } from "@/lib/logger";
 import { CLASSIFY_INBOX_CANDIDATE_JOB_TYPE } from "@/lib/inbox/candidate-classification-job";
 import { triggerWorker } from "../trigger";
@@ -51,7 +52,70 @@ import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 const MAX_INBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const ATTACHMENT_DOWNLOAD_TIMEOUT_MS = 60_000;
 
+/**
+ * The raw message is read only as far as the blank line that ends its header
+ * section, and never past this many bytes (a header section is a few KB; a
+ * long ARC chain, tens).
+ */
+const MAX_RAW_HEADER_BYTES = 256 * 1024;
+const RAW_HEADER_DOWNLOAD_TIMEOUT_MS = 30_000;
+
 const logger = createLogger("api.internal.inbox-worker");
+
+/**
+ * The message's header section as the receiving server stored it, in order —
+ * what sender authentication is judged from (src/lib/inbox/sender-authentication.ts).
+ * Resend's parsed `headers` map cannot say which of two same-named headers came
+ * first, so the raw download is read instead. Null when there is no download,
+ * it fails, or no header section ends within the limit: the verdict is then
+ * "not passed", and the job carries on — an unverified sender only means a
+ * person approves the paper.
+ */
+async function readRawHeaderSection(
+  url: string | null | undefined,
+  context: { jobId: string; emailId: string },
+): Promise<string | null> {
+  if (!url) return null;
+  try {
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(RAW_HEADER_DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(`Raw message download failed with HTTP ${response.status}.`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    let bytes = 0;
+    let ended = false;
+    try {
+      while (bytes < MAX_RAW_HEADER_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) {
+          ended = true;
+          break;
+        }
+        bytes += value.byteLength;
+        const from = Math.max(0, text.length - 3);
+        text += decoder.decode(value, { stream: true });
+        if (/\r?\n\r?\n/u.test(text.slice(from))) break;
+      }
+    } finally {
+      await reader.cancel().catch(() => undefined);
+    }
+    const end = text.search(/\r?\n\r?\n/u);
+    if (end !== -1 && end <= MAX_RAW_HEADER_BYTES) return text.slice(0, end);
+    // A message that is all headers ends without a blank line.
+    if (ended && bytes <= MAX_RAW_HEADER_BYTES) return text;
+    throw new Error(`No header section ended within ${MAX_RAW_HEADER_BYTES} bytes.`);
+  } catch (error) {
+    logger.warn("Inbound email headers could not be read — its sender stays unverified", {
+      ...context,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
 
 function documentType(filename: string, contentType: string) {
   const normalized = `${filename} ${contentType}`.toLowerCase();
@@ -150,6 +214,23 @@ export async function processInboundEmailJob(
   const emailResponse = await resend.emails.receiving.get(payload.emailId);
   if (emailResponse.error || !emailResponse.data) {
     throw new Error(emailResponse.error?.message ?? "Resend email could not be retrieved.");
+  }
+  // Recorded on the email's source record below; Jev approves none of this
+  // email's papers on its own unless it passed (src/lib/inbox/jev-approval/sender.ts).
+  const senderAuthentication = evaluateSenderAuthentication({
+    headerSection: await readRawHeaderSection(emailResponse.data.raw?.download_url, {
+      jobId: job.id,
+      emailId: payload.emailId,
+    }),
+    providerFrom: emailResponse.data.from,
+  });
+  if (!senderAuthentication.passed) {
+    logger.info("Inbound email sender not verified", {
+      jobId: job.id,
+      emailId: payload.emailId,
+      reason: senderAuthentication.reason,
+      authservId: senderAuthentication.authservId,
+    });
   }
   const processedAttachments: {
     attachmentId: string;
@@ -876,6 +957,7 @@ export async function processInboundEmailJob(
       attachmentSources: processedAttachments,
       economicChildSourceIds: processedChildren.map(({ sourceRecordId }) => sourceRecordId),
       candidateIds: assignedCandidates.map(({ candidateId }) => candidateId),
+      senderAuthentication,
     };
     await tx
       .update(sourceRecords)

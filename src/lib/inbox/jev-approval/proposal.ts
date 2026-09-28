@@ -43,6 +43,8 @@ import {
   type JevApprovalDecision,
   type JevApprovalInput,
 } from "./predicate";
+import type { EmailSenderJudgement } from "../sender-authentication";
+import { loadJevSender } from "./sender";
 import { loadJevApprovalSettings, type JevApprovalSettings } from "./settings";
 import { isSpotCheckSampled } from "./spot-check";
 
@@ -73,6 +75,8 @@ export interface JevPaperFacts {
   newPartyPending: boolean;
   openFindings: Array<{ ruleKey: string; impact: string }>;
   paymentDetailsFlagged: boolean;
+  /** An emailed paper's sender (./sender.ts); null for a paper that did not come by email. */
+  sender: EmailSenderJudgement | null;
   duplicateCaseOpen: boolean;
   periodLocked: boolean;
   requireDifferentApprover: boolean;
@@ -356,6 +360,7 @@ export async function loadJevPaperFacts(
           .limit(1)
       : [];
 
+  const sender = await loadJevSender(db, orgId, { candidate, sourceIds });
   const period = await isDateInLockedPeriod(orgId, candidate.transactionDate, db);
   const [accounting] = await db
     .select({ requireDifferentApprover: organizationAccountingSettings.requireDifferentApprover })
@@ -373,6 +378,7 @@ export async function loadJevPaperFacts(
     newPartyPending: Boolean(pendingParty),
     openFindings,
     paymentDetailsFlagged: Boolean(paymentDetails),
+    sender,
     duplicateCaseOpen: Boolean(duplicate),
     periodLocked: period.locked,
     // The column defaults to true: an org with no settings row requires it.
@@ -417,6 +423,9 @@ export function jevApprovalInputOf(
       newPartyPending: facts.newPartyPending,
       openFindings: facts.openFindings,
       paymentDetailsFlagged: facts.paymentDetailsFlagged,
+      sender: facts.sender
+        ? { verified: facts.sender.verified, detail: facts.sender.detail }
+        : null,
       duplicateCaseOpen: facts.duplicateCaseOpen,
       periodLocked: facts.periodLocked,
       functionalTotal: facts.candidate.functionalTotal,

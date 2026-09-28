@@ -137,7 +137,6 @@ describeDb("Jev lane feedback", () => {
     expect(proposal!.evaluation.holds.map((hold) => hold.reason)).toEqual([
       "lane_not_auto",
       "autoapprove_off",
-      "walled_kind",
     ]);
     const [lane] = await db
       .select()

@@ -15,9 +15,11 @@
 //           finding, and no open warning either (a warning is addressed to a
 //           person, and there would be none); no duplicate case; a known party
 //           and no party being created; no payee bank-detail change, ever,
-//           even one a person resolved (spec §5: always a human); an open
-//           period; every line on an account and balanced to the cent; the
-//           functional total at or under the lane's cap, compared exactly
+//           even one a person resolved (spec §5: always a human); for a paper
+//           that came in by email, a sender that passed authentication and
+//           that the party already uses (./sender.ts); an open period; every
+//           line on an account and balanced to the cent; the functional total
+//           at or under the lane's cap, compared exactly
 //   sample  not held back as a spot check
 //
 // Anything false holds the paper in Needs you, and the holds say why.
@@ -62,6 +64,7 @@ export type JevHoldReason =
   | "unknown_party"
   | "new_party"
   | "payment_details_changed"
+  | "sender_unverified"
   | "period_locked"
   | "incomplete_entry"
   | "unbalanced"
@@ -106,6 +109,12 @@ export interface JevApprovalInput {
     openFindings: ReadonlyArray<{ ruleKey: string; impact: string }>;
     /** Any payee bank-detail finding on this paper, open or resolved. */
     paymentDetailsFlagged: boolean;
+    /**
+     * A paper that came in by email (or as an attachment of one): whether its
+     * sender is verified (./sender.ts). Null for any other paper — an upload,
+     * a bank line, a webhook routine, which signs its requests.
+     */
+    sender: { verified: boolean; detail: string | null } | null;
     duplicateCaseOpen: boolean;
     periodLocked: boolean;
     /** Functional-currency total (the debits). */
@@ -177,6 +186,9 @@ function paperHolds(
   if (paper.partyId === null) hold("unknown_party");
   if (paper.newPartyPending) hold("new_party");
   if (paper.paymentDetailsFlagged) hold("payment_details_changed");
+  if (paper.sender && !paper.sender.verified) {
+    hold("sender_unverified", paper.sender.detail ?? undefined);
+  }
   if (paper.periodLocked) hold("period_locked");
 
   if (paper.lines.length < 2 || paper.lines.some((line) => !line.accountId)) {
@@ -249,6 +261,7 @@ const HOLD_TEXT: Record<JevHoldReason, string> = {
   unknown_party: "No vendor or customer is linked.",
   new_party: "A new vendor or customer would be created.",
   payment_details_changed: "The paper asks for payment to different bank details.",
+  sender_unverified: "Sender could not be verified — Jev won't approve this on its own.",
   period_locked: "Its period is closed.",
   incomplete_entry: "A line has no account.",
   unbalanced: "The entry does not balance.",

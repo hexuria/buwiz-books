@@ -228,6 +228,16 @@ export async function listInboxV2Items(
           and we.data->>'candidateRevision' = ${transactionCandidates.revision}::text
           and we.data->'evaluation'->>'heldForSpotCheck' = 'true'
       )`,
+      senderUnverified: sql<boolean>`exists (
+        select 1
+        from workflow_events we
+        where we.organization_id = ${inboxItems.organizationId}
+          and we.entity_type = 'transaction_candidate'
+          and we.entity_id = ${transactionCandidates.id}
+          and we.action in (${JEV_PROPOSAL_RECORDED_ACTION}, ${JEV_AUTO_APPROVAL_HELD_ACTION})
+          and we.data->>'candidateRevision' = ${transactionCandidates.revision}::text
+          and we.data->'evaluation'->'holds' @> '[{"reason":"sender_unverified"}]'::jsonb
+      )`,
       jevWouldApprove: sql<boolean>`exists (
         select 1
         from workflow_events we
@@ -274,6 +284,7 @@ export async function listInboxV2Items(
       modelUnsureSignals: modelUnsureSignalsFor({ lines, unresolvedParty: row.unresolvedParty }),
       spotCheck: row.spotCheck === true,
       jevWouldApprove: row.jevWouldApprove === true,
+      senderUnverified: row.senderUnverified === true,
       remembered: row.remembered === true,
     });
     return {

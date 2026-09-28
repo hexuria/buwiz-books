@@ -153,10 +153,28 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
   the AI kill switch off; maker-checker (`requireDifferentApprover`) off, or an
   admin opted Jev in; confidence at or above the lane's threshold; no open
   blocking check or warning; no duplicate case; a known counterparty and none
-  being created; no change to a payee's bank details, ever; an open period;
-  every line on an account and balanced; the total at or under the lane's cap;
-  and the paper not sampled as a spot check. Anything else leaves it in the
-  Inbox, and a `jev_auto_approval_held` event says why.
+  being created; no change to a payee's bank details, ever; for a paper that
+  came in by email, a verified sender (below); an open period; every line on an
+  account and balanced; the total at or under the lane's cap; and the paper not
+  sampled as a spot check. Anything else leaves it in the Inbox, and a
+  `jev_auto_approval_held` event says why. A paper is decided when it is
+  proposed: promoting a lane or turning the switch on does not approve papers
+  already waiting in the Inbox.
+- **Emailed papers: a verified sender, always.** A paper whose source is an
+  inbound email — or an attachment or the body of one — is approved by Jev only
+  if **every** message behind it passed sender authentication and came from a
+  sender the paper's party already uses. _Passed_ means the receiving server's
+  own `Authentication-Results` says DMARC pass for the From domain, or DKIM or
+  SPF pass aligned with it. _Already uses_ means the From domain is the domain
+  (or a subdomain of the domain) of the party's stored email, or of a paper of
+  that party a person approved; at a shared mailbox provider (gmail.com,
+  outlook.com, yahoo.com and the like) only the exact address counts, since
+  anyone can sign up there. Missing, repeated or unreadable authentication data is not a pass:
+  the paper stays in the Inbox as **Sender could not be verified — Jev won't
+  approve this on its own**, with the reason in its `sender_unverified` hold.
+  Webhook-routine papers are not email (each request is HMAC-signed) and are
+  unaffected. How the verdict is captured: see _Sender authentication_ under
+  Inbound email.
 - **Spot checks.** A share of what Jev would approve (10% by default, set in
   Settings) is decided before posting — a hash of the candidate id and the
   organization's salt — and left in the Inbox as **Spot check**. The person's
@@ -176,11 +194,13 @@ migration 0060). Settings → **Jev approval** lists the lanes; admins change it
   paid); returns the paper to the Inbox on a new revision; counts as a
   disagreement for the lane; and, when a memory answered the paper, counts an
   undo against that memory.
-- **Not yet.** `categorize` is structurally manual (`STRUCTURAL_MANUAL_KINDS`),
-  so while it is walled for the lane nothing Jev approves is posted — lanes
-  still learn and can be promoted. Stage 2 never picks the payment side, so a
-  paper stage 2 alone read is never complete enough to approve; a remembered
-  answer (build step 10) can make it so.
+- **Categories.** `categorize` stays structurally manual
+  (`STRUCTURAL_MANUAL_KINDS`) for per-kind autonomy and every other path; the
+  inbox_approve lane alone may apply the category of a paper it approves
+  (`INBOX_APPROVE_LANE_EXCEPTIONS` in `src/lib/ai/autonomy.ts`, with the reasons
+  and guards). Stage 2 never picks the payment side, so a paper stage 2 alone
+  read is never complete enough to approve; a remembered answer (build step 10)
+  can make it so.
 
 ## Review policy
 
@@ -367,12 +387,40 @@ Attachment downloads are bounded: the worker refuses attachments over 20 MB
 seconds, recording the attachment as failed instead of pinning the worker.
 
 **Sender authentication (recorded decision):** authenticity of the webhook is
-established by the Resend/Svix signature; SPF/DKIM/DMARC evaluation of the
-original sender happens at Resend before the event ever reaches us. The app
-does NOT additionally verify the `from` address against a per-organization
-sender allowlist — every accepted email lands as an unposted candidate that a
-human must review, so a spoofed sender can at worst add review noise, never
-post to the ledger. Per-org sender allowlists are tracked in
+established by the Resend/Svix signature — that proves Resend sent the event,
+not who sent the email. The original decision stopped there because every
+accepted email landed as a candidate a person had to review. Jev approval lanes
+(above) end that assumption: an email spoofing a known vendor, with the vendor's
+own bank details and under the lane's cap, could otherwise be posted by Jev. So
+the app now judges the sender itself, once, at ingest:
+
+- Resend's `email.received` webhook carries no authentication verdict, and the
+  `headers` map its API returns keeps one value per header name — it cannot say
+  which of several `Authentication-Results` came first, and a sender can write
+  one of its own. The `process_inbound_email` job therefore reads the message's
+  **raw header section** (Resend's raw download, only up to the blank line that
+  ends the headers, at most 256 KB, 30-second timeout).
+- Only the **topmost** `Authentication-Results` is believed — the receiving
+  server prepends its own, so anything below came from upstream — and only
+  when its authserv-id is the receiving server's (`TRUSTED_AUTHSERV_IDS` in
+  `src/lib/inbox/sender-authentication.ts`: `amazonses.com`, on the assumption
+  that Resend receives on Amazon SES; if that is wrong, every emailed paper is
+  held, never the reverse, and each verdict names the id it saw). This relies
+  on the receiving server stamping every message it accepts — one it let
+  through unstamped would leave the sender's own header on top. ARC results
+  are not read.
+- The message must have exactly one plain From, and it must agree with the From
+  Resend reports. DMARC pass needs `header.from` equal to the From domain; DKIM
+  and SPF count when their domain is aligned (equal, or one a subdomain of the
+  other).
+- The verdict is stored on the email's source record as
+  `raw_data.senderAuthentication` (`passed`, `reason`, `method`, the From, the
+  authserv-id and each method's result). A failure to read the headers is
+  recorded as not passed and never fails the job: it only means a person
+  approves the email's papers.
+
+Ingest still accepts any sender: an unverified email lands in the Inbox as
+before, for a person. Per-org sender allowlists are tracked in
 [docs/audit-backlog.md](audit-backlog.md), not implemented here.
 
 ## Routines
