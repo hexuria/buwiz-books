@@ -24,13 +24,19 @@ import {
   transactionCandidates,
   workflowEvents,
 } from "@/db/schema/inbox";
-import { journalHeaders, journalLines } from "@/db/schema/journals";
+import { journalHeaders } from "@/db/schema/journals";
 import { parties } from "@/db/schema/parties";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { assertIdempotencyPayloadMatches, idempotencyPayloadHash } from "@/lib/idempotency";
 import { parseOrgMetadata } from "@/lib/org-metadata";
 import { isDateInLockedPeriod } from "@/lib/period-close";
-import { allocateJournalTransactionNumber } from "@/lib/sequence";
+import { reviewDecisionActor, type PostingActor } from "@/lib/posting/actor";
+import { createBillCore, touchesAccountsPayable } from "@/lib/posting/bill-core";
+import {
+  postTransactionCore,
+  type PostTransactionDraft,
+  type PostedTransaction,
+} from "@/lib/posting/transaction-core";
 import {
   DUPLICATE_MATCHER_VERSION,
   normalizeAmountForCurrency,
@@ -48,9 +54,14 @@ import {
   normalizeCurrency,
   sumMoney,
 } from "./money";
-import type { CreateCandidateInput, InboxServiceContext } from "./types";
+import type {
+  CandidateSubmissionContext,
+  CreateCandidateInput,
+  InboxServiceContext,
+} from "./types";
 import { resolveFxRate } from "./fx";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
+import { isVendorBillCandidate } from "./vendor-bill";
 
 type AccountingSettings = typeof organizationAccountingSettings.$inferSelect;
 
@@ -88,15 +99,31 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 function sourceDocumentStampFor(
   candidateType: string,
   externalId: string | null,
-): { sourceDocumentId: string | null; sourceDocumentType: string | null } {
+): { id: string; type: string } | null {
   if (
     (candidateType === "bill" || candidateType === "invoice") &&
     externalId &&
     UUID_SHAPE.test(externalId)
   ) {
-    return { sourceDocumentId: externalId, sourceDocumentType: candidateType };
+    return { id: externalId, type: candidateType };
   }
-  return { sourceDocumentId: null, sourceDocumentType: null };
+  return null;
+}
+
+/**
+ * The Bills-editor bill behind a "bill" candidate, found by its uuid external
+ * id and locked: the Bills page takes the same row lock before it posts an
+ * accrual, so the two paths serialize instead of both accruing.
+ */
+async function lockCandidateBill(db: DbExecutor, orgId: string, externalId: string | null) {
+  if (!externalId || !UUID_SHAPE.test(externalId)) return null;
+  const [bill] = await db
+    .select({ id: bills.id, status: bills.status, journalHeaderId: bills.journalHeaderId })
+    .from(bills)
+    .where(and(eq(bills.id, externalId), eq(bills.organizationId, orgId)))
+    .limit(1)
+    .for("update");
+  return bill ?? null;
 }
 
 function sourceProvider(input: CreateCandidateInput): string {
@@ -128,7 +155,7 @@ function sourceClassification(input: CreateCandidateInput): {
   }
 }
 
-function journalSourceFor(channel: string): typeof journalHeaders.$inferInsert.source {
+function journalSourceFor(channel: string): PostTransactionDraft["source"] {
   switch (channel) {
     case "csv":
       return "import";
@@ -335,7 +362,7 @@ async function loadRuleInputs(db: DbExecutor, orgId: string, input: CreateCandid
 }
 
 export async function createTransactionCandidate(
-  ctx: InboxServiceContext,
+  ctx: CandidateSubmissionContext,
   input: CreateCandidateInput,
 ) {
   const { db, orgId, userId } = ctx;
@@ -824,11 +851,22 @@ export interface ApproveInboxInput {
 export const DUPLICATE_APPROVAL_BLOCKED_MESSAGE =
   "Resolve the blocking Possible Duplicate case before approving this transaction.";
 
+export const BILL_ALREADY_ACCRUED_MESSAGE =
+  "This bill was already approved in Bills, so its accrual is posted. Reject this Inbox item instead of approving it again.";
+
+export const BILL_VOIDED_MESSAGE =
+  "This bill was voided in Bills. Reject this Inbox item instead of approving it.";
+
+export const BILL_DELETED_MESSAGE =
+  "This bill was deleted in Bills. Reject this Inbox item instead of approving it.";
+
 export type ApproveInboxResult =
   | {
       approvalOutcome: "approved";
       journalHeaderId: string;
       transactionNumber?: string;
+      /** The vendor bill this approval created or posted, when it was one. */
+      billId?: string;
       alreadyApproved: boolean;
     }
   | {
@@ -895,6 +933,21 @@ export async function approveInboxItem(
       );
     }
   }
+
+  // A Bills-editor bill can be approved, scheduled, paid, voided or deleted on
+  // the Bills page while its Inbox item is still pending. Accruing it here
+  // afterwards would double the payable and repoint the bill's
+  // journal_header_id, revive a voided bill, or recreate a deleted one. All
+  // are refused; the item stays open for a person to reject.
+  const existingBill =
+    row.candidate.candidateType === "bill"
+      ? await lockCandidateBill(db, orgId, row.sourceRecordExternalId)
+      : null;
+  if (row.candidate.candidateType === "bill" && row.sourceRecordExternalId && !existingBill) {
+    throw new Error(BILL_DELETED_MESSAGE);
+  }
+  if (existingBill?.journalHeaderId) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
+  if (existingBill?.status === "voided") throw new Error(BILL_VOIDED_MESSAGE);
 
   const linkedCandidateSources = await db
     .select({
@@ -1086,60 +1139,17 @@ export async function approveInboxItem(
     }
   }
 
-  const transactionNumber = await allocateJournalTransactionNumber(orgId, db);
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: orgId,
-      transactionNumber,
-      idempotencyKey: `inbox:${row.item.id}:approve:${row.candidate.revision}`,
-      transactionDate: row.candidate.transactionDate,
-      transactionType: row.candidate
-        .transactionType as typeof journalHeaders.$inferInsert.transactionType,
-      source: journalSourceFor(row.source?.channel ?? "manual"),
-      memo: row.candidate.memo,
-      partyId: row.candidate.partyId,
-      referenceNumber: row.candidate.referenceNumber,
-      totalAmount: debits,
-      functionalCurrency: row.candidate.functionalCurrency,
-      transactionCurrency: row.candidate.originalCurrency,
-      exchangeRateId: row.candidate.exchangeRateId,
-      status: "posted",
-      postedAt: new Date(),
-      // The bill/invoice void paths and the AP/AR aging reports find journals
-      // EXCLUSIVELY through this pair. Without it, a bill approved here
-      // flipped to voided while its journal stayed posted forever, and never
-      // appeared in aging at all. Stamped only when the external id is
-      // uuid-shaped: source_document_id is a uuid column, and for bill
-      // candidates the id-as-externalId convention is already load-bearing at
-      // the bills.journalHeaderId update below.
-      ...sourceDocumentStampFor(row.candidate.candidateType, row.sourceRecordExternalId),
-      createdBy: userId,
-    })
-    .returning();
-  await db.insert(journalLines).values(
-    lines.map((line) => ({
-      journalHeaderId: header.id,
-      accountId: line.accountId!,
-      debit: line.functionalDebit,
-      credit: line.functionalCredit,
-      originalDebit: line.originalDebit,
-      originalCredit: line.originalCredit,
-      originalCurrency: line.originalCurrency,
-      exchangeRate: line.exchangeRate,
-      exchangeRateId: row.candidate.exchangeRateId,
-      lineDescription: line.lineDescription,
-      partyId: line.partyId,
-      departmentId: line.departmentId,
-      locationId: line.locationId,
-      sortOrder: line.sortOrder,
-    })),
-  );
-
+  const actor: PostingActor = { type: "user", userId };
+  // Evidence is read before posting because a new vendor bill carries it too.
+  // The origin source's own documents come first: the first document becomes
+  // the bill's viewer document.
   const sourceDocuments =
     candidateSourceIds.length > 0
       ? await db
-          .select({ documentId: sourceRecordDocuments.documentId })
+          .select({
+            documentId: sourceRecordDocuments.documentId,
+            sourceRecordId: sourceRecordDocuments.sourceRecordId,
+          })
           .from(sourceRecordDocuments)
           .where(
             and(
@@ -1147,6 +1157,7 @@ export async function approveInboxItem(
               inArray(sourceRecordDocuments.sourceRecordId, candidateSourceIds),
             ),
           )
+          .orderBy(sourceRecordDocuments.createdAt, sourceRecordDocuments.documentId)
       : [];
   const candidateDocuments = await db
     .select({ documentId: documentAttachments.documentId })
@@ -1160,17 +1171,110 @@ export async function approveInboxItem(
     );
   const documentIds = [
     ...new Set([
+      ...sourceDocuments
+        .filter(({ sourceRecordId }) => sourceRecordId === originSourceRecordId)
+        .map(({ documentId }) => documentId),
       ...sourceDocuments.map(({ documentId }) => documentId),
       ...candidateDocuments.map(({ documentId }) => documentId),
     ]),
   ];
+
+  const journal: PostTransactionDraft = {
+    idempotencyKey: `inbox:${row.item.id}:approve:${row.candidate.revision}`,
+    transactionDate: row.candidate.transactionDate,
+    transactionType: row.candidate.transactionType as PostTransactionDraft["transactionType"],
+    source: journalSourceFor(row.source?.channel ?? "manual"),
+    memo: row.candidate.memo,
+    partyId: row.candidate.partyId,
+    referenceNumber: row.candidate.referenceNumber,
+    functionalCurrency: row.candidate.functionalCurrency,
+    transactionCurrency: row.candidate.originalCurrency,
+    exchangeRateId: row.candidate.exchangeRateId,
+    lines: lines.map((line) => ({
+      accountId: line.accountId!,
+      debit: line.functionalDebit,
+      credit: line.functionalCredit,
+      originalDebit: line.originalDebit,
+      originalCredit: line.originalCredit,
+      originalCurrency: line.originalCurrency,
+      exchangeRate: line.exchangeRate,
+      lineDescription: line.lineDescription,
+      partyId: line.partyId,
+      departmentId: line.departmentId,
+      locationId: line.locationId,
+      sortOrder: line.sortOrder,
+    })),
+  };
+
+  // A Bills-editor bill already has its row (locked and checked above):
+  // approval posts the accrual and links it (below). Any other vendor bill
+  // whose entry accrues a payable gets its bill row now, through the bill
+  // core, so it appears in Bills and in A/P aging. A vendor bill booked
+  // straight against cash never touched payables, so it posts as an ordinary
+  // journal: there is nothing left to pay.
+  const existingBillId = existingBill?.id ?? null;
+  const originEconomicEventClass =
+    candidateSources.find(({ id }) => id === originSourceRecordId)?.economicEventClass ?? null;
+  const createsBill =
+    existingBillId === null &&
+    isVendorBillCandidate(row.candidate.candidateType, originEconomicEventClass) &&
+    (await touchesAccountsPayable(
+      db,
+      orgId,
+      journal.lines.map(({ accountId }) => accountId),
+    ));
+
+  let posted: PostedTransaction;
+  let billId: string | undefined;
+  if (createsBill) {
+    if (!row.candidate.partyId) {
+      throw new Error("Choose the vendor for this bill before approving it.");
+    }
+    // The core dates the accrual on billDate and parties it to vendorId, so
+    // the bill and its journal cannot disagree.
+    const created = await createBillCore(db, orgId, actor, {
+      vendorId: row.candidate.partyId,
+      billNumber: row.candidate.referenceNumber,
+      billDate: row.candidate.transactionDate,
+      // Nothing extracts a due date from the paper yet, so the bill is due on
+      // receipt until someone sets its terms on the bill.
+      dueDate: row.candidate.transactionDate,
+      memo: row.candidate.memo,
+      documentIds,
+      activityContext: {
+        source: "inbox",
+        inboxItemId: row.item.id,
+        candidateId: row.candidate.id,
+      },
+      accrual: { kind: "post", journal },
+    });
+    posted = created.posted!;
+    billId = created.bill.id;
+  } else {
+    // The bill/invoice void paths and the AP/AR aging reports find journals
+    // EXCLUSIVELY through the source-document pair. Without it, a bill
+    // approved here flipped to voided while its journal stayed posted
+    // forever, and never appeared in aging at all. Stamped only when the
+    // external id is uuid-shaped: source_document_id is a uuid column, and for
+    // bill candidates the id-as-externalId convention is already load-bearing
+    // at the bills.journalHeaderId update below.
+    posted = await postTransactionCore(db, orgId, actor, {
+      ...journal,
+      sourceDocument: sourceDocumentStampFor(
+        row.candidate.candidateType,
+        row.sourceRecordExternalId,
+      ),
+    });
+  }
+  const { journalHeaderId, transactionNumber } = posted;
+
   if (documentIds.length > 0) {
     await db.insert(documentAttachments).values(
       documentIds.map((documentId) => ({
         organizationId: orgId,
         documentId,
         linkableType: "journal_header",
-        linkableId: header.id,
+        linkableId: journalHeaderId,
       })),
     );
   }
@@ -1178,7 +1282,7 @@ export async function approveInboxItem(
     if (originSourceRecordId) {
       await db.insert(ledgerSourceLinks).values({
         organizationId: orgId,
-        journalHeaderId: header.id,
+        journalHeaderId,
         sourceRecordId: originSourceRecordId,
         relationship: "origin",
       });
@@ -1192,7 +1296,7 @@ export async function approveInboxItem(
         .values(
           supportingSourceIds.map((sourceRecordId) => ({
             organizationId: orgId,
-            journalHeaderId: header.id,
+            journalHeaderId,
             sourceRecordId,
             relationship: "supporting",
           })),
@@ -1200,24 +1304,25 @@ export async function approveInboxItem(
         .onConflictDoNothing();
     }
   }
-  if (row.candidate.candidateType === "bill" && row.sourceRecordExternalId) {
+  if (existingBillId) {
     await db
       .update(bills)
       .set({
         status: "awaiting_payment",
-        journalHeaderId: header.id,
+        journalHeaderId,
         approverId: userId,
         approvedAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(and(eq(bills.id, row.sourceRecordExternalId), eq(bills.organizationId, orgId)));
+      .where(and(eq(bills.id, existingBillId), eq(bills.organizationId, orgId)));
+    billId = existingBillId;
   }
 
   await db
     .update(transactionCandidates)
     .set({
       status: "posted",
-      postedJournalHeaderId: header.id,
+      postedJournalHeaderId: journalHeaderId,
       updatedAt: new Date(),
     })
     .where(eq(transactionCandidates.id, row.candidate.id));
@@ -1236,12 +1341,12 @@ export async function approveInboxItem(
     organizationId: orgId,
     inboxItemId: row.item.id,
     decision: input.overrideReason?.trim() ? "owner_override_approved" : "approved",
-    actorId: userId,
+    ...reviewDecisionActor(actor),
     candidateRevision: row.candidate.revision,
     reason: input.overrideReason?.trim() || null,
     beforeState: row.item.state,
     afterState: "approved",
-    journalHeaderId: header.id,
+    journalHeaderId,
   });
   await db.insert(workflowEvents).values({
     organizationId: orgId,
@@ -1252,24 +1357,27 @@ export async function approveInboxItem(
     actorType: "user",
     actorId: userId,
     idempotencyKey: `inbox:${row.item.id}:approved:${row.candidate.revision}`,
-    data: { journalHeaderId: header.id },
+    data: billId ? { journalHeaderId, billId } : { journalHeaderId },
   });
   await insertActivityLog(
     {
       orgId,
       entityType: "transaction",
-      entityId: header.id,
+      entityId: journalHeaderId,
       action: "approved_from_inbox",
       actorId: userId,
-      changes: { inboxItemId: row.item.id, transactionNumber },
+      changes: billId
+        ? { inboxItemId: row.item.id, transactionNumber, billId }
+        : { inboxItemId: row.item.id, transactionNumber },
     },
     db,
   );
 
   return {
     approvalOutcome: "approved",
-    journalHeaderId: header.id,
+    journalHeaderId,
     transactionNumber,
+    ...(billId ? { billId } : {}),
     alreadyApproved: false,
   };
 }
@@ -1491,7 +1599,7 @@ export async function rejectInboxItem(
     organizationId: ctx.orgId,
     inboxItemId: item.id,
     decision: "rejected",
-    actorId: ctx.userId,
+    ...reviewDecisionActor({ type: "user", userId: ctx.userId }),
     candidateRevision: item.candidateRevision,
     reason,
     beforeState: item.state,
