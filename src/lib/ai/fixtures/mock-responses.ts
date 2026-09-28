@@ -6,8 +6,13 @@
 // tests/evals/fixtures/recorded.ts; tasks with no recorded case get a minimal
 // valid object. Keep this file in src/ — the mock runtime is a serving path,
 // not a test helper, and must not import from tests/.
+//
+// Jev answers the two tasks it serves (JEV_TASKS) from its own bodies, copied
+// from the Jev cases in the recorded corpus, so a mock run shows which hop
+// answered. Every other provider label gets the shared bodies.
 // ============================================================================
 
+import type { AiProvider } from "../errors";
 import type { AiTaskName } from "../types";
 
 const TRANSACTION_PARSE_BODY = {
@@ -239,8 +244,27 @@ export const MOCK_RESPONSES: Record<AiTaskName, string> = {
   category_mapping_suggest: JSON.stringify(MOCK_RESPONSE_BODIES.category_mapping_suggest),
 };
 
-export function getMockResponseText(task: AiTaskName): string {
-  const text = MOCK_RESPONSES[task];
+/** Confidence stays on the pinned 0..1 scale, as every Jev schema requires. */
+const JEV_MOCK_RESPONSE_BODIES = {
+  ingest_triage: {
+    docKind: "bill",
+    confidence: 0.93,
+    reasoning: "Filename carries a vendor bill number",
+  },
+  classify_document: {
+    documentType: "invoice",
+    confidence: 0.95,
+    reasoning: "INVOICE header with invoice number and amount due",
+  },
+} as const;
+
+export const JEV_MOCK_RESPONSES: Partial<Record<AiTaskName, string>> = {
+  ingest_triage: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.ingest_triage),
+  classify_document: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.classify_document),
+};
+
+export function getMockResponseText(task: AiTaskName, provider?: AiProvider): string {
+  const text = (provider === "jev" ? JEV_MOCK_RESPONSES[task] : undefined) ?? MOCK_RESPONSES[task];
   if (!text) {
     throw new Error(`No mock fixture for AI task "${task}"`);
   }

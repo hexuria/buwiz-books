@@ -216,11 +216,14 @@ export const organizationAiCredentials = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     organizationId: text("organization_id").notNull(),
     provider: text("provider")
-      .$type<"gemini" | "anthropic" | "openai" | "openai_compatible">()
+      .$type<"gemini" | "anthropic" | "openai" | "openai_compatible" | "jev">()
       .notNull(),
     /** crypto.ts AES-256-GCM envelope: enc:v1:<iv>:<tag>:<ct>. Never plaintext. */
     encryptedKey: text("encrypted_key").notNull(),
-    /** openai_compatible only (vLLM/Ollama/OpenRouter/…). */
+    /**
+     * openai_compatible only (vLLM/Ollama/OpenRouter/…). Jev's endpoint is
+     * operator config (JEV_BASE_URL), never a tenant-supplied row value.
+     */
     baseUrl: text("base_url"),
     label: text("label"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
@@ -255,7 +258,11 @@ export const organizationAiSettings = pgTable("organization_ai_settings", {
   autonomy: jsonb("autonomy").$type<Record<string, AiAutonomyLevel>>(),
   /** Tasks this org permits at all; absent ⇒ all shipped tasks. */
   taskAllowlist: jsonb("task_allowlist").$type<string[]>(),
-  /** Providers this org permits; absent ⇒ Gemini only. */
+  /**
+   * Providers this org permits; absent ⇒ Gemini only. "jev" here is also the
+   * Jev opt-in: Jev becomes the first hop for ingest_triage and
+   * classify_document (src/lib/ai/chains.ts applyJevPolicy).
+   */
   providerAllowlist: jsonb("provider_allowlist").$type<string[]>(),
   monthlySpendCapUsd: numeric("monthly_spend_cap_usd"),
   killSwitch: boolean("kill_switch").default(false).notNull(),

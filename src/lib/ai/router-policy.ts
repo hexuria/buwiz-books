@@ -1,6 +1,6 @@
 import { AI_MODEL_META_KEYS } from "../ai-models";
 import { parseOrgMetadata } from "../org-metadata";
-import { DEFAULT_CHAINS, enforceOcrPolicy, type ChainEntry } from "./chains";
+import { DEFAULT_CHAINS, applyJevPolicy, enforceOcrPolicy, type ChainEntry } from "./chains";
 import type { AiProvider } from "./errors";
 import { isProviderAllowed, type OrgAiSettings } from "./settings-policy";
 import { AI_TASK_CATEGORY, type AiTaskName } from "./types";
@@ -54,8 +54,21 @@ export async function resolveChainPolicy(input: ResolveChainPolicyInput): Promis
   }
 
   const filtered: ResolvedChain["filtered"] = [];
-  const afterPolicy = enforceOcrPolicy(task, chain);
+
+  // Jev placement: first hop for the classification tasks when the org opted
+  // in. An explicit caller override pins one Gemini model and is left alone.
+  const placed = input.modelOverride
+    ? chain
+    : applyJevPolicy(task, chain, isProviderAllowed(settings, "jev"));
   for (const hop of chain) {
+    if (!placed.includes(hop)) {
+      filtered.push({ ...hop, reason: "jev_task_scope" });
+    }
+  }
+
+  // The OCR clamp runs AFTER placement so it always has the final say.
+  const afterPolicy = enforceOcrPolicy(task, placed);
+  for (const hop of placed) {
     if (!afterPolicy.includes(hop)) {
       filtered.push({ ...hop, reason: "ocr_policy_gemini_only" });
     }

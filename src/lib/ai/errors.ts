@@ -23,9 +23,17 @@ export type AiErrorClass =
   | "schema_rejection"
   | "content_filter"
   | "network"
+  // The adapter refused to send this prompt at all (e.g. Jev found residual
+  // PII in a supposedly redacted prompt). Nothing left the process, so the
+  // credential is not at fault and the next hop may still serve the call.
+  | "egress_refused"
   | "unknown";
 
-export type AiProvider = "gemini" | "anthropic" | "openai" | "openai_compatible";
+/**
+ * `jev` is TypeSafe AI's classifier: opt-in per org, text classification only
+ * (see JEV_TASKS in chains.ts and the ASSUMPTION header in adapters/jev.ts).
+ */
+export type AiProvider = "gemini" | "anthropic" | "openai" | "openai_compatible" | "jev";
 
 export interface AiProviderErrorInit {
   class: AiErrorClass;
@@ -67,7 +75,8 @@ export class AiProviderError extends Error {
       this.errorClass === "timeout" ||
       this.errorClass === "invalid_key" ||
       this.errorClass === "schema_rejection" ||
-      this.errorClass === "network"
+      this.errorClass === "network" ||
+      this.errorClass === "egress_refused"
     );
   }
 

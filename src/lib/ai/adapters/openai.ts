@@ -12,9 +12,9 @@
 // Text tasks only — see the OCR-egress decision in redact.ts.
 // ============================================================================
 
-import OpenAI from "openai";
+import OpenAI, { type ClientOptions } from "openai";
 import type { z } from "zod";
-import { AiProviderError, classifyByStatus, type AiErrorClass } from "../errors";
+import { AiProviderError, classifyByStatus, type AiErrorClass, type AiProvider } from "../errors";
 import type { RedactedPrompt } from "../redact";
 import { toStrictJsonSchema } from "../schema-strict";
 
@@ -25,11 +25,26 @@ export interface OpenAiCallArgs<TOut> {
   model: string;
   /** Set for openai_compatible gateways; omit for OpenAI proper. */
   baseURL?: string;
+  /**
+   * Provider errors are attributed to. Defaults to openai_compatible when a
+   * baseURL is set and openai otherwise; wire-compatible vendors with their
+   * own identity (jev) pass it explicitly.
+   */
+  provider?: AiProvider;
   prompt: RedactedPrompt;
   schema: z.ZodType<TOut>;
   schemaName: string;
   temperature?: number;
   maxOutputTokens?: number;
+  /**
+   * Client overrides for adapters built on this one (see adapters/jev.ts): a
+   * tighter timeout/retry budget, explicit null OpenAI org/project headers,
+   * and a `fetch` seam so tests replay recorded bodies without a network.
+   */
+  clientOptions?: Pick<
+    ClientOptions,
+    "timeout" | "maxRetries" | "organization" | "project" | "fetch"
+  >;
 }
 
 export interface OpenAiCallResult {
@@ -58,6 +73,7 @@ export async function generateStructuredOpenAi<TOut>(
     apiKey: args.apiKey,
     ...(args.baseURL ? { baseURL: args.baseURL } : {}),
     timeout: REQUEST_TIMEOUT_MS,
+    ...args.clientOptions,
   });
 
   try {
@@ -86,7 +102,7 @@ export async function generateStructuredOpenAi<TOut>(
   } catch (err) {
     throw new AiProviderError({
       class: classifyOpenAiError(err),
-      provider: args.baseURL ? "openai_compatible" : "openai",
+      provider: args.provider ?? (args.baseURL ? "openai_compatible" : "openai"),
       status: err instanceof OpenAI.APIError ? (err.status ?? undefined) : undefined,
       cause: err,
       message: scrub(err instanceof Error ? err.message : String(err), args.apiKey),
