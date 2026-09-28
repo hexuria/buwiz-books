@@ -38,7 +38,7 @@ import { scopedIdempotencyUuid } from "@/lib/idempotency";
 import { sumMoney } from "@/lib/inbox/money";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { moneyToCents } from "@/lib/money";
-import { requireUserActor, type PostingActor } from "./actor";
+import { postingAuditActorId, requireUserActor, type PostingActor } from "./actor";
 import { billLinesFromAccrual, type BillLineDraft } from "./posting-lines";
 import {
   postTransactionCore,
@@ -104,10 +104,24 @@ export async function createBillCore(
   actor: PostingActor,
   draft: BillDraft,
 ): Promise<CreateBillCoreResult> {
-  const userId = requireUserActor(actor, "createBillCore");
+  // Review mode is the Bills editor's save: always a person. Post mode is an
+  // approved paper: a person, or Jev carrying its lane's grant.
   return draft.accrual.kind === "review"
-    ? createBillForReview(db, orgId, userId, draft, draft.accrual)
-    : createPostedBill(db, orgId, actor, userId, draft, draft.accrual);
+    ? createBillForReview(
+        db,
+        orgId,
+        requireUserActor(actor, "createBillCore"),
+        draft,
+        draft.accrual,
+      )
+    : createPostedBill(
+        db,
+        orgId,
+        actor,
+        postingAuditActorId(actor, "createBillCore"),
+        draft,
+        draft.accrual,
+      );
 }
 
 async function createBillForReview(

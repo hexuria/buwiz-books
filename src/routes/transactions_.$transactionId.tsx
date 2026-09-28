@@ -60,6 +60,7 @@ import { createLogger } from "../lib/logger";
 import { callServerFn } from "../lib/server-fn-client";
 import { useEscapeKey } from "../hooks/useOverlayBehavior";
 import { useIsCompactNav } from "../hooks/useBreakpoint";
+import { JevApprovalPanel } from "../components/jev/JevApprovalPanel";
 
 const logger = createLogger("ui.transaction-detail");
 
@@ -159,7 +160,11 @@ function TransactionDetailPage() {
   }, [showTypeDropdown]);
 
   // ── Transaction data ──
-  const { data: transaction, isLoading } = useQuery<TransactionRecord>({
+  const {
+    data: transaction,
+    isLoading,
+    refetch: refetchTransaction,
+  } = useQuery<TransactionRecord>({
     queryKey: ["transaction", transactionId],
     queryFn: () =>
       callServerFn(getTransaction, { data: { id: transactionId } }) as Promise<TransactionRecord>,
@@ -1417,6 +1422,14 @@ function TransactionDetailPage() {
                     </p>
                   )}
                 </div>
+              </div>
+
+              {/* Approved by Jev: which lane, how sure, and Undo */}
+              <div className="px-6 pt-3 empty:hidden">
+                <JevApprovalPanel
+                  journalHeaderId={transaction.id}
+                  onUndone={() => void refetchTransaction()}
+                />
               </div>
 
               {/* Type-specific content */}

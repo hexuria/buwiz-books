@@ -9,6 +9,7 @@ import BillFilters from "./BillFilters";
 import { FilterBar } from "../ui/Actions";
 import { useIsMobile } from "../../hooks/useBreakpoint";
 import { formatCurrency } from "@/utils/format";
+import { ByJevTagFor } from "../jev/ByJevTag";
 
 // ============================================================================
 // Types
@@ -943,6 +944,7 @@ function BillRow({ bill, visibleColumns }: { bill: BillListItem; visibleColumns:
         <span className="text-sm text-[#1e293b] dark:text-white truncate max-w-[160px]">
           {bill.vendorName ?? "Unknown"}
         </span>
+        <ByJevTagFor actorId={bill.approverId} />
       </div>
     ),
     billDate: (
@@ -1045,8 +1047,9 @@ function BillMobileCard({ bill }: { bill: BillListItem }) {
             {getVendorInitial(bill.vendorName)}
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium text-[#1e293b] dark:text-white">
-              {bill.vendorName ?? "Unknown"}
+            <div className="flex items-center gap-1.5 text-sm font-medium text-[#1e293b] dark:text-white">
+              <span className="truncate">{bill.vendorName ?? "Unknown"}</span>
+              <ByJevTagFor actorId={bill.approverId} />
             </div>
             <div className="truncate text-xs text-[#94a3b8] dark:text-white/40">
               {bill.billNumber ?? "No number"}

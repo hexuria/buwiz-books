@@ -27,7 +27,9 @@ import { insertActivityLog } from "@/lib/insert-activity-log";
 import { assertIdempotencyPayloadMatches, idempotencyPayloadHash } from "@/lib/idempotency";
 import { parseOrgMetadata } from "@/lib/org-metadata";
 import { isDateInLockedPeriod } from "@/lib/period-close";
+import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
 import { reviewDecisionActor, type PostingActor } from "@/lib/posting/actor";
+import type { JevApprovalGrant } from "@/lib/posting/system-approval-grant";
 import {
   accrueReviewedBillCore,
   createBillCore,
@@ -67,6 +69,8 @@ import type {
 import { resolveFxRate } from "./fx";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
 import { isVendorBillCandidate } from "./vendor-bill";
+import { recordJevLaneFeedback } from "./jev-approval/feedback";
+import { entrySnapshotOf } from "./jev-approval/proposal";
 
 type AccountingSettings = typeof organizationAccountingSettings.$inferSelect;
 
@@ -823,6 +827,22 @@ export interface ApproveInboxInput {
   overrideReason?: string | null;
 }
 
+/**
+ * Jev approving through its autonomy lane (Inbox v2 §8). Only the Jev approval
+ * job builds this, after every approval check passed under the candidate's
+ * lifecycle lock, with a grant the posting cores verify. Everything else about
+ * the approval is the same code a person's goes through.
+ */
+export interface JevSystemApproval {
+  grant: JevApprovalGrant;
+  laneId: string;
+  confidence: number;
+  /** The rule snapshot the paper was checked against; null for live rules. */
+  ruleSnapshotId: string | null;
+  /** The admin opt-in the job read; maker-checker is re-read here. */
+  makerCheckerOptIn: boolean;
+}
+
 export const DUPLICATE_APPROVAL_BLOCKED_MESSAGE =
   "Resolve the blocking Possible Duplicate case before approving this transaction.";
 
@@ -853,8 +873,16 @@ export type ApproveInboxResult =
 export async function approveInboxItem(
   ctx: InboxServiceContext,
   input: ApproveInboxInput,
+  options: { systemApproval?: JevSystemApproval } = {},
 ): Promise<ApproveInboxResult> {
-  const { db, orgId, userId, role } = ctx;
+  const { db, orgId, role } = ctx;
+  const systemApproval = options.systemApproval ?? null;
+  // Jev's rows name it in every free-text audit column; user FK columns
+  // (resolved_by) stay null rather than borrow a person (src/lib/jev-actor.ts).
+  const userId = systemApproval ? JEV_AUDIT_ACTOR_ID : ctx.userId;
+  const actor: PostingActor = systemApproval
+    ? { type: "system", key: "jev", grant: systemApproval.grant }
+    : { type: "user", userId };
   const lifecycle = await lockInboxCandidateLifecycle(db, orgId, input.inboxItemId);
   if (!lifecycle) throw new Error("Inbox item not found.");
   const [sourceRow] = lifecycle.item.sourceRecordId
@@ -885,7 +913,13 @@ export async function approveInboxItem(
       alreadyApproved: true,
     };
   }
-  if (row.item.state !== "ready_for_review") {
+  // A person approves a reviewed draft. Jev approves stage 2's draft as it
+  // stands (needs_information until a person saves it), and only once its
+  // lane checks found it complete.
+  const approvableStates = systemApproval
+    ? ["ready_for_review", "needs_information"]
+    : ["ready_for_review"];
+  if (!approvableStates.includes(row.item.state)) {
     throw new Error(`This item cannot be approved while it is ${row.item.state}.`);
   }
   if (
@@ -894,9 +928,19 @@ export async function approveInboxItem(
   ) {
     throw new Error("This Inbox item changed after you opened it. Refresh and review it again.");
   }
+  if (systemApproval && row.candidate.id !== systemApproval.grant.candidateId) {
+    throw new Error("This Jev approval was granted for a different paper.");
+  }
 
   const settings = await getAccountingSettings(db, orgId);
-  if (settings.requireDifferentApprover && row.item.submittedBy === userId) {
+  // Maker-checker is a human control: Jev approves under it only when an
+  // admin opted Jev in (spec §2). Re-read here, at the posting boundary.
+  if (systemApproval && settings.requireDifferentApprover && !systemApproval.makerCheckerOptIn) {
+    throw new Error(
+      "This organization requires a different approver, and Jev has not been opted in.",
+    );
+  }
+  if (!systemApproval && settings.requireDifferentApprover && row.item.submittedBy === userId) {
     const ownerOverride =
       role === "owner" && settings.allowOwnerOverride && Boolean(input.overrideReason?.trim());
     if (!ownerOverride) {
@@ -1073,7 +1117,7 @@ export async function approveInboxItem(
   const duplicateAlgorithmVersion = duplicateConfig.algorithmVersion ?? DUPLICATE_MATCHER_VERSION;
   if (candidateSourceIds.length > 0 && duplicateConfig.enabled && duplicateConfig.mode !== "off") {
     for (const sourceRecordId of candidateSourceIds) {
-      await runDuplicateMatchingForSource(ctx, sourceRecordId, "source_updated");
+      await runDuplicateMatchingForSource({ ...ctx, userId }, sourceRecordId, "source_updated");
     }
     const [unresolvedDuplicateCase] = await db
       .select({ id: sourceMatchCandidates.id })
@@ -1110,7 +1154,6 @@ export async function approveInboxItem(
     }
   }
 
-  const actor: PostingActor = { type: "user", userId };
   // Evidence is read before posting because a new vendor bill carries it too.
   // The origin source's own documents come first: the first document becomes
   // the bill's viewer document.
@@ -1300,13 +1343,24 @@ export async function approveInboxItem(
       updatedAt: new Date(),
     })
     .where(eq(transactionCandidates.id, row.candidate.id));
+  // What Jev's approval rests on, for every audit row it writes.
+  const jevApproval = systemApproval
+    ? {
+        actor: "jev",
+        laneId: systemApproval.laneId,
+        confidence: systemApproval.confidence,
+        ruleSnapshotId: systemApproval.ruleSnapshotId,
+      }
+    : null;
   await db
     .update(inboxItems)
     .set({
       state: "approved",
-      resolvedBy: userId,
+      resolvedBy: systemApproval ? null : userId,
       resolvedAt: new Date(),
-      resolutionNote: input.overrideReason?.trim() || null,
+      resolutionNote: systemApproval
+        ? `Approved by Jev (lane ${systemApproval.laneId}).`
+        : input.overrideReason?.trim() || null,
       lockVersion: row.item.lockVersion + 1,
       updatedAt: new Date(),
     })
@@ -1317,7 +1371,9 @@ export async function approveInboxItem(
     decision: input.overrideReason?.trim() ? "owner_override_approved" : "approved",
     ...reviewDecisionActor(actor),
     candidateRevision: row.candidate.revision,
-    reason: input.overrideReason?.trim() || null,
+    reason: systemApproval
+      ? `Jev approval lane ${systemApproval.laneId}`
+      : input.overrideReason?.trim() || null,
     beforeState: row.item.state,
     afterState: "approved",
     journalHeaderId,
@@ -1328,10 +1384,14 @@ export async function approveInboxItem(
     entityType: "inbox_item",
     entityId: row.item.id,
     action: "approved",
-    actorType: "user",
+    actorType: systemApproval ? "system" : "user",
     actorId: userId,
     idempotencyKey: `inbox:${row.item.id}:approved:${row.candidate.revision}`,
-    data: billId ? { journalHeaderId, billId } : { journalHeaderId },
+    data: {
+      journalHeaderId,
+      ...(billId ? { billId } : {}),
+      ...(jevApproval ? { jevApproval } : {}),
+    },
   });
   await insertActivityLog(
     {
@@ -1340,20 +1400,36 @@ export async function approveInboxItem(
       entityId: journalHeaderId,
       action: "approved_from_inbox",
       actorId: userId,
-      changes: billId
-        ? { inboxItemId: row.item.id, transactionNumber, billId }
-        : { inboxItemId: row.item.id, transactionNumber },
+      changes: {
+        inboxItemId: row.item.id,
+        transactionNumber,
+        ...(billId ? { billId } : {}),
+        ...(jevApproval ? { jevApproval } : {}),
+      },
     },
     db,
   );
+  // A person approving a paper Jev proposed labels that proposal for its lane.
+  // Jev's own approval is not a label: only a person's decision is.
+  if (!systemApproval) {
+    await recordJevLaneFeedback(db, {
+      orgId,
+      candidateId: row.candidate.id,
+      inboxItemId: row.item.id,
+      action: "approve",
+      userId,
+      decided: entrySnapshotOf(row.candidate, lines),
+    });
+  }
 
   // A memory's answer approved as-is is an accepted hit; approved with a
-  // different answer, an undo (src/lib/inbox/memory/tracking.ts).
+  // different answer, an undo (src/lib/inbox/memory/tracking.ts). Jev
+  // approving a remembered answer confirms it as the system actor.
   await noteApprovalOfMemoryAnswer(db, {
     orgId,
     candidateId: row.candidate.id,
     inboxItemId: row.item.id,
-    actorType: "user",
+    actorType: systemApproval ? "system" : "user",
     actorId: userId,
     settled: {
       docKind:
@@ -1632,5 +1708,13 @@ export async function rejectInboxItem(
     },
     ctx.db,
   );
+  await recordJevLaneFeedback(ctx.db, {
+    orgId: ctx.orgId,
+    candidateId: candidate.id,
+    inboxItemId: item.id,
+    action: "reject",
+    userId: ctx.userId,
+    note: reason,
+  });
   return { id: item.id, state: "rejected" as const };
 }

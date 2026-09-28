@@ -13,6 +13,7 @@ import type { TransactionType, JournalStatus } from "../../db/validation/journal
 import Combobox from "../ui/Combobox";
 import type { ComboboxOption } from "../ui/Combobox";
 import { formatCurrency } from "@/lib/format-currency";
+import { ByJevTag } from "../jev/ByJevTag";
 
 // ============================================================================
 // Shared Grid Template — used by both header rows and data rows
@@ -73,6 +74,8 @@ export interface LedgerRowData {
   locationName?: string | null;
   // Creator info
   createdByName?: string | null;
+  /** Jev approved it through its autonomy lane: shown as a "by Jev" tag. */
+  approvedByJev?: boolean;
 }
 
 /** Fields that can be edited inline */
@@ -419,6 +422,7 @@ function LedgerCard({
               ))}
             </span>
             <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {transaction.approvedByJev && <ByJevTag />}
               {isUnposted && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-[#f8fafc] px-2 py-0.5 text-xs font-medium capitalize text-[#475569] dark:bg-slate-800 dark:text-slate-300">
                   <span
@@ -736,8 +740,11 @@ export default function LedgerRow({
                 {getPartyInitials(effectivePartyName)}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13px] font-medium text-[#1e293b] dark:text-slate-100 truncate">
-                  {effectivePartyName || transaction.memo || "Untitled"}
+                <div className="flex items-center gap-1.5 text-[13px] font-medium text-[#1e293b] dark:text-slate-100">
+                  <span className="truncate">
+                    {effectivePartyName || transaction.memo || "Untitled"}
+                  </span>
+                  {transaction.approvedByJev && <ByJevTag />}
                 </div>
                 {transaction.memo && effectivePartyName && (
                   <div className="text-[11px] text-[#94a3b8] dark:text-slate-500 truncate">

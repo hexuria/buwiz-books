@@ -7,7 +7,8 @@
  *
  * The job completes INSIDE the apply transaction (the classifier's
  * beforeCommit hook), so the classified draft and the completed job commit
- * together. A skip — the candidate moved on, closed, or was already edited by
+ * together. The same hook records Jev's proposal for its approval lane
+ * (src/lib/inbox/jev-approval), which never fails the classification. A skip — the candidate moved on, closed, or was already edited by
  * a reviewer — completes the job on its own. Model failures never throw: they
  * degrade the draft to "Needs you". Only a database error throws, which
  * requeues the job with backoff; until it succeeds the draft keeps its
@@ -16,6 +17,7 @@
 import { withOrgContext } from "@/db";
 import { completeProcessingJob } from "@/lib/inbox/processing-job-lease";
 import { classifyInboxCandidate } from "@/lib/inbox/candidate-classification";
+import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
 import type { ClassifyInboxCandidatePayload } from "@/lib/inbox/candidate-classification-job";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
@@ -31,7 +33,16 @@ export async function processClassifyInboxCandidateJob(
 
   const result = await classifyInboxCandidate(
     { orgId, candidateId: payload.candidateId, candidateRevision: payload.candidateRevision },
-    { beforeCommit: (tx) => completeProcessingJob(tx, job.id, ctx.workerId) },
+    {
+      beforeCommit: async (tx) => {
+        if (!(await completeProcessingJob(tx, job.id, ctx.workerId))) return false;
+        await recordJevProposalAfterClassification(tx, {
+          orgId,
+          candidateId: payload.candidateId!,
+        });
+        return true;
+      },
+    },
   );
 
   if (result.status === "lease_lost") {

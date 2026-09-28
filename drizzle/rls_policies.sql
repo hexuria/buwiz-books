@@ -674,6 +674,29 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Jev approval lanes (ai_autonomy_lanes)
+-- Standard tenant isolation. Lanes are org configuration and earned authority:
+-- created by the Inbox inside the organization's context, listed and promoted
+-- through the server-context wrappers, and read by the auto-approval job in
+-- withOrgContext(job.organization_id, ...). One organization's lane can never
+-- approve, or be promoted from, another organization's papers.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'ai_autonomy_lanes'
+  ) THEN
+    ALTER TABLE ai_autonomy_lanes ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_ai_autonomy_lanes ON ai_autonomy_lanes;
+    CREATE POLICY org_isolation_ai_autonomy_lanes ON ai_autonomy_lanes FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for ai_autonomy_lanes';
+  END IF;
+END $$;
+
+-- ============================================================================
 -- AI telemetry (ai_invocations)
 -- Append-only telemetry written OUTSIDE org context on the raw pool connection
 -- (see src/lib/ai/invoke.ts) so rows survive caller-transaction rollback.

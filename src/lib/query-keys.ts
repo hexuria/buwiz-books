@@ -65,6 +65,12 @@ export const keys = {
     all: () => ["routines"] as const,
     list: () => ["routines", "list"] as const,
   },
+  /** Jev approval lanes (Inbox v2 §8): Settings, and the "by Jev" panel on entries. */
+  jev: {
+    all: () => ["jev"] as const,
+    lanes: () => ["jev", "lanes"] as const,
+    entryApproval: (journalHeaderId: string) => ["jev", "entry-approval", journalHeaderId] as const,
+  },
   bills: {
     all: () => ["bills"] as const,
     list: (params?: Params) => ["bills", params ?? null] as const,
