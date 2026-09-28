@@ -34,9 +34,10 @@ export const orgMetadataSchema = z.object({
   paypalClientId: z.string().optional(),
   paypalMode: z.enum(["sandbox", "live"]).optional(),
   paymentBankAccountId: z.string().optional(),
-  // Per-org rollout of the Inbox v2 screen (src/lib/inbox/v2/flag.ts). Declared here so every
-  // metadata writer that re-serializes the parsed schema keeps it; absent means off.
-  inboxV2: z.boolean().optional(),
+  // No `inboxV2`: the per-org Inbox v2 rollout flag retired at the cutover (the new Inbox is the
+  // only Inbox). Organizations that still carry the key parse exactly as before — an unknown key
+  // is stripped like any other, whatever its value — and the next writer that re-serializes the
+  // parsed schema drops it.
 });
 
 export type OrgMetadata = z.infer<typeof orgMetadataSchema>;

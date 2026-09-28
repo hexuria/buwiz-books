@@ -81,8 +81,9 @@ bun run scripts/encrypt-org-secrets.ts            # encrypts plaintext org secre
 
 ## Verify end-to-end
 
-1. In the app (Inbox sidebar, as an admin) click **Generate** — you should get an
-   address like `inbox-mvgreenland-k3f9q2@inbox.mvgreenland.com`. **Save** it.
+1. In the app (**Settings → Email → Inbound email**, as an owner or admin) click **Generate** —
+   you should get an address like `inbox-mvgreenland-k3f9q2@inbox.mvgreenland.com`, saved as
+   the organization's inbound address.
 2. From any mailbox, send an email with a PDF/receipt attached to that address.
 3. Within a minute or two the item appears in the **Inbox** for review. If not,
    check Resend → **Logs** (was the webhook delivered?) and the app logs for
@@ -102,5 +103,5 @@ bun run scripts/encrypt-org-secrets.ts            # encrypts plaintext org secre
 - **Records "Not Started" / not verifying** → they were added at Hostinger, not
   Cloudflare. Cloudflare is authoritative here.
 - **Mail sent but nothing in the Inbox** → the recipient address must exactly
-  match an organization's saved inbound address (generated in the Inbox sidebar),
+  match an organization's saved inbound address (Settings → Email → Inbound email),
   lowercased. Unmatched recipients are logged and dropped by design.

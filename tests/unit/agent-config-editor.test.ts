@@ -210,10 +210,12 @@ describe("query keys", () => {
   it("keeps every inbox builder under the all() prefix", () => {
     const prefix = keys.inbox.all();
     for (const key of [
-      keys.inbox.list({ state: "open" }),
+      keys.inbox.v2List(),
       keys.inbox.detail("abc"),
       keys.inbox.duplicateCase("abc"),
       keys.inbox.settings(),
+      keys.inbox.memories(),
+      keys.inbox.memoryPreview("abc", "party"),
     ]) {
       expect(key.slice(0, prefix.length)).toEqual(prefix);
     }
@@ -232,7 +234,9 @@ describe("query keys", () => {
   });
 
   it("gives different filters different keys so the cache cannot merge them", () => {
-    expect(keys.inbox.list({ state: "open" })).not.toEqual(keys.inbox.list({ state: "approved" }));
+    expect(keys.inbox.memoryPreview("abc", "party")).not.toEqual(
+      keys.inbox.memoryPreview("abc", "line_text"),
+    );
     expect(keys.reviewAgents.findings("a")).not.toEqual(keys.reviewAgents.findings("b"));
   });
 });

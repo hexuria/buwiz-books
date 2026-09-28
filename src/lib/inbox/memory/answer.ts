@@ -85,9 +85,16 @@ const uuidLike = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu);
 
+/**
+ * An exact, positive decimal with at most 8 places. The pattern check ABORTS the chain: Zod runs a
+ * schema's remaining checks after one fails, and the positivity check parses the value, which
+ * throws on a malformed string ("1e3"). A validator must fail validation, never throw — these
+ * schemas read stored rows and eval cases, where a throw would crash the reader instead of
+ * skipping the malformed answer.
+ */
 const decimal = z
   .string()
-  .regex(/^\d+(?:\.\d{1,8})?$/u)
+  .regex(/^\d+(?:\.\d{1,8})?$/u, { abort: true })
   .refine((value) => parseMoneyToScaled(value) > 0n, "must be greater than zero");
 
 export const memoryAnswerLineSchema = z.object({

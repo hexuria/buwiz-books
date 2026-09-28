@@ -6,11 +6,16 @@ import {
   buildMemoryAnswer,
   departsFromApplication,
   memoryAnswerFromColumns,
+  memoryAnswerLineSchema,
+  memoryAnswerSchema,
+  memoryApplicationSchema,
   memoryDirection,
+  memoryDraftSchema,
   possibleEntryDirections,
   type AnswerAccount,
   type MemoryAnswer,
 } from "../../src/lib/inbox/memory/answer";
+import { replayMemoryLock } from "../../src/lib/inbox/memory/lock";
 
 /**
  * A memory answer is what a person settled a paper as. Replay never invents a
@@ -419,5 +424,103 @@ describe("possibleEntryDirections", () => {
         { side: "credit", accountType: "revenue" },
       ]),
     ).toEqual([]);
+  });
+});
+
+// Stored answers, eval cases and export files are read through these schemas. A malformed amount
+// must make them fail validation — the value is then skipped — never throw out of safeParse and
+// take the reader down with it (the positivity check parses the amount, and Zod runs a schema's
+// checks after one fails unless the failing one aborts).
+describe("amount validation never throws", () => {
+  const MALFORMED = [
+    "1e3",
+    "-49.99",
+    "49.999999999",
+    " 12",
+    "12.",
+    ".5",
+    "0x10",
+    "NaN",
+    "",
+    "1,000",
+  ];
+  const answerLine = RECEIPT.lines[0];
+
+  it("fails an answer line, an answer, a draft and an application on a malformed amount", () => {
+    for (const amount of MALFORMED) {
+      expect(() => memoryAnswerLineSchema.safeParse({ ...answerLine, amount })).not.toThrow();
+      expect(memoryAnswerLineSchema.safeParse({ ...answerLine, amount }).success, amount).toBe(
+        false,
+      );
+      expect(
+        memoryAnswerSchema.safeParse({
+          ...RECEIPT,
+          lines: [{ ...answerLine, amount }, RECEIPT.lines[1]],
+        }).success,
+        amount,
+      ).toBe(false);
+      expect(
+        memoryDraftSchema.safeParse({ direction: "outflow", total: amount, currency: "USD" })
+          .success,
+        amount,
+      ).toBe(false);
+      expect(
+        memoryApplicationSchema.safeParse({
+          docKind: "purchase",
+          partyId: null,
+          lines: [
+            { side: "debit", accountId: OFFICE, amount },
+            { side: "credit", accountId: BANK, amount: "84.25" },
+          ],
+        }).success,
+        amount,
+      ).toBe(false);
+    }
+  });
+
+  it("still refuses a well-formed zero as not positive, with its own message", () => {
+    const result = memoryAnswerLineSchema.safeParse({ ...answerLine, amount: "0.00" });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.message)).toEqual([
+      "must be greater than zero",
+    ]);
+  });
+
+  it("reads a stored row with a malformed amount as no answer", () => {
+    const stored = { ...answerLine, amount: "1e3" };
+    expect(() =>
+      memoryAnswerFromColumns({
+        answerDocKind: "purchase",
+        answerPartyId: VENDOR,
+        answerLines: [stored, RECEIPT.lines[1]],
+      }),
+    ).not.toThrow();
+    expect(
+      memoryAnswerFromColumns({
+        answerDocKind: "purchase",
+        answerPartyId: VENDOR,
+        answerLines: [stored, RECEIPT.lines[1]],
+      }),
+    ).toBeNull();
+  });
+
+  it("reports a lock case with a malformed amount as malformed instead of throwing", () => {
+    const replay = replayMemoryLock({
+      task: "inbox_memory",
+      provenance: "authored",
+      inputRef: {
+        version: 1,
+        memory: {
+          id: "memory-1",
+          matchKind: "party",
+          matchKeyDigest: "a".repeat(64),
+          answer: { ...RECEIPT, lines: [{ ...answerLine, amount: "1e3" }, RECEIPT.lines[1]] },
+        },
+        paper: { direction: "outflow", total: "84.25", currency: "USD" },
+      },
+      expected: { docKind: "purchase", partyId: VENDOR, lines: [] },
+    });
+    expect(replay.passed).toBe(false);
+    if (!replay.passed) expect(replay.reason).toMatch(/^malformed case: /);
   });
 });

@@ -355,8 +355,10 @@ export type AutonomyLaneKey = (typeof AUTONOMY_LANE_KEYS)[number];
  * An `auto` lane must name its vendor, its amount cap and its calibrated
  * confidence threshold — the database refuses one that does not.
  *
- * Export/import: org configuration that joins the version-5 bump (spec build
- * step 12). Deliberately NOT exported yet.
+ * Export/import: org configuration, exported since version 5
+ * (src/lib/export-inbox.ts) — lane, kind, party by name, level, cap and
+ * threshold, never the ai_run_feedback it earned its level with. Earned
+ * autonomy is never imported: every lane arrives at `watch`.
  */
 export const aiAutonomyLanes = pgTable(
   "ai_autonomy_lanes",

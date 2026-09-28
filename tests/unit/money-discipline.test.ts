@@ -28,6 +28,8 @@ const CLEAN_MONEY_FILES = [
   "src/components/inbox-v2/candidate-draft.ts",
   "src/lib/bill-mutation-guards.ts",
   "src/lib/coa/resolve-mapped-account.ts",
+  "src/lib/export-inbox-rows.ts",
+  "src/lib/export-inbox.ts",
   "src/lib/inbox/memory/answer.ts",
   "src/lib/inbox/memory/lock.ts",
   "src/lib/inbox/memory/select.ts",

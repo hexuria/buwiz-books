@@ -16,7 +16,6 @@ import type { InboxV2ListItem } from "../../src/lib/inbox/v2/list";
 
 const api = vi.hoisted(() => ({
   listInboxV2: vi.fn(),
-  getInboxV2Enabled: vi.fn(),
   getInboxItem: vi.fn(),
   updateInboxCandidate: vi.fn(),
   approveInbox: vi.fn(),
@@ -32,7 +31,6 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../../src/routes/api/-inbox-v2", () => ({
   listInboxV2: api.listInboxV2,
-  getInboxV2Enabled: api.getInboxV2Enabled,
 }));
 vi.mock("../../src/routes/api/-inbox", () => ({
   getInboxItem: api.getInboxItem,

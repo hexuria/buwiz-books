@@ -25,9 +25,10 @@
  * consecutive undos disable the memory IN CODE — a CHECK would reject the
  * very update that records the second undo (review-findings.md).
  *
- * Export/import: memories are org configuration and join the export in the
- * version-5 bump (spec build step 12, .agent/rules/schema-export-import.md
- * category C). They are deliberately NOT exported yet.
+ * Export/import: memories are org configuration, exported since version 5
+ * (src/lib/export-inbox.ts, .agent/rules/schema-export-import.md category C).
+ * Parties travel by name and accounts by (number, name); import remaps them
+ * and drops, with a reason, a memory whose references cannot be mapped.
  */
 import { sql } from "drizzle-orm";
 import {

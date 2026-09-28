@@ -9,7 +9,6 @@ import { inboxItems, organizationAccountingSettings, reviewFindings } from "@/db
 import { parties } from "@/db/schema/parties";
 import type { CandidateLineInput } from "@/lib/inbox/types";
 import { approveInboxItem, createTransactionCandidate, rejectInboxItem } from "@/lib/inbox/service";
-import { readInboxV2Enabled, setInboxV2Enabled } from "@/lib/inbox/v2/flag";
 import { listInboxV2Items } from "@/lib/inbox/v2/list";
 
 /**
@@ -316,56 +315,5 @@ describe("Inbox v2 list", () => {
       reason: "ready",
       reasonDetail: "ready",
     });
-  });
-});
-
-describe("inbox_v2 organization flag", () => {
-  it("is off by default and flips per organization without disturbing other metadata", async () => {
-    const org = await setupOrganization("inbox-v2-flag");
-    const other = await setupOrganization("inbox-v2-flag-other");
-    const read = (fixture: Fixture) =>
-      withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
-        readInboxV2Enabled(tx, fixture.orgId),
-      );
-
-    expect(await read(org)).toBe(false);
-
-    await withOrgContext(org.orgId, org.userId, "owner", (tx) =>
-      setInboxV2Enabled(tx, org.orgId, true),
-    );
-    expect(await read(org)).toBe(true);
-    expect(await read(other)).toBe(false);
-
-    const [stored] = await db
-      .select({ metadata: organization.metadata })
-      .from(organization)
-      .where(eq(organization.id, org.orgId));
-    expect(JSON.parse(stored.metadata!)).toEqual({
-      currency: "USD",
-      phone: "+1 555 0100",
-      inboxV2: true,
-    });
-
-    await withOrgContext(org.orgId, org.userId, "owner", (tx) =>
-      setInboxV2Enabled(tx, org.orgId, false),
-    );
-    expect(await read(org)).toBe(false);
-  });
-
-  it("recovers from unreadable metadata instead of failing the toggle", async () => {
-    const org = await setupOrganization("inbox-v2-flag-broken");
-    await db
-      .update(organization)
-      .set({ metadata: "{not json" })
-      .where(eq(organization.id, org.orgId));
-
-    await withOrgContext(org.orgId, org.userId, "owner", (tx) =>
-      setInboxV2Enabled(tx, org.orgId, true),
-    );
-    expect(
-      await withOrgContext(org.orgId, org.userId, "owner", (tx) =>
-        readInboxV2Enabled(tx, org.orgId),
-      ),
-    ).toBe(true);
   });
 });

@@ -19,6 +19,61 @@ Navigate to **Settings** at the bottom of the sidebar. The settings page is orga
 | **Fiscal Year Start** | The month your fiscal year begins                  |
 | **Default Currency**  | Primary currency for reporting                     |
 
+## Email
+
+| Setting             | Description                                                                                                                                                          |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Sender Identity** | The "From" name and email on invoices                                                                                                                                |
+| **Email Delivery**  | Your Resend API key for sending invoice emails                                                                                                                       |
+| **Inbound email**   | The address you email or auto-forward receipts, bills, and statements to. Each one arrives in the Inbox as a draft for review. **Generate** creates a unique address |
+
+## Review Rules
+
+The checks every Inbox entry goes through (on or off, **Stop** or **Warn**, thresholds), the
+**Scan books** ledger scan, rule snapshots, and the answers the Inbox remembers (**Memories**).
+The old Review Agents page now opens here.
+
+## Jev Approval
+
+Jev can approve Inbox papers on its own, but only once it has earned it, and only one **lane** at
+a time — one vendor or customer and one kind of paper (say, _Acme Hosting · Vendor bill_). Admins
+make the changes here; everyone can see the lanes.
+
+| Setting                          | What it does                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Let Jev approve Inbox papers** | The organization's switch, **off** by default. Off, no lane approves anything; lanes keep learning                             |
+| **Maker-checker opt-in**         | Shown when the organization requires a different approver. Unticked, every approval stays with a person                        |
+| **Spot checks**                  | The share of papers Jev would approve that is left in the Inbox for a person instead (10% by default)                          |
+| **Lanes**                        | Each lane's level, how often people agreed with Jev, how many reviews that rests on, its calibration, and its limits once auto |
+
+**Levels.** A lane starts at **Watch** the first time Jev answers one of its papers: Jev's answers
+are compared with what people decide, and nothing else changes. At **Suggest**, the Inbox says
+when Jev would approve a paper; a person still approves it. At **Auto**, Jev approves papers that
+pass every check, except the spot-check share. An admin promotes a lane one step at a time, and
+only after 200 of Jev's own answers on that lane were reviewed with at least 98% accepted
+unchanged; Auto also needs an **amount cap** and a **confidence threshold** the lane's calibration
+supports. If agreement over a lane's last 50 papers falls below 95%, it drops back to Suggest by
+itself. Admins can demote a lane at any time.
+
+**Always a person.** Whatever a lane's level, these always wait in the Inbox: a new vendor or
+customer, a paper asking to pay different bank details, an emailed paper whose sender could not be
+verified (the Inbox says **Sender could not be verified**), a possible duplicate, a closed period,
+an open check or warning, anything over the lane's cap or below its threshold, and every spot
+check. An emailed paper counts as verified only when the email passed sender authentication and
+came from an address or domain this vendor or customer already uses.
+
+**Spot checks** show in the Inbox as **Spot check**: Jev would have approved the paper, and your
+decision is an honest check on its work.
+
+**The AI kill switch** (under **AI Credentials**) stops every AI feature at once, Jev approval
+included.
+
+**Undo.** Entries Jev approved carry a **by Jev** tag in Bills and Transactions. On the entry,
+**Undo Jev approval** (you need permission to approve Inbox items; a note of what was wrong is
+optional) reverses it — the
+entry is never deleted: a reversal is posted, a bill Jev created is voided if nothing was paid on
+it, and the paper returns to the Inbox. The undo counts against the lane.
+
 ## Account Settings
 
 | Setting              | Description                                                             |

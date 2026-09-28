@@ -100,8 +100,9 @@ describe("export-versions", () => {
 
     // P5: v3 added the PH tax entities. P13: v4 — party_tax_profiles gained
     // the nullable alphalist `nationality` column (passthrough migration).
-    it("is currently 4", () => {
-      expect(EXPORT_VERSION).toBe(4);
+    // Inbox v2 step 12: v5 — rule snapshots, routines, classification memories.
+    it("is currently 5", () => {
+      expect(EXPORT_VERSION).toBe(5);
     });
   });
 });
