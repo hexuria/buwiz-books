@@ -54,6 +54,32 @@ export function memoryDirection(docKind: string | null | undefined): MemoryDirec
   return direction === "unknown" ? null : direction;
 }
 
+const EXPENSE_ACCOUNT_TYPES = new Set(["expense", "cost_of_revenue", "other_expense"]);
+const INCOME_ACCOUNT_TYPES = new Set(["revenue", "other_income"]);
+
+/**
+ * The directions a balanced entry could book, read from its account types, for a
+ * paper whose own kind is unknown (a hand-entered entry). An expense debit means
+ * money out; an income credit means money in. With neither, the entry could be
+ * any of the three (an asset bought with cash, a transfer, a loan), so every
+ * direction stays open and the person's choice decides. With both, the entry is
+ * mixed and no single kind of paper describes it.
+ */
+export function possibleEntryDirections(
+  lines: ReadonlyArray<{ side: MemorySide; accountType: string }>,
+): MemoryDirection[] {
+  const expenseDebit = lines.some(
+    (line) => line.side === "debit" && EXPENSE_ACCOUNT_TYPES.has(line.accountType),
+  );
+  const incomeCredit = lines.some(
+    (line) => line.side === "credit" && INCOME_ACCOUNT_TYPES.has(line.accountType),
+  );
+  if (expenseDebit && incomeCredit) return [];
+  if (expenseDebit) return ["outflow"];
+  if (incomeCredit) return ["inflow"];
+  return ["outflow", "inflow", "neutral"];
+}
+
 /** Any 8-4-4-4-12 hex id: row ids are gen_random_uuid(), but nothing here depends on the version. */
 const uuidLike = z
   .string()

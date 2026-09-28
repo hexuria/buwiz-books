@@ -193,4 +193,60 @@ describe("RememberThisPrompt", () => {
     expect(onDismiss).toHaveBeenCalledTimes(1);
     expect(api.rememberCorrection).not.toHaveBeenCalled();
   });
+
+  it("asks what kind of paper an unknown-kind entry is, then saves with that kind", async () => {
+    const user = userEvent.setup();
+    api.previewMemoryScope.mockImplementation(
+      async ({ data }: { data: { scope: string; docKind?: string } }) =>
+        data.docKind
+          ? preview({ scope: data.scope })
+          : {
+              available: false,
+              scope: data.scope,
+              reason: "Choose what kind of paper this is before remembering it.",
+              kindOptions: ["purchase", "bill_accrual"],
+            },
+    );
+    api.rememberCorrection.mockResolvedValue({
+      memoryId: "m1",
+      matchKind: "file_hash",
+      keyLabel: "File receipt-4242.pdf",
+      replaced: false,
+      evalCaseId: "e1",
+    });
+    renderPrompt();
+
+    const kind = await screen.findByLabelText("What kind of paper is this?");
+    expect(saveButton()).toBeDisabled();
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "Choose a kind…",
+      "Purchase or receipt (already paid)",
+      "Vendor bill (to pay later)",
+    ]);
+
+    await user.selectOptions(kind, "purchase");
+    await waitFor(() => expect(saveButton()).toBeEnabled());
+    expect(api.previewMemoryScope).toHaveBeenLastCalledWith({
+      data: { candidateId: CANDIDATE_ID, scope: "file_hash", docKind: "purchase" },
+    });
+
+    await user.click(saveButton());
+    await waitFor(() =>
+      expect(api.rememberCorrection).toHaveBeenCalledWith({
+        data: { candidateId: CANDIDATE_ID, scope: "file_hash", docKind: "purchase" },
+      }),
+    );
+  });
+
+  it("stays hidden when no kind of paper fits the entry", async () => {
+    api.previewMemoryScope.mockResolvedValue({
+      available: false,
+      scope: "file_hash",
+      reason: "Choose what kind of paper this is before remembering it.",
+      kindOptions: [],
+    });
+    const { container } = renderPrompt();
+    await waitFor(() => expect(api.previewMemoryScope).toHaveBeenCalled());
+    await waitFor(() => expect(container).toBeEmptyDOMElement());
+  });
 });

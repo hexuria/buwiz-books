@@ -7,6 +7,7 @@ import {
   departsFromApplication,
   memoryAnswerFromColumns,
   memoryDirection,
+  possibleEntryDirections,
   type AnswerAccount,
   type MemoryAnswer,
 } from "../../src/lib/inbox/memory/answer";
@@ -383,5 +384,40 @@ describe("departsFromApplication", () => {
         { side: "debit", accountId: null },
       ]),
     ).toBe("credit:a,debit:-,debit:b");
+  });
+});
+
+describe("possibleEntryDirections", () => {
+  it("reads an expense debit as money out and an income credit as money in", () => {
+    expect(
+      possibleEntryDirections([
+        { side: "debit", accountType: "expense" },
+        { side: "credit", accountType: "asset" },
+      ]),
+    ).toEqual(["outflow"]);
+    expect(
+      possibleEntryDirections([
+        { side: "debit", accountType: "asset" },
+        { side: "credit", accountType: "revenue" },
+      ]),
+    ).toEqual(["inflow"]);
+  });
+
+  it("leaves every direction open for a balance-sheet-only entry", () => {
+    expect(
+      possibleEntryDirections([
+        { side: "debit", accountType: "asset" },
+        { side: "credit", accountType: "asset" },
+      ]),
+    ).toEqual(["outflow", "inflow", "neutral"]);
+  });
+
+  it("offers none for a mixed entry", () => {
+    expect(
+      possibleEntryDirections([
+        { side: "debit", accountType: "expense" },
+        { side: "credit", accountType: "revenue" },
+      ]),
+    ).toEqual([]);
   });
 });

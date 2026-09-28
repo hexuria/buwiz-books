@@ -1431,3 +1431,91 @@ integrationDescribe("classification_memories under RLS", () => {
       .where(inArray(classificationMemories.organizationId, [orgA.orgId, orgB.orgId]));
   });
 });
+
+integrationDescribe("remembering a paper whose kind is unknown", () => {
+  /** A corrected receipt whose source reads like a hand-entered entry: kind "other". */
+  async function correctedUnknownKindPaper(prefix: string) {
+    const fixture = await createOrganizationWithChart(prefix);
+    const chart = await chartOf(fixture);
+    const vendor = await addParty(fixture.orgId, { name: "Staples" });
+    const paper = await uploadReceipt(fixture);
+    await correct(fixture, paper.inboxItemId, {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.office.id, debit: "84.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    });
+    const [candidate] = await db
+      .select({ sourceRecordId: transactionCandidates.sourceRecordId })
+      .from(transactionCandidates)
+      .where(eq(transactionCandidates.id, paper.candidate.id));
+    await db
+      .update(sourceRecords)
+      .set({ economicEventClass: "other" })
+      .where(eq(sourceRecords.id, candidate.sourceRecordId!));
+    return { fixture, paper };
+  }
+
+  it("the preview offers only the kinds the entry's direction allows", async () => {
+    const { fixture, paper } = await correctedUnknownKindPaper("memory-kind-offer");
+    asCaller(fixture);
+    const preview = await api.previewMemoryScope({
+      data: { candidateId: paper.candidate.id, scope: "party" },
+    });
+    expect(preview).toMatchObject({
+      available: false,
+      reason: "Choose what kind of paper this is before remembering it.",
+    });
+    const offered = preview.available ? [] : (preview.kindOptions ?? []);
+    // An expense debit paid from the bank is money out.
+    expect(offered).toContain("purchase");
+    expect(offered).not.toContain("sale");
+    expect(offered).not.toContain("invoice_accrual");
+    expect(offered).not.toContain("transfer");
+
+    expect(
+      await api.previewMemoryScope({
+        data: { candidateId: paper.candidate.id, scope: "party", docKind: "purchase" },
+      }),
+    ).toMatchObject({ available: true });
+  });
+
+  it("saves with a chosen kind that fits, and refuses one that does not", async () => {
+    const { fixture, paper } = await correctedUnknownKindPaper("memory-kind-save");
+    asCaller(fixture);
+    await expect(
+      api.rememberCorrection({
+        data: { candidateId: paper.candidate.id, scope: "party", docKind: "sale" },
+      }),
+    ).rejects.toThrow(/does not fit this entry/u);
+    await expect(
+      api.rememberCorrection({ data: { candidateId: paper.candidate.id, scope: "party" } }),
+    ).rejects.toThrow(/Choose what kind of paper/u);
+
+    const saved = await api.rememberCorrection({
+      data: { candidateId: paper.candidate.id, scope: "party", docKind: "purchase" },
+    });
+    expect(await memoryRow(saved.memoryId)).toMatchObject({ answerDocKind: "purchase" });
+  });
+
+  it("a paper whose kind is known keeps it", async () => {
+    const fixture = await createOrganizationWithChart("memory-kind-known");
+    const chart = await chartOf(fixture);
+    const vendor = await addParty(fixture.orgId, { name: "Staples" });
+    const paper = await uploadReceipt(fixture);
+    await correct(fixture, paper.inboxItemId, {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.office.id, debit: "84.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    });
+    asCaller(fixture);
+    await expect(
+      api.rememberCorrection({
+        data: { candidateId: paper.candidate.id, scope: "party", docKind: "bill_accrual" },
+      }),
+    ).rejects.toThrow(/kind is already known/u);
+  });
+});

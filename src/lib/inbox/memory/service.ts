@@ -43,10 +43,14 @@ import { parseMoneyToScaled, scaledToMoney } from "../money";
 import {
   buildMemoryAnswer,
   departsFromApplication,
+  isMemoryDocKind,
+  MEMORY_DOC_KINDS,
   memoryAnswerFromColumns,
   memoryDirection,
+  possibleEntryDirections,
   type AnswerAccount,
   type MemoryAnswer,
+  type MemoryDocKind,
 } from "./answer";
 import { MEMORY_MATCH_KINDS, describeMatchKey, scopeKey, type MemoryMatchKind } from "./keys";
 import {
@@ -75,17 +79,29 @@ const MEMORY_ADMIN_PERMISSION = { resource: "agentRule", action: "configure" } a
 
 const candidateIdSchema = z.string().uuid();
 
+/**
+ * The kind of paper a person says this is. Only used when the paper's own kind
+ * is unknown (a hand-entered entry is "other"); a classified paper keeps its kind.
+ */
+const chosenDocKindSchema = z.enum(MEMORY_DOC_KINDS).optional();
+
 export const rememberCorrectionInputSchema = z.object({
   candidateId: candidateIdSchema,
   scope: z.enum(MEMORY_MATCH_KINDS),
   /** The revision the person was looking at; a newer one is not what they meant. */
   expectedRevision: z.number().int().positive().optional(),
+  docKind: chosenDocKindSchema,
 });
 
 export const previewMemoryScopeInputSchema = z.object({
   candidateId: candidateIdSchema,
   scope: z.enum(MEMORY_MATCH_KINDS),
+  docKind: chosenDocKindSchema,
 });
+
+const DOC_KIND_UNKNOWN_MESSAGE = "Choose what kind of paper this is before remembering it.";
+const DOC_KIND_NOT_FITTING_MESSAGE =
+  "That kind of paper does not fit this entry. Choose one of the kinds offered.";
 
 export const memoryIdInputSchema = z.object({ memoryId: z.string().uuid() });
 
@@ -152,7 +168,15 @@ async function loadChart(db: DbExecutor, orgId: string) {
 }
 
 type SubjectResult =
-  | { ok: false; message: string }
+  | {
+      ok: false;
+      message: string;
+      /**
+       * Set when the paper's kind is unknown: the kinds a person may choose
+       * for it (possibly none, when no kind fits the entry).
+       */
+      kindOptions?: MemoryDocKind[];
+    }
   | {
       ok: true;
       candidate: typeof transactionCandidates.$inferSelect;
@@ -169,7 +193,7 @@ async function loadRememberSubject(
   db: DbExecutor,
   orgId: string,
   candidateId: string,
-  options: { lock: boolean },
+  options: { lock: boolean; docKind?: MemoryDocKind },
 ): Promise<SubjectResult> {
   const query = db
     .select()
@@ -245,21 +269,73 @@ async function loadRememberSubject(
 
   const chart = chartForMemory(await loadChart(db, orgId));
   const answerAccounts = new Map<string, AnswerAccount>(chart);
-  const built = buildMemoryAnswer({
-    docKind: source.economicEventClass,
-    // A kind of paper with no counterparty (a transfer) never carries one.
-    partyId: counterpartyRoleFor(source.economicEventClass) ? candidate.partyId : null,
-    lines,
-    accounts: answerAccounts,
-  });
-  if (!built.ok) return { ok: false, message: built.message };
-  const valid = validateMemoryAnswer(built.answer, {
-    accounts: chart,
-    parties: await loadAnswerParties(db, orgId, [built.answer]),
-    paperEventClass: built.answer.docKind,
-    paperReviewerEditable: true,
-  });
-  if (!valid.ok) return { ok: false, message: REJECTION_MESSAGES[valid.reason] };
+
+  /** The answer for one kind of paper, or why it cannot be one. */
+  const answerAs = async (
+    docKind: string | null,
+  ): Promise<{ ok: true; answer: MemoryAnswer } | { ok: false; message: string }> => {
+    const built = buildMemoryAnswer({
+      docKind,
+      // A kind of paper with no counterparty (a transfer) never carries one.
+      partyId: counterpartyRoleFor(docKind) ? candidate.partyId : null,
+      lines,
+      accounts: answerAccounts,
+    });
+    if (!built.ok) return { ok: false, message: built.message };
+    const valid = validateMemoryAnswer(built.answer, {
+      accounts: chart,
+      parties: await loadAnswerParties(db, orgId, [built.answer]),
+      paperEventClass: built.answer.docKind,
+      paperReviewerEditable: true,
+    });
+    if (!valid.ok) return { ok: false, message: REJECTION_MESSAGES[valid.reason] };
+    return { ok: true, answer: built.answer };
+  };
+
+  let answer: MemoryAnswer;
+  if (isMemoryDocKind(source.economicEventClass)) {
+    // A classified paper keeps its own kind; a chosen one is only for unknown kinds.
+    if (options.docKind && options.docKind !== source.economicEventClass) {
+      return {
+        ok: false,
+        message: "This paper's kind is already known; it cannot be changed here.",
+      };
+    }
+    const result = await answerAs(source.economicEventClass);
+    if (!result.ok) return result;
+    answer = result.answer;
+  } else {
+    // A hand-entered entry has no kind of its own: offer the kinds whose
+    // direction the entry's accounts allow and that make a valid answer.
+    const directions = new Set(
+      possibleEntryDirections(
+        lines.flatMap((line) => {
+          const account = line.accountId ? answerAccounts.get(line.accountId) : undefined;
+          const side =
+            line.originalDebit != null && line.originalDebit !== ""
+              ? ("debit" as const)
+              : ("credit" as const);
+          return account ? [{ side, accountType: account.accountType }] : [];
+        }),
+      ),
+    );
+    const kindOptions: MemoryDocKind[] = [];
+    for (const kind of MEMORY_DOC_KINDS) {
+      const direction = memoryDirection(kind);
+      if (!direction || !directions.has(direction)) continue;
+      if ((await answerAs(kind)).ok) kindOptions.push(kind);
+    }
+    if (!options.docKind) {
+      return { ok: false, message: DOC_KIND_UNKNOWN_MESSAGE, kindOptions };
+    }
+    if (!kindOptions.includes(options.docKind)) {
+      return { ok: false, message: DOC_KIND_NOT_FITTING_MESSAGE, kindOptions };
+    }
+    const result = await answerAs(options.docKind);
+    if (!result.ok) return { ...result, kindOptions };
+    answer = result.answer;
+  }
+  const built = { answer };
   const paperTotal = scaledToMoney(
     built.answer.lines
       .filter((line) => line.lineMatch.side === "debit")
@@ -318,7 +394,10 @@ export async function rememberCorrection(
   input: z.infer<typeof rememberCorrectionInputSchema>,
 ): Promise<RememberCorrectionResult> {
   const { db, orgId, userId } = ctx;
-  const subject = await loadRememberSubject(db, orgId, input.candidateId, { lock: true });
+  const subject = await loadRememberSubject(db, orgId, input.candidateId, {
+    lock: true,
+    docKind: input.docKind,
+  });
   if (!subject.ok) throw new Error(subject.message);
   const { candidate } = subject;
   const answer = answerForScope(subject.answer, input.scope);
@@ -451,7 +530,13 @@ export async function rememberCorrection(
 }
 
 export type MemoryScopePreview =
-  | { available: false; scope: MemoryMatchKind; reason: string }
+  | {
+      available: false;
+      scope: MemoryMatchKind;
+      reason: string;
+      /** Present when the paper's kind is unknown: the kinds the person may choose. */
+      kindOptions?: MemoryDocKind[];
+    }
   | {
       available: true;
       scope: MemoryMatchKind;
@@ -482,8 +567,18 @@ export async function previewMemoryScope(
   now: Date = new Date(),
 ): Promise<MemoryScopePreview> {
   const { db, orgId } = ctx;
-  const subject = await loadRememberSubject(db, orgId, input.candidateId, { lock: false });
-  if (!subject.ok) return { available: false, scope: input.scope, reason: subject.message };
+  const subject = await loadRememberSubject(db, orgId, input.candidateId, {
+    lock: false,
+    docKind: input.docKind,
+  });
+  if (!subject.ok) {
+    return {
+      available: false,
+      scope: input.scope,
+      reason: subject.message,
+      ...(subject.kindOptions ? { kindOptions: subject.kindOptions } : {}),
+    };
+  }
   const { candidate } = subject;
   const answer = answerForScope(subject.answer, input.scope);
   const matchKey = await keyForScope(db, orgId, candidate, input.scope);

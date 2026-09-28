@@ -46,8 +46,8 @@ export const keys = {
     // Classification memories (Inbox v2 §7). Under the Inbox prefix, so an Inbox-wide
     // invalidation also refreshes the memory list and the scope previews.
     memories: () => ["inbox", "memories"] as const,
-    memoryPreview: (candidateId: string, scope: string) =>
-      ["inbox", "memories", "preview", candidateId, scope] as const,
+    memoryPreview: (candidateId: string, scope: string, docKind: string | null = null) =>
+      ["inbox", "memories", "preview", candidateId, scope, docKind] as const,
   },
   reviewAgents: {
     all: () => ["review-agents"] as const,

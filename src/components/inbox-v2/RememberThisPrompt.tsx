@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { InfoIcon, LockIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
+import type { MemoryDocKind } from "@/lib/inbox/memory/answer";
 import { keys } from "@/lib/query-keys";
 import { callServerFn, type ServerFnResult } from "@/lib/server-fn-client";
 import { previewMemoryScope, rememberCorrection } from "../../routes/api/-inbox-memory";
@@ -48,6 +49,18 @@ export const MEMORY_SCOPE_OPTIONS: ReadonlyArray<{
     hint: "Every paper described with these words, from any party. Owners and admins only.",
   },
 ];
+
+/** Kinds of paper a memory can answer, in the words a reviewer uses. */
+export const MEMORY_DOC_KIND_LABELS: Record<MemoryDocKind, string> = {
+  purchase: "Purchase or receipt (already paid)",
+  bill_accrual: "Vendor bill (to pay later)",
+  bill_payment: "Payment of a vendor bill",
+  payroll: "Payroll",
+  sale: "Sale (already received)",
+  invoice_accrual: "Sales invoice (to collect later)",
+  invoice_payment: "Payment received on an invoice",
+  transfer: "Transfer between own accounts",
+};
 
 export type RememberCorrectionResult = ServerFnResult<typeof rememberCorrection>;
 type ScopePreview = ServerFnResult<typeof previewMemoryScope>;
@@ -84,10 +97,17 @@ export function RememberThisPrompt({
   const { showToast } = useToast();
   const headingId = useId();
   const [scope, setScope] = useState<MemoryScope>(defaultScope);
+  // Only for a paper whose own kind is unknown (a hand-entered entry): the kind the
+  // reviewer says it is. The server offers the kinds that fit and re-checks the choice.
+  const [docKind, setDocKind] = useState<MemoryDocKind | null>(null);
+  const kindSelectId = useId();
 
   const preview = useQuery({
-    queryKey: keys.inbox.memoryPreview(candidateId, scope),
-    queryFn: () => callServerFn(previewMemoryScope, { data: { candidateId, scope } }),
+    queryKey: keys.inbox.memoryPreview(candidateId, scope, docKind),
+    queryFn: () =>
+      callServerFn(previewMemoryScope, {
+        data: { candidateId, scope, ...(docKind ? { docKind } : {}) },
+      }),
     retry: false,
   });
 
@@ -98,6 +118,7 @@ export function RememberThisPrompt({
           candidateId,
           scope,
           ...(candidateRevision !== undefined ? { expectedRevision: candidateRevision } : {}),
+          ...(docKind ? { docKind } : {}),
         },
       }),
     onSuccess: async (result) => {
@@ -114,6 +135,15 @@ export function RememberThisPrompt({
 
   const data = preview.data;
   const available = availablePreview(data);
+  // The kinds the reviewer may choose, sticky once seen so the picker does not
+  // vanish while the next preview loads.
+  const [kindOptions, setKindOptions] = useState<MemoryDocKind[] | null>(null);
+  const reportedKinds = data && !data.available ? (data.kindOptions ?? null) : null;
+  if (reportedKinds && reportedKinds.join() !== kindOptions?.join()) {
+    setKindOptions(reportedKinds);
+  }
+  // A hand-entered entry that no kind of paper fits cannot be remembered at all.
+  if (kindOptions !== null && kindOptions.length === 0) return null;
   const blockedByRole = available !== null && available.requiresAdmin && !available.allowed;
   const canSave = available !== null && !blockedByRole && !save.isPending;
 
@@ -165,6 +195,33 @@ export function RememberThisPrompt({
           ))}
         </div>
       </fieldset>
+
+      {kindOptions && kindOptions.length > 0 && (
+        <div className="mt-3">
+          <label
+            htmlFor={kindSelectId}
+            className="block text-xs font-medium text-[#1e293b] dark:text-white"
+          >
+            What kind of paper is this?
+          </label>
+          <select
+            id={kindSelectId}
+            value={docKind ?? ""}
+            onChange={(event) => {
+              setDocKind((event.target.value || null) as MemoryDocKind | null);
+              save.reset();
+            }}
+            className="mt-1 w-full rounded-lg border border-[#e2e8f0] dark:border-white/10 bg-white dark:bg-[#0f172a] px-2 py-1.5 text-sm text-[#1e293b] dark:text-white"
+          >
+            <option value="">Choose a kind…</option>
+            {kindOptions.map((kind) => (
+              <option key={kind} value={kind}>
+                {MEMORY_DOC_KIND_LABELS[kind]}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <div className="mt-3 min-h-10 text-xs" aria-live="polite">
         {preview.isLoading ? (

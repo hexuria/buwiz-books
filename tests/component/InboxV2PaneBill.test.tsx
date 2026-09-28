@@ -44,6 +44,15 @@ vi.mock("../../src/routes/api/-category-mappings", () => ({
 vi.mock("../../src/routes/api/-documents", () => ({
   getDocumentViewerData: api.getDocumentViewerData,
 }));
+// The pane mounts "Remember this?" after a save; its server functions are stubbed like the others.
+vi.mock("../../src/routes/api/-inbox-memory", () => ({
+  rememberCorrection: vi.fn(),
+  previewMemoryScope: vi.fn(async () => ({ available: false, scope: "file_hash", reason: "" })),
+  listMemories: vi.fn(async () => []),
+  enableMemory: vi.fn(),
+  disableMemory: vi.fn(),
+  deleteMemory: vi.fn(),
+}));
 vi.mock("../../src/routes/api/-parties", () => ({
   listParties: api.listParties,
   createParty: api.createParty,
