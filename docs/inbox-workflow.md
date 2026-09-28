@@ -75,7 +75,7 @@ links to its rule there. Two groups, two moments:
 | ---------------------------- | ----- | ---------------------------------------------------------------------- | ----------------------------- |
 | **Book** (_Inbox checks_)    | 9     | Automatically, on every candidate at ingest and after every correction | The Inbox item                |
 | **Review** (_Ledger checks_) | 5     | Only when someone presses **Scan books**                               | A journal or an account-month |
-| **System** (_System checks_) | 2     | Raised by inbound processing. Not configurable, not runnable           | The Inbox item                |
+| **System** (_System checks_) | 3     | Raised by inbound processing. Not configurable, not runnable           | The Inbox item                |
 
 Group is not a perfect proxy for cadence, and the UI states the cadence per
 agent rather than deriving it: `transaction_in_parent_category` is a Review rule
@@ -149,6 +149,32 @@ failed jobs with backoff. A crashed final lease atomically marks the job,
 ingestion event, source, Inbox item, finding, and audit event as failed. An
 exact webhook replay can requeue that work only while the original failure and
 candidate are still open; it cannot reopen an approved or rejected lifecycle.
+
+### Categories and counterparties (stage 2)
+
+When extraction produces complete facts, the candidate gets two unselected
+placeholder lines and a `classify_inbox_candidate` job. That job:
+
+- picks the **category line's** account (the debit of a purchase, bill, or
+  payroll; the credit of a sale or invoice) from the organization's own active
+  leaf accounts, sent to the model as a closed list of account-number codes.
+  A code outside the list is refused. No fit, a pick below the organization's
+  low-confidence threshold, or any model failure puts the line on the mapped
+  Uncategorized Expense account instead (or leaves it unselected where no
+  uncategorized account is mapped), so the blocking `uncategorized` finding
+  stays open. A missing category is only ever a suggestion in the line's
+  prediction evidence; accounts are never created;
+- matches the **counterparty**: tax id, then sender or printed email, then
+  vendor alias, then exact name; failing those, the model chooses among the five
+  most similar parties (`pg_trgm`) or answers "new", which drafts a
+  `create_party` proposal for a human;
+- raises the blocking `party_payment_details_changed` finding when the document
+  asks for payment to bank details that differ from the matched payee's stored
+  ones. Editing the entry never clears it; resolve it with a note after
+  confirming the change through a contact you already trust.
+
+The payment side (bank, card, cash, AP, or AR) is always left for the reviewer.
+With Jev opted in, Jev answers both picks first and Gemini is the fallback.
 
 Event classes inferred from email text, OCR, or document extraction are
 reviewer-editable and every change is audited. Provider-owned payment, payroll,

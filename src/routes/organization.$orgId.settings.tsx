@@ -1560,7 +1560,7 @@ type AiProviderId = "gemini" | "anthropic" | "openai" | "openai_compatible" | "j
 // switch. The server enforces the rest: admin-only, redacted text only,
 // classification tasks only.
 const JEV_OPT_IN_CONFIRM =
-  "Allow Jev (TypeSafe AI) to classify this organization's documents? Jev will run first for inbox triage and document classification, with Gemini as the fallback. It receives redacted text only (the filename and a text preview), never document images.";
+  "Allow Jev (TypeSafe AI) to classify this organization's documents? Jev will run first for inbox triage, document classification, line categories, and vendor and customer matching, with Gemini as the fallback. It receives redacted text only (filenames, text previews, document descriptions, your account names, and the names of similar parties), never document images.";
 
 const AI_PROVIDER_META: {
   id: AiProviderId;
@@ -1598,7 +1598,7 @@ const AI_PROVIDER_META: {
     id: "jev",
     name: "Jev (TypeSafe AI)",
     blurb:
-      "Opt-in first pass for inbox triage and document classification, with Gemini as the fallback. Receives redacted text only.",
+      "Opt-in first pass for inbox triage, document classification, line categories, and vendor matching, with Gemini as the fallback. Receives redacted text only.",
     keyPlaceholder: "Jev API key",
   },
 ];
@@ -1616,6 +1616,8 @@ const AI_TASK_TITLES: Record<string, string> = {
   transaction_parse: "Transaction parsing",
   txn_prefill: "Transaction prefill",
   match_assist: "Match assist",
+  categorize_lines: "Inbox line categories",
+  match_party: "Vendor and customer matching",
 };
 
 // Curated ISO 3166-1 alpha-2 list for the organization country select. The

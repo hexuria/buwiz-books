@@ -260,8 +260,8 @@ export const organizationAiSettings = pgTable("organization_ai_settings", {
   taskAllowlist: jsonb("task_allowlist").$type<string[]>(),
   /**
    * Providers this org permits; absent ⇒ Gemini only. "jev" here is also the
-   * Jev opt-in: Jev becomes the first hop for ingest_triage and
-   * classify_document (src/lib/ai/chains.ts applyJevPolicy).
+   * Jev opt-in: Jev becomes the first hop for the redacted-text
+   * classification tasks in JEV_TASKS (src/lib/ai/chains.ts applyJevPolicy).
    */
   providerAllowlist: jsonb("provider_allowlist").$type<string[]>(),
   monthlySpendCapUsd: numeric("monthly_spend_cap_usd"),

@@ -2,17 +2,28 @@
 // AI Entity Resolver — Server Function (MATCH-ONLY)
 //
 // Takes extractedEntities from OCR and MATCHES them against existing
-// parties/financial accounts. This endpoint never writes: entities that would
-// need creation become ai_action_proposals (kind "create_party"), and the
-// permitted human's approval — through the proposal applier, which re-checks
-// party/account/financialAccount create permissions — is what materializes
-// them (closes ai_findings #4/#7: no writes before review, no privilege
-// escalation through an AI endpoint).
+// parties/financial accounts. This endpoint never writes to master data:
+// entities that would need creation become ai_action_proposals (kind
+// "create_party"), and the permitted human's approval — through the proposal
+// applier, which re-checks party/account/financialAccount create permissions —
+// is what materializes them (closes ai_findings #4/#7: no writes before
+// review, no privilege escalation through an AI endpoint).
+//
+// Matching is the shared entity pipeline (src/lib/party-match, inbox v2 §5):
+//   1. exact, strongest first: tax id → email → vendor alias → case-insensitive
+//      name, only among active parties of a type the entity can be;
+//   2. pg_trgm look-alikes (top five), plus the party OCR suggested, if any;
+//   3. match_party picks one of them or says "new" (closed enum; Jev first
+//      for opted-in orgs), applied only at or above the org's low-confidence
+//      threshold;
+//   4. anything not matched becomes a create_party proposal draft carrying
+//      name, type, tax id, and email.
+// A matched payee whose stored bank details differ from ones the caller
+// passes is flagged (`paymentDetailsChanged`) — never written.
 // ============================================================================
 
 import { createServerFn } from "@tanstack/react-start";
 import type { DbExecutor } from "../../db";
-import { parties } from "../../db/schema/parties";
 import { financialAccounts } from "../../db/schema/financial-accounts";
 import { and, eq, ilike } from "drizzle-orm";
 import { createLogger } from "../../lib/logger";
@@ -21,6 +32,21 @@ import { withMutationPermissionOrgContext } from "../../lib/server-context";
 import { escapeLikePattern } from "../../lib/sql-escape";
 import { bankAccountLabel, type ExtractedEntityInput } from "../../lib/entity-creation";
 import { createProposal } from "../../lib/ai/proposals";
+import { aiComplete } from "../../lib/ai/facade";
+import { loadLowConfidenceThreshold } from "../../lib/inbox/low-confidence-threshold";
+import { pickPartyWithModel } from "../../lib/party-match/model-pick";
+import {
+  detectPaymentDetailsChange,
+  extractEmailAddress,
+  normalizeTaxId,
+} from "../../lib/party-match/normalize";
+import {
+  matchParty,
+  type ExactTier,
+  type PartyMatchOutcome,
+  type PartyMatchQuery,
+} from "../../lib/party-match/pipeline";
+import { loadPartyPaymentDetails, partyLookups } from "../../lib/party-match/queries";
 import type { ExtractedEntity } from "./-ai-transaction-parse";
 import { z } from "zod";
 
@@ -41,6 +67,15 @@ export interface ResolvedEntity {
   accountId?: string;
   /** For bank entities: the financial account ID, when it already exists */
   financialAccountId?: string;
+  /** How the party was matched: an exact tier, or the model among look-alikes. */
+  matchedBy: ExactTier | "model";
+  /** 0..1, for model matches only. */
+  matchConfidence?: number;
+  /**
+   * The caller passed bank details that differ from the party's stored ones.
+   * Informational here — nothing is written — and blocking in the Inbox.
+   */
+  paymentDetailsChanged?: boolean;
 }
 
 /** An entity that needs creation — surfaced to the user as a proposal card. */
@@ -49,6 +84,10 @@ export interface EntityCreationProposal {
   entity: ExtractedEntity;
   /** Human-readable summary for the card, e.g. `Create vendor "Staples"`. */
   summary: string;
+  /** Existing look-alikes the matcher considered, most similar first. */
+  lookalikes?: Array<{ partyId: string; name: string }>;
+  /** The model's below-threshold pick among them, if it made one. */
+  suggestedPartyId?: string;
 }
 
 export interface EntityResolutionResult {
@@ -82,13 +121,27 @@ const extractedEntitySchema = z.object({
   identifier: z.string().optional().default(""),
   accountType: z.string().optional().default(""),
   matchedPartyId: z.string().optional().default(""),
+  /** Printed tax id, when the caller extracted one. */
+  taxId: z.string().max(50).optional().default(""),
+  /** Printed or sender email address. */
+  email: z.string().max(255).optional().default(""),
+  /** Payee bank details printed on the document, for the change check only. */
+  bankAccountNumber: z.string().max(64).optional().default(""),
+  bankRoutingNumber: z.string().max(64).optional().default(""),
 });
+
+type ResolverEntity = z.infer<typeof extractedEntitySchema>;
 
 const resolveExtractedEntitiesSchema = z.object({
   entities: z.array(extractedEntitySchema).default([]),
   /** Anchor proposals to a source document when known (UI grouping). */
   sourceDocumentId: z.string().uuid().optional(),
 });
+
+/** Roles whose changed bank details are the invoice-fraud path. */
+const PAYEE_ENTITY_TYPES = new Set(["vendor", "employee"]);
+/** Roles whose `identifier` may be a tax id (it is a last-4 for banks). */
+const TAX_ID_ENTITY_TYPES = new Set(["vendor", "customer", "government", "lender"]);
 
 // ============================================================================
 // Server Function
@@ -110,6 +163,7 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
         // could stack proposals they can never legally apply.
         assertRolePermission(role, "party", "create");
         const input = resolveExtractedEntitiesSchema.parse(rawData);
+        const minConfidence = await loadLowConfidenceThreshold(db, orgId);
 
         const result: EntityResolutionResult = {
           entities: [],
@@ -122,7 +176,7 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
 
         for (const entity of input.entities) {
           try {
-            const match = await matchOne(db, entity, orgId);
+            const match = await matchOne(db, entity, { orgId, userId, minConfidence });
 
             if (match.status === "matched") {
               result.entities.push(match.resolved);
@@ -158,11 +212,13 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
             });
             result.proposals.push({
               proposalId: proposal.id,
-              entity: match.entity as ExtractedEntity,
+              entity: toExtractedEntity(entity),
               summary:
                 entity.entityType === "bank"
                   ? `Create bank account "${bankAccountLabel(entity)}"`
                   : `Create ${entity.entityType} "${entity.name}"`,
+              ...(match.lookalikes.length > 0 ? { lookalikes: match.lookalikes } : {}),
+              ...(match.suggestedPartyId ? { suggestedPartyId: match.suggestedPartyId } : {}),
             });
           } catch (error) {
             logger.error("Failed to resolve extracted entity", {
@@ -192,48 +248,105 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
 
 type MatchOutcome =
   | { status: "matched"; resolved: ResolvedEntity }
-  | { status: "needs_creation"; entity: ExtractedEntityInput };
+  | {
+      status: "needs_creation";
+      entity: ExtractedEntityInput;
+      lookalikes: Array<{ partyId: string; name: string }>;
+      suggestedPartyId?: string;
+    };
+
+function toExtractedEntity(entity: ResolverEntity): ExtractedEntity {
+  return {
+    entityType: entity.entityType,
+    name: entity.name,
+    identifier: entity.identifier,
+    accountType: entity.accountType,
+    matchedPartyId: entity.matchedPartyId,
+  };
+}
+
+/** The explicit tax id, else an unmasked identifier that normalizes to one. */
+function taxIdFor(entity: ResolverEntity): string | null {
+  if (normalizeTaxId(entity.taxId)) return entity.taxId.trim();
+  if (!TAX_ID_ENTITY_TYPES.has(entity.entityType)) return null;
+  if (/[*•]|[xX]{2,}/u.test(entity.identifier)) return null;
+  return normalizeTaxId(entity.identifier) ? entity.identifier.trim() : null;
+}
+
+function creationDraft(
+  entity: ResolverEntity,
+  query: PartyMatchQuery,
+  matchedPartyId = "",
+): ExtractedEntityInput {
+  return {
+    ...toExtractedEntity(entity),
+    matchedPartyId,
+    taxId: query.taxId?.slice(0, 50) ?? "",
+    email: extractEmailAddress(entity.email)?.slice(0, 255) ?? "",
+  };
+}
 
 async function matchOne(
   db: DbExecutor,
-  entity: ExtractedEntity,
-  orgId: string,
+  entity: ResolverEntity,
+  options: { orgId: string; userId: string; minConfidence: number },
 ): Promise<MatchOutcome> {
-  // Step 1: explicit match from OCR
-  let matchedParty: { id: string; name: string } | undefined;
-  if (entity.matchedPartyId) {
-    const [existing] = await db
-      .select({ id: parties.id, name: parties.name })
-      .from(parties)
-      .where(and(eq(parties.id, entity.matchedPartyId), eq(parties.organizationId, orgId)))
-      .limit(1);
-    matchedParty = existing;
+  const { orgId } = options;
+  const query: PartyMatchQuery = {
+    name: entity.name,
+    entityType: entity.entityType,
+    taxId: taxIdFor(entity),
+    emails: entity.email ? [entity.email] : [],
+    hintPartyId: entity.matchedPartyId || null,
+  };
+  const outcome: PartyMatchOutcome = await matchParty(
+    query,
+    {
+      ...partyLookups(db, orgId),
+      pick: (pickQuery, candidates) =>
+        pickPartyWithModel(pickQuery, candidates, {
+          orgId,
+          userId: options.userId,
+          complete: aiComplete,
+        }),
+    },
+    { minConfidence: options.minConfidence },
+  );
+
+  if (outcome.kind !== "exact" && outcome.kind !== "model") {
+    return {
+      status: "needs_creation",
+      entity: creationDraft(entity, query),
+      lookalikes: outcome.candidates.map((candidate) => ({
+        partyId: candidate.id,
+        name: candidate.name,
+      })),
+      ...(outcome.kind === "unresolved" && outcome.suggestion
+        ? { suggestedPartyId: outcome.suggestion.id }
+        : {}),
+    };
   }
 
-  // Step 2: fuzzy-match by name (case-insensitive)
-  if (!matchedParty) {
-    const [existingByName] = await db
-      .select({ id: parties.id, name: parties.name })
-      .from(parties)
-      .where(
-        and(ilike(parties.name, escapeLikePattern(entity.name)), eq(parties.organizationId, orgId)),
-      )
-      .limit(1);
-    matchedParty = existingByName;
-  }
-
-  if (!matchedParty) {
-    return { status: "needs_creation", entity };
-  }
+  const matchedParty = outcome.party;
+  const matchedBy = outcome.kind === "exact" ? outcome.tier : ("model" as const);
+  const matchConfidence = outcome.kind === "model" ? outcome.confidence : undefined;
+  const paymentDetailsChanged =
+    PAYEE_ENTITY_TYPES.has(entity.entityType) &&
+    Boolean(entity.bankAccountNumber || entity.bankRoutingNumber)
+      ? await hasChangedPaymentDetails(db, orgId, matchedParty.id, entity)
+      : undefined;
 
   if (entity.entityType !== "bank") {
     return {
       status: "matched",
       resolved: {
-        source: entity,
+        source: toExtractedEntity(entity),
         partyId: matchedParty.id,
         partyName: matchedParty.name,
         wasCreated: false,
+        matchedBy,
+        ...(matchConfidence !== undefined ? { matchConfidence } : {}),
+        ...(paymentDetailsChanged !== undefined ? { paymentDetailsChanged } : {}),
       },
     };
   }
@@ -259,19 +372,38 @@ async function matchOne(
   if (!existingFA) {
     return {
       status: "needs_creation",
-      entity: { ...entity, matchedPartyId: matchedParty.id },
+      entity: creationDraft(entity, query, matchedParty.id),
+      lookalikes: [],
     };
   }
 
   return {
     status: "matched",
     resolved: {
-      source: entity,
+      source: toExtractedEntity(entity),
       partyId: matchedParty.id,
       partyName: matchedParty.name,
       wasCreated: false,
       accountId: existingFA.ledgerAccountId ?? undefined,
       financialAccountId: existingFA.id,
+      matchedBy,
+      ...(matchConfidence !== undefined ? { matchConfidence } : {}),
     },
   };
+}
+
+async function hasChangedPaymentDetails(
+  db: DbExecutor,
+  orgId: string,
+  partyId: string,
+  entity: ResolverEntity,
+): Promise<boolean> {
+  const party = await loadPartyPaymentDetails(db, orgId, partyId);
+  if (!party) return false;
+  return (
+    detectPaymentDetailsChange(party, {
+      accountNumber: entity.bankAccountNumber || null,
+      routingNumber: entity.bankRoutingNumber || null,
+    }) !== null
+  );
 }

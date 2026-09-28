@@ -14,6 +14,8 @@ import { deleteFromR2, getPresignedDownloadUrl, isR2Configured, existsInR2 } fro
 import { ensureDocument } from "@/lib/documents/ensure-document";
 import { listEntityDocumentAttachments } from "@/lib/documents/list-attachments";
 import { intakeStandaloneDocument } from "@/lib/inbox/document-intake";
+import { CLASSIFY_INBOX_CANDIDATE_JOB_TYPE } from "@/lib/inbox/candidate-classification-job";
+import { triggerWorker } from "@/lib/jobs/trigger";
 import { sourceRecordDocuments } from "@/db/schema/inbox";
 import { generateThumbnail, regenerateThumbnailWithAI } from "@/services/thumbnail-generator";
 import { insertActivityLog } from "@/lib/insert-activity-log";
@@ -309,7 +311,7 @@ export const checkDuplicateDocument = createServerFn({ method: "GET" })
 export const uploadDocument = createServerFn({ method: "POST" })
   .inputValidator((data: z.input<typeof uploadDocumentSchema>) => uploadDocumentSchema.parse(data))
   .handler(async ({ data: rawData }: { data: unknown }) => {
-    return withMutationPermissionOrgContext(
+    const uploaded = await withMutationPermissionOrgContext(
       "document",
       "upload",
       { routeKey: "document:upload", limit: 20, windowMs: 300_000 },
@@ -395,7 +397,13 @@ export const uploadDocument = createServerFn({ method: "POST" })
                 },
         };
       },
-    ) as any;
+    );
+    // A cached extraction enriched the candidate and queued Inbox stage 2 in
+    // the transaction that just committed.
+    if (uploaded.intake?.candidateId && uploaded.intake.extractionStatus === "cached") {
+      triggerWorker([CLASSIFY_INBOX_CANDIDATE_JOB_TYPE]);
+    }
+    return uploaded as any;
   });
 
 // ============================================================================

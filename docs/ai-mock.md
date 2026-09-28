@@ -44,16 +44,24 @@ applies grounding. IDs in canned payloads that are not in the caller's
 
 ### Jev
 
-Jev (TypeSafe AI) has its own canned answers for the two tasks it serves,
-`ingest_triage` and `classify_document`, in `JEV_MOCK_RESPONSES` (seeded from
-the Jev cases in the recorded eval corpus). They deliberately differ from the
-shared answers so you can tell which hop replied: the result's `model` is
-`jev-mock` and its `invocationId` is `mock:jev:<task>`.
+Jev (TypeSafe AI) has its own canned answers for the tasks it serves
+(`JEV_TASKS`: `ingest_triage`, `classify_document`, `categorize_lines`, and
+`match_party`) in `JEV_MOCK_RESPONSES`, seeded from the Jev cases in the
+recorded eval corpus. They deliberately differ from the shared answers so you
+can tell which hop replied: the result's `model` is `jev-mock` and its
+`invocationId` is `mock:jev:<task>`.
+
+`categorize_lines` (Inbox stage 2) and `match_party` (entity matching) answer
+from a closed list built per request, so a canned answer can only be valid for
+every request if it picks the value that is always offered: `"none"` and
+`"new"`. In mock mode an Inbox draft's category line therefore lands on the
+mapped Uncategorized account and no party is linked — the item waits in
+"Needs you", which is the deterministic outcome E2E runs want.
 
 The mock mirrors the org's real opt-in. `prepare()` reads only the org's
 provider allowlist (Settings → AI Providers & Guardrails → Jev). When `jev` is
-on it, those two tasks get a Jev mock hop first, with the shared mock hop as
-the fallback, like the live chain. Every other task, OCR included, never gets
+on it, those tasks get a Jev mock hop first, with the shared mock hop as the
+fallback, like the live chain. Every other task, OCR included, never gets
 a Jev hop. A failed settings read counts as not opted in. Credentials, the
 `JEV_BASE_URL` endpoint, and spend are never consulted in mock mode.
 

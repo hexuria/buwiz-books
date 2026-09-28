@@ -380,6 +380,16 @@ export const REVIEW_AGENT_SCHEMAS: Record<string, AgentConfigSchema> = {
     ],
     fields: [],
   },
+  party_payment_details_changed: {
+    key: "party_payment_details_changed",
+    cadence: "system",
+    usesLookback: false,
+    method: [
+      "Raised when a document asks for payment to a bank account other than the one on file for a known vendor or employee.",
+      "Editing the entry never clears it. Confirm the change through a contact you already trust, then resolve it with a note.",
+    ],
+    fields: [],
+  },
 };
 
 export function getAgentSchema(key: string): AgentConfigSchema | undefined {

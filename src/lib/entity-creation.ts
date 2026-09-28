@@ -19,6 +19,7 @@ import { accounts } from "../db/schema/accounts";
 import { financialAccounts } from "../db/schema/financial-accounts";
 import { escapeLikePattern } from "./sql-escape";
 import { createLogger } from "./logger";
+import { extractEmailAddress } from "./party-match/normalize";
 
 const logger = createLogger("lib.entity-creation");
 
@@ -41,6 +42,10 @@ export interface ExtractedEntityInput {
   accountType: string;
   /** Party ID when OCR already matched an existing party. Empty string if new. */
   matchedPartyId: string;
+  /** Tax id as printed (entity matching step 4). Set on a NEW party only. */
+  taxId?: string;
+  /** Email address as printed or sent from. Set on a NEW party only. */
+  email?: string;
 }
 
 export interface CreatedEntityResult {
@@ -109,13 +114,16 @@ export async function createPartyFromEntity(
     };
   }
 
-  // Create
+  // Create. Identity fields ride along from the approved draft; payment
+  // details never do — a document is not a trusted source for where to pay.
   const [newParty] = await db
     .insert(parties)
     .values({
       organizationId: orgId,
       name: entity.name,
       partyType: entity.entityType,
+      taxId: entity.taxId?.trim().slice(0, 50) || null,
+      email: extractEmailAddress(entity.email) ?? null,
     })
     .returning({ id: parties.id, name: parties.name });
 
@@ -207,8 +215,10 @@ export async function ensureBankInfrastructure(
   // this very predicate on the next run. Without an ORDER BY, `.limit(1)` could
   // return a previously-created bank account and parent the new one under it —
   // chaining accounts and distorting every reporting rollup that walks the tree.
-  // This path can run unattended (`create_party` is not in
-  // STRUCTURAL_MANUAL_KINDS), so it is not a rare hand-triggered case.
+  // `create_party` is structurally manual (STRUCTURAL_MANUAL_KINDS in
+  // src/lib/ai/autonomy.ts), so this only ever runs when a human approves a
+  // proposal. That does not make it rare: every approved bank entity reaches
+  // it, so the ordering still has to be deterministic.
   //
   // Rank on the PARENT's `isSystem` rather than on accountNumber "11000":
   // planCoaPreset renumbers on conflict, so that literal is not stable, but only

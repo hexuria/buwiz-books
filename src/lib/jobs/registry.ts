@@ -26,6 +26,8 @@ import { processStandaloneDocumentJob } from "./handlers/standalone-document";
 import { processStatementOcrJob } from "./handlers/statement-ocr";
 import { processRoutineWebhookJob } from "./handlers/routine-webhook";
 import { processRoutineScheduleRunJob } from "./handlers/routine-schedule-run";
+import { processClassifyInboxCandidateJob } from "./handlers/classify-inbox-candidate";
+import { CLASSIFY_INBOX_CANDIDATE_JOB_TYPE } from "@/lib/inbox/candidate-classification-job";
 import {
   BUSINESS_GROUP_PROJECTION_JOB_TYPE,
   processBusinessGroupProjectionJob,
@@ -68,6 +70,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   [BUSINESS_GROUP_PROJECTION_JOB_TYPE]: processBusinessGroupProjectionJob,
   [ROUTINE_WEBHOOK_JOB_TYPE]: processRoutineWebhookJob,
   [ROUTINE_SCHEDULE_RUN_JOB_TYPE]: processRoutineScheduleRunJob,
+  [CLASSIFY_INBOX_CANDIDATE_JOB_TYPE]: processClassifyInboxCandidateJob,
 };
 
 export const INBOX_JOB_TYPES = ["process_inbound_email", "process_standalone_document"];

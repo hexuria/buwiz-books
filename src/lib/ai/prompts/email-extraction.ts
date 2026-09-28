@@ -3,6 +3,10 @@
 // attachment. Moved VERBATIM from src/lib/inbox/email-attachment-extraction.ts
 // (version 1.0.0 is byte-identical to the pre-registry prompt). The document
 // arrives as inline media parts.
+//
+// 1.1.0 adds the counterparty's email, tax id, and bank payment destination.
+// They feed exact party matching and the payment-details-change check (inbox
+// v2 step 7); none of them is ever written to a party.
 // ============================================================================
 
 export interface EmailExtractionPromptInput {
@@ -14,7 +18,7 @@ export interface EmailExtractionPromptInput {
 
 export const emailExtractionPrompt = {
   id: "email-extraction",
-  version: "1.0.0",
+  version: "1.1.0",
   build(input: EmailExtractionPromptInput): string {
     return `You extract only deterministic matching facts from an accounting document.
 
@@ -38,6 +42,8 @@ Rules:
 - Use the document date. Return YYYY-MM-DD.
 - Use a three-letter ISO currency. If the symbol is ambiguous, use the supplied currency fallback.
 - Return an empty string for an unknown amount, currency, date, party, or reference.
-- Description must be short and factual.`;
+- Description must be short and factual.
+- Copy the counterparty's email address and tax identification number exactly as printed, or return empty strings.
+- Payee bank details: only when the document asks the organization to pay the counterparty by bank transfer, copy the destination account number (or IBAN) and its routing, sort, or SWIFT code exactly as printed. Never report the organization's own account. Otherwise return empty strings.`;
   },
 };

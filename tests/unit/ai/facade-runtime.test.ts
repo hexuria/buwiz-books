@@ -226,3 +226,63 @@ describe("production AI completion runtime — Jev hop", () => {
     );
   });
 });
+
+// ── Closed-list tasks: the per-request schema reaches every provider ────────
+describe("production AI completion runtime — per-request response schemas", () => {
+  const JEV_CREDENTIAL = {
+    fingerprint: "fp-jev",
+    apiKey: "jev-TESTONLY-key",
+    baseUrl: "https://jev.example.test/v1",
+    credentialId: "cred-jev",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getOrgCredentialsMock.mockResolvedValue([JEV_CREDENTIAL]);
+    logProviderInvocationMock.mockResolvedValue("inv-jev");
+    generateStructuredMock.mockResolvedValue({ text: "{}", invocationId: "inv", model: "g" });
+    generateStructuredJevMock.mockResolvedValue({
+      text: "{}",
+      usage: { tokensIn: 1, tokensOut: 1 },
+      usageEstimated: false,
+    });
+  });
+
+  function hop(provider: "gemini" | "jev", schema: import("zod").z.ZodType) {
+    const entry = getTaskEntry("categorize_lines");
+    return productionAiCompletionRuntime.invokeHop({
+      hop: { provider, model: provider === "jev" ? "jev-1" : "gemini-test" },
+      position: 0,
+      task: "categorize_lines",
+      prompt: toRedactedPrompt("Lines to categorize").prompt,
+      schema,
+      ctx: { orgId: "org-enum" },
+      entry,
+      redactionHits: 0,
+    });
+  }
+
+  it("Gemini decodes against the caller's enum, not the static registry schema", async () => {
+    const { buildCategorizeLinesSchema } =
+      await import("../../../src/lib/ai/schemas/categorize-lines");
+    await hop("gemini", buildCategorizeLinesSchema(["67200", "A1"]));
+    const [{ geminiSchema }] = generateStructuredMock.mock.calls[0];
+    expect(geminiSchema.properties.lines.items.properties.accountCode).toMatchObject({
+      format: "enum",
+      enum: ["67200", "A1", "none"],
+    });
+  });
+
+  it("Gemini keeps the precomputed schema when the caller supplies none", async () => {
+    const entry = getTaskEntry("categorize_lines");
+    await hop("gemini", entry.schema);
+    expect(generateStructuredMock.mock.calls[0][0].geminiSchema).toBe(entry.geminiSchema);
+  });
+
+  it("Jev receives the caller's enum schema", async () => {
+    const { buildMatchPartySchema } = await import("../../../src/lib/ai/schemas/match-party");
+    const schema = buildMatchPartySchema(["P1", "P2"]);
+    await hop("jev", schema);
+    expect(generateStructuredJevMock.mock.calls[0][0].schema).toBe(schema);
+  });
+});
