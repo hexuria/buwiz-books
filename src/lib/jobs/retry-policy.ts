@@ -60,6 +60,8 @@ const POLICIES: Record<string, RetryPolicy> = {
   process_standalone_document: BACKGROUND,
   ai_reflection: BACKGROUND,
   business_group_projection_refresh: BACKGROUND,
+  // Inbox v2 routines: nobody watches a spinner for a webhook delivery.
+  routine_webhook: BACKGROUND,
 };
 
 export function retryPolicyFor(jobType: string): RetryPolicy {

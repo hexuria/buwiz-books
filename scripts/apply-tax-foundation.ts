@@ -44,6 +44,10 @@ try {
     "0051_void_rewrite_guard.sql",
     "0052_posted_journal_needs_lines.sql",
     "0053_review_decision_actor.sql",
+    // Inbox v2 routines. Alters processing_jobs and ingestion_events, which
+    // exist long before this runs, and creates `routines` itself so push
+    // finds nothing left to prompt about.
+    "0054_routines.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

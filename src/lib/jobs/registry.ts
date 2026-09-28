@@ -24,11 +24,13 @@ import { processReflectionJob } from "./handlers/reflection";
 import { processInboundEmailJob } from "./handlers/inbound-email";
 import { processStandaloneDocumentJob } from "./handlers/standalone-document";
 import { processStatementOcrJob } from "./handlers/statement-ocr";
+import { processRoutineWebhookJob } from "./handlers/routine-webhook";
 import {
   BUSINESS_GROUP_PROJECTION_JOB_TYPE,
   processBusinessGroupProjectionJob,
 } from "./handlers/business-group-projection";
 import { retryPolicyFor } from "./retry-policy";
+import { ROUTINE_WEBHOOK_JOB_TYPE } from "@/lib/routines/config";
 
 const logger = createLogger("api.internal.inbox-worker");
 
@@ -62,6 +64,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   ai_reflection: processReflectionJob,
   coa_scaffold: processCoaScaffoldJob,
   [BUSINESS_GROUP_PROJECTION_JOB_TYPE]: processBusinessGroupProjectionJob,
+  [ROUTINE_WEBHOOK_JOB_TYPE]: processRoutineWebhookJob,
 };
 
 export const INBOX_JOB_TYPES = ["process_inbound_email", "process_standalone_document"];

@@ -22,6 +22,7 @@ export * from "./match-history";
 export * from "./comments";
 export * from "./number-sequences";
 export * from "./inbox";
+export * from "./routines";
 export * from "./operation-idempotency";
 export * from "./ai";
 export * from "./business-groups";

@@ -600,6 +600,36 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Inbox v2 routines (routines, routine_secrets)
+-- Standard tenant isolation. Both are read and written inside org context:
+-- request code through the server-context wrappers, the webhook route and the
+-- worker through withOrgContext(routine.organization_id, ...). routine_secrets
+-- holds only enc:v1 ciphertext and is still tenant-scoped like every other
+-- secrets table.
+-- ============================================================================
+DO $$
+DECLARE
+  routine_table text;
+BEGIN
+  FOREACH routine_table IN ARRAY ARRAY['routines', 'routine_secrets']
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = routine_table
+    ) THEN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', routine_table);
+      EXECUTE format('DROP POLICY IF EXISTS org_isolation_%I ON %I', routine_table, routine_table);
+      EXECUTE format(
+        'CREATE POLICY org_isolation_%I ON %I FOR ALL USING (current_organization_id() IS NULL OR organization_id = current_organization_id()) WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id())',
+        routine_table,
+        routine_table
+      );
+      RAISE NOTICE 'RLS configured for %', routine_table;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ============================================================================
 -- AI telemetry (ai_invocations)
 -- Append-only telemetry written OUTSIDE org context on the raw pool connection
 -- (see src/lib/ai/invoke.ts) so rows survive caller-transaction rollback.
