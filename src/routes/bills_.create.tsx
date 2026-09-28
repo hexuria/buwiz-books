@@ -21,6 +21,7 @@ import {
 import { getMappedAccounts } from "./api/-category-mappings";
 import { keys as queryKeys } from "../lib/query-keys";
 import { callServerFn } from "../lib/server-fn-client";
+import { centsToMoney, moneyToCents } from "../lib/money";
 
 // ============================================================================
 // Route
@@ -90,7 +91,10 @@ function BillCreatePage() {
       }),
     onSuccess: () => {
       submissionIdempotencyKeyRef.current = null;
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.bills.all() });
+      // Saving a bill submits it to the Inbox for review: refresh the Inbox
+      // list and badge now, not when their cache next goes stale.
+      queryClient.invalidateQueries({ queryKey: queryKeys.inbox.all() });
       navigate({ to: "/bills" });
     },
   });
@@ -111,7 +115,8 @@ function BillCreatePage() {
       memo: draft.memo || undefined,
       lineItems: validItems.map((item) => ({
         description: item.description || undefined,
-        amount: Number.parseFloat(item.amount).toFixed(2),
+        // Exact to the cent, with no float step (CLAUDE.md: money is strings).
+        amount: centsToMoney(moneyToCents(item.amount)),
         accountId: item.accountId,
         departmentId: item.departmentId || undefined,
         locationId: item.locationId || undefined,

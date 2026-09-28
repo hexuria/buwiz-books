@@ -317,7 +317,9 @@ function BillDetailPage() {
     onSuccess: (_result, variables) => {
       clearStableIdempotencyKey(transitionIntentRef, variables.idempotencyKey);
       queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
+      // Voiding a bill under review rejects its Inbox item.
+      queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
     },
   });
 
@@ -328,7 +330,7 @@ function BillDetailPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
     },
   });
 
@@ -338,7 +340,9 @@ function BillDetailPage() {
         data: { id: billId },
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
+      // Deleting a bill under review rejects its Inbox item.
+      queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
       navigate({ to: "/bills" });
     },
   });

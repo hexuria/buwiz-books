@@ -119,6 +119,18 @@ export function InboxV2Page({ selectedId, onSelect }: InboxV2PageProps) {
   const latest = useRef({ visible, activeId, selectedId, onSelect });
   latest.current = { visible, activeId, selectedId, onSelect };
 
+  // A link to an item the cached list does not have yet (a bill just saved in
+  // Bills, say) asks for a fresh list once, instead of waiting out staleTime.
+  const refetchedFor = useRef<string | null>(null);
+  const { refetch, isFetching, isSuccess } = listQuery;
+  useEffect(() => {
+    if (!selectedId || !isSuccess || isFetching) return;
+    if (items.some((item) => item.id === selectedId)) return;
+    if (refetchedFor.current === selectedId) return;
+    refetchedFor.current = selectedId;
+    void refetch();
+  }, [selectedId, items, isSuccess, isFetching, refetch]);
+
   const decision = useMutation<
     { kind: "approve"; transactionNumber: string | null } | { kind: "reject" },
     Error,
