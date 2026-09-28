@@ -16,6 +16,7 @@ import {
 } from "../../lib/server-context";
 import { sendApproverInviteEmail } from "../../services/email";
 import { parseOrgMetadata } from "../../lib/org-metadata";
+import { isInboxV2Enabled, setInboxV2Enabled } from "../../lib/inbox/v2/flag";
 import { maskGeminiKeys } from "../../lib/mask-secret";
 import {
   decideOrganizationSwitch,
@@ -66,6 +67,8 @@ export interface OrgSettings {
   paypalClientId: string;
   paypalClientSecretSet: boolean;
   paymentBankAccountId: string;
+  /** Per-org rollout of the Inbox v2 screen. */
+  inboxV2: boolean;
 }
 
 export interface OrgMember {
@@ -166,6 +169,7 @@ async function getOrgSettingsImpl(rawData: unknown): Promise<OrgSettings> {
       paypalClientId: meta.paypalClientId ?? "",
       paypalClientSecretSet: isAdmin && !!secrets.paypalClientSecret,
       paymentBankAccountId: meta.paymentBankAccountId ?? "",
+      inboxV2: isInboxV2Enabled(meta),
     } satisfies OrgSettings;
   });
 }
@@ -384,6 +388,33 @@ export const updateOrgImageGenerationSetting = createServerFn({ method: "POST" }
           .set({ metadata: JSON.stringify(meta), updatedAt: new Date() })
           .where(eq(organization.id, organizationId));
 
+        return { success: true, enabled };
+      },
+    );
+  },
+);
+
+/**
+ * Turn the Inbox v2 screen on or off for this organization. Admin-only: it changes what every
+ * member's /inbox shows. Both screens read the same tables, so flipping it moves no data.
+ */
+export const updateOrgInboxV2Setting = createServerFn({ method: "POST" }).handler(
+  async ({ data: rawData }: { data: unknown }) => {
+    return withMutationPermissionOrgContext(
+      "organization",
+      "update",
+      { routeKey: "org-settings:update-inbox-v2", limit: 10, windowMs: 60_000 },
+      async (ctx) => {
+        assertOrgAdmin(ctx);
+        const { organizationId, enabled } = rawData as {
+          organizationId: string;
+          enabled: boolean;
+        };
+        if (!organizationId) throw new Error("organizationId is required");
+        if (typeof enabled !== "boolean") throw new Error("enabled must be true or false");
+        assertOrgScope(ctx, organizationId);
+
+        await setInboxV2Enabled(ctx.db, organizationId, enabled);
         return { success: true, enabled };
       },
     );

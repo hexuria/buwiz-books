@@ -42,10 +42,64 @@ straight against cash posts as an ordinary journal with no bill. Nothing
 extracts a due date yet, so these bills are due on the bill date until their
 terms are set on the bill.
 
-A Bills-editor bill can also be approved, scheduled, paid, voided or deleted on
-the Bills page while its Inbox item is still pending. Those actions already
-post, cancel or remove its accrual, so the Inbox refuses to approve that item;
-reject it instead.
+A Bills-editor bill already exists when its item is approved, and a reviewer
+may have corrected the entry in the Inbox first. Approval accrues it through
+the same core, which brings the bill in line with what posts — amount, balance
+due, line items, vendor, bill date and number (its terms stay as set) — in the
+approval's transaction, under the same A/P-shape and whole-cent rules. The bill
+can also be approved, scheduled, paid, voided or deleted on the Bills page while
+its Inbox item is still pending. Those actions already post, cancel or remove
+its accrual, so approval refuses, with nothing written, a bill that was deleted,
+voided, already accrued from Bills (approving would post it twice), or has
+payments recorded; reject such an item instead.
+
+## Inbox v2 (per-organization preview)
+
+Admins can turn on the new Inbox under **Settings → General → New Inbox**
+(`inboxV2` in the organization's metadata; off by default). Both screens read
+the same Inbox items, so switching moves no data and open items carry over.
+
+- The list holds only what needs a person: items with details to fill in or
+  ready for review, and failed ones; never approved, rejected, or dismissed.
+  Papers still being read (received or processing) need nobody yet, so they are
+  not listed: a quiet "N papers being read" line counts them. The sidebar's
+  Inbox badge is the list's length.
+- Each item carries one reason, first match wins: **Failed** (the item failed,
+  or its source could not be processed), **Needs a fix** (an open blocking check,
+  or an entry still missing lines or accounts), **Jev unsure** (a real
+  model-unsure signal), **Spot check** (reserved for autonomy hold-back samples;
+  nothing produces it yet), and otherwise **Ready to approve** — a clean entry,
+  typed by hand or read confidently.
+- Jev is unsure when a line carries a low-confidence category, or when stage 2
+  could not use its answer: a category below the threshold or with no usable
+  answer (kept in the line's prediction evidence), or a counterparty it left
+  unresolved (on the `candidate_classified` event for the current revision). A
+  confident "no fit" or "new party" is an answer, not a doubt. Stage 2 parks such
+  a category on Uncategorized and leaves such a counterparty empty, so the doubt
+  surfaces as an `uncategorized` or missing vendor/customer check; that check
+  alone makes the item Jev unsure, not Needs a fix. Anything the doubt does not
+  explain still needs a fix — today that includes the payment side, which stage 2
+  never picks, so a freshly classified paper reads Needs a fix and its strip
+  names the doubt after the check ("… Jev isn't sure about the category (41%
+  sure)."). A reviewer's saved correction replaces the system's lines and
+  revision, so the doubt ends there.
+- The reading pane is the real editor, prefilled: vendor bills open in the Bills
+  editor, everything else in the New transaction editor on its tab. Its Save
+  runs the candidate correction and the book checks; Approve first saves any
+  unsaved edits the same way, then approves through the shared posting cores.
+  Approve stays off while a blocking check is open.
+- Bill lines have Department and Location pickers, as the New transaction
+  editor's journal and paid-for lines do, so the Missing Department and Missing
+  Location checks clear when a reviewer picks them and saves, rather than
+  needing a resolution note. On a bill they post on the accrual's expense lines
+  and on the bill's own lines.
+- Keyboard: `j` / `k` move, `a` approves, `r` rejects with a reason, `e` jumps
+  into the editor. Shortcuts are ignored while typing.
+- A sales invoice from a paper is booked as an entry; approval does not create
+  an invoice record yet.
+- A correction keeps each line's counterparty: payable and receivable lines
+  take the entry's vendor or customer, and other lines keep the party they had
+  unless the correction names one.
 
 ## Review policy
 

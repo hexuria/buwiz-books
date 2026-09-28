@@ -26,6 +26,11 @@ interface ComboboxProps {
   className?: string;
   /** Override the display text shown in the closed button (e.g. "Multiple") */
   displayValue?: string;
+  /**
+   * The accessible name, for a picker with no visible label (a combobox is not named by its
+   * content, so without one it is announced unnamed).
+   */
+  ariaLabel?: string;
   placeholderIcon?: React.ReactNode;
   renderOption?: (option: ComboboxOption, isSelected: boolean) => React.ReactNode;
   /** Callback to create a new entry from the current query */
@@ -98,6 +103,7 @@ export default function Combobox({
   disabled = false,
   className = "",
   displayValue,
+  ariaLabel,
   placeholderIcon,
   renderOption,
   onSearch,
@@ -267,6 +273,7 @@ export default function Combobox({
           onKeyDown={handleKeyDown}
           disabled={disabled}
           role="combobox"
+          aria-label={ariaLabel}
           aria-expanded={open}
           aria-controls={listboxId}
           aria-haspopup="listbox"
@@ -320,6 +327,7 @@ export default function Combobox({
             onKeyDown={handleKeyDown}
             placeholder={searchPlaceholder}
             role="combobox"
+            aria-label={ariaLabel}
             aria-expanded={open}
             aria-controls={listboxId}
             aria-autocomplete="list"

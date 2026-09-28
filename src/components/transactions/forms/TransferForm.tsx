@@ -44,6 +44,11 @@ interface TransferFormProps {
   onFromPartyNameChange?: (name: string) => void;
   /** Notify parent of resolved To party name (for avatar) */
   onToPartyNameChange?: (name: string) => void;
+  /**
+   * From / To party pickers (default on). The Inbox editor turns them off: a candidate has one
+   * party, chosen in the header.
+   */
+  showParties?: boolean;
 }
 
 export default function TransferForm({
@@ -70,6 +75,7 @@ export default function TransferForm({
   onCreateToCategorySuggestion,
   onFromPartyNameChange,
   onToPartyNameChange,
+  showParties = true,
 }: TransferFormProps) {
   // Filter accounts for Transfer (Assets/Liab/Equity)
   const filteredAccounts = useMemo(() => filterCategoryOptions(accounts, "transfer"), [accounts]);
@@ -200,16 +206,18 @@ export default function TransferForm({
               suggestions={categorySuggestions}
               onCreateSuggestion={onCreateFromCategorySuggestion}
             />
-            <CategoryPartyCombobox
-              value={fromParty}
-              onChange={onFromPartyChange}
-              onNameChange={onFromPartyNameChange}
-              categoryId={fromCategory}
-              flatAccounts={accounts}
-              listPartiesFn={listPartiesFn}
-              createPartyFn={createPartyFn}
-              overrides={partyOverrides}
-            />
+            {showParties && (
+              <CategoryPartyCombobox
+                value={fromParty}
+                onChange={onFromPartyChange}
+                onNameChange={onFromPartyNameChange}
+                categoryId={fromCategory}
+                flatAccounts={accounts}
+                listPartiesFn={listPartiesFn}
+                createPartyFn={createPartyFn}
+                overrides={partyOverrides}
+              />
+            )}
           </div>
         </div>
 
@@ -273,16 +281,18 @@ export default function TransferForm({
               suggestions={categorySuggestions}
               onCreateSuggestion={onCreateToCategorySuggestion}
             />
-            <CategoryPartyCombobox
-              value={toParty}
-              onChange={onToPartyChange}
-              onNameChange={onToPartyNameChange}
-              categoryId={toCategory}
-              flatAccounts={accounts}
-              listPartiesFn={listPartiesFn}
-              createPartyFn={createPartyFn}
-              overrides={partyOverrides}
-            />
+            {showParties && (
+              <CategoryPartyCombobox
+                value={toParty}
+                onChange={onToPartyChange}
+                onNameChange={onToPartyNameChange}
+                categoryId={toCategory}
+                flatAccounts={accounts}
+                listPartiesFn={listPartiesFn}
+                createPartyFn={createPartyFn}
+                overrides={partyOverrides}
+              />
+            )}
           </div>
         </div>
       </div>

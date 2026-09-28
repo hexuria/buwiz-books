@@ -42,6 +42,11 @@ interface JournalFormProps {
   onCreateCategorySuggestion?: (lineKey: string, item: SuggestedItem) => void;
   /** Notify parent of resolved party name per line (for multi-avatar) */
   onPartyNameChange?: (lineKey: string, name: string) => void;
+  /**
+   * Per-line party pickers (default on). The Inbox editor turns them off: a candidate has one
+   * party, chosen in the header, and its correction has nowhere to store a per-line one.
+   */
+  showLineParty?: boolean;
 }
 
 export default function JournalForm({
@@ -65,6 +70,7 @@ export default function JournalForm({
   categorySuggestions,
   onCreateCategorySuggestion,
   onPartyNameChange,
+  showLineParty = true,
 }: JournalFormProps) {
   const categoryOptions = useMemo(() => buildAccountOptions(accounts), [accounts]);
 
@@ -291,20 +297,22 @@ export default function JournalForm({
                     }
                   />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <CategoryPartyCombobox
-                    value={line.partyId}
-                    onChange={(v) => onUpdateLine(line.key, "partyId", v)}
-                    onNameChange={
-                      onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
-                    }
-                    categoryId={line.categoryId}
-                    flatAccounts={accounts}
-                    listPartiesFn={listPartiesFn}
-                    createPartyFn={createPartyFn}
-                    overrides={partyOverrides}
-                  />
-                </div>
+                {showLineParty && (
+                  <div className="flex-1 min-w-0">
+                    <CategoryPartyCombobox
+                      value={line.partyId}
+                      onChange={(v) => onUpdateLine(line.key, "partyId", v)}
+                      onNameChange={
+                        onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
+                      }
+                      categoryId={line.categoryId}
+                      flatAccounts={accounts}
+                      listPartiesFn={listPartiesFn}
+                      createPartyFn={createPartyFn}
+                      overrides={partyOverrides}
+                    />
+                  </div>
+                )}
               </div>
 
               {/* Row 3: Department (flex-1) · Location (flex-1) · Delete · Copy · Add */}
@@ -429,7 +437,9 @@ export default function JournalForm({
 
               {/* Row 2: Combobox grid + action buttons */}
               <div className="hidden lg:flex items-center gap-2 pl-7">
-                <div className="grid grid-cols-4 gap-2 flex-1">
+                <div
+                  className={`grid ${showLineParty ? "grid-cols-4" : "grid-cols-3"} gap-2 flex-1`}
+                >
                   <Combobox
                     value={line.categoryId}
                     onChange={(v) => onUpdateLine(line.key, "categoryId", v)}
@@ -452,18 +462,20 @@ export default function JournalForm({
                         : undefined
                     }
                   />
-                  <CategoryPartyCombobox
-                    value={line.partyId}
-                    onChange={(v) => onUpdateLine(line.key, "partyId", v)}
-                    onNameChange={
-                      onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
-                    }
-                    categoryId={line.categoryId}
-                    flatAccounts={accounts}
-                    listPartiesFn={listPartiesFn}
-                    createPartyFn={createPartyFn}
-                    overrides={partyOverrides}
-                  />
+                  {showLineParty && (
+                    <CategoryPartyCombobox
+                      value={line.partyId}
+                      onChange={(v) => onUpdateLine(line.key, "partyId", v)}
+                      onNameChange={
+                        onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
+                      }
+                      categoryId={line.categoryId}
+                      flatAccounts={accounts}
+                      listPartiesFn={listPartiesFn}
+                      createPartyFn={createPartyFn}
+                      overrides={partyOverrides}
+                    />
+                  )}
                   <Combobox
                     value={line.departmentId}
                     onChange={(v) => onUpdateLine(line.key, "departmentId", v)}
@@ -618,20 +630,22 @@ export default function JournalForm({
               </div>
 
               {/* Party (full width) */}
-              <div className="px-3 pb-2 md:hidden">
-                <CategoryPartyCombobox
-                  value={line.partyId}
-                  onChange={(v) => onUpdateLine(line.key, "partyId", v)}
-                  onNameChange={
-                    onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
-                  }
-                  categoryId={line.categoryId}
-                  flatAccounts={accounts}
-                  listPartiesFn={listPartiesFn}
-                  createPartyFn={createPartyFn}
-                  overrides={partyOverrides}
-                />
-              </div>
+              {showLineParty && (
+                <div className="px-3 pb-2 md:hidden">
+                  <CategoryPartyCombobox
+                    value={line.partyId}
+                    onChange={(v) => onUpdateLine(line.key, "partyId", v)}
+                    onNameChange={
+                      onPartyNameChange ? (n) => onPartyNameChange(line.key, n) : undefined
+                    }
+                    categoryId={line.categoryId}
+                    flatAccounts={accounts}
+                    listPartiesFn={listPartiesFn}
+                    createPartyFn={createPartyFn}
+                    overrides={partyOverrides}
+                  />
+                </div>
+              )}
 
               {/* Department (full width) */}
               <div className="px-3 pb-2 md:hidden">

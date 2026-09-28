@@ -67,6 +67,12 @@ describe("Org Metadata", () => {
       expect(() => orgMetadataSchema.parse({ paypalMode: "test" })).toThrow();
     });
 
+    it("should keep the inboxV2 rollout flag so other metadata writers preserve it", () => {
+      expect(orgMetadataSchema.parse({ inboxV2: true }).inboxV2).toBe(true);
+      expect(orgMetadataSchema.parse({ inboxV2: false }).inboxV2).toBe(false);
+      expect(orgMetadataSchema.parse({}).inboxV2).toBeUndefined();
+    });
+
     it("should strip unknown and secret keys", () => {
       const result = orgMetadataSchema.parse({
         unknownFutureField: "value",

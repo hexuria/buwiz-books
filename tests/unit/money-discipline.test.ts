@@ -23,9 +23,14 @@ import { resolve } from "node:path";
  * with toFixed at the wrong scale.
  */
 const CLEAN_MONEY_FILES = [
+  "src/components/inbox-v2/InboxV2Page.tsx",
+  "src/components/inbox-v2/InboxV2Pane.tsx",
+  "src/components/inbox-v2/candidate-draft.ts",
   "src/lib/bill-mutation-guards.ts",
   "src/lib/coa/resolve-mapped-account.ts",
   "src/lib/inbox/service.ts",
+  "src/lib/inbox/v2/list.ts",
+  "src/lib/inbox/v2/triage.ts",
   "src/lib/invoice-journal.ts",
   "src/lib/journal-amendment.ts",
   "src/lib/manual-bill-payment.ts",

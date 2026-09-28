@@ -531,6 +531,8 @@ const updateCandidateSchema = z.object({
         lineDescription: z.string().trim().max(500).nullable().optional(),
         departmentId: z.string().uuid().nullable().optional(),
         locationId: z.string().uuid().nullable().optional(),
+        // Omitted keeps the line's party (see resolveCorrectionLinePartyIds); null clears it.
+        partyId: z.string().uuid().nullable().optional(),
       }),
     )
     .min(2)
