@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ToastProvider } from "../../src/components/ui/Toast";
 import { ReviewRulesSettings } from "../../src/components/settings/ReviewRulesSettings";
 import type { ReviewRule } from "../../src/components/settings/ReviewRuleConfigForm";
+import type { listReviewFindings, listReviewRuns } from "../../src/routes/api/-review-agents";
 
 /**
  * The Settings home for per-organization review rule configuration.
@@ -18,19 +19,41 @@ import type { ReviewRule } from "../../src/components/settings/ReviewRuleConfigF
  * Unsaved drafts are guarded: a route change is held by the router blocker, answered in the page,
  * and only while something is unsaved. The router has no runtime in jsdom, so `useBlocker` is
  * replaced by a recorder and the assertions are on the options the section hands it.
+ *
+ * The same section owns the ledger scan that replaced the Review Agents page's run button: it must
+ * call the existing `runReviewAgents`, report its counts, and keep the findings list and its
+ * resolve action.
  */
 
 const api = vi.hoisted(() => ({
   listReviewAgents: vi.fn(),
   updateReviewAgent: vi.fn(),
+  runReviewAgents: vi.fn(),
+  listReviewFindings: vi.fn(),
+  listReviewRuns: vi.fn(),
+  resolveReviewFinding: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-review-agents", () => api);
 
-const permission = vi.hoisted(() => ({ configure: true }));
+const permission = vi.hoisted(() => ({
+  configure: true,
+  run: true,
+  resolve: true,
+  // While the role loads, the real hook reports canAccess: false, isLoading: true.
+  loading: false,
+}));
 vi.mock("../../src/lib/use-permission", () => ({
   usePermission: (resource: string, action: string) => ({
-    canAccess: resource === "agentRule" && action === "configure" ? permission.configure : true,
-    isLoading: false,
+    canAccess: permission.loading
+      ? false
+      : resource === "agentRule" && action === "configure"
+        ? permission.configure
+        : resource === "agentRule" && action === "run"
+          ? permission.run
+          : resource === "review" && action === "resolve"
+            ? permission.resolve
+            : true,
+    isLoading: permission.loading,
   }),
 }));
 
@@ -47,11 +70,36 @@ const blocker = vi.hoisted(() => ({
   calls: [] as BlockerOptions[],
   resolver: { status: "idle" } as BlockerResolver,
 }));
+// There is no router in jsdom: the blocker records its options and links render as anchors.
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
   useBlocker: (options: BlockerOptions) => {
     blocker.calls.push(options);
     return blocker.resolver;
+  },
+  Link: ({
+    children,
+    to,
+    params,
+    search,
+    ...rest
+  }: {
+    children?: React.ReactNode;
+    to: string;
+    params?: Record<string, string>;
+    search?: Record<string, string>;
+    className?: string;
+  }) => {
+    const path = Object.entries(params ?? {}).reduce(
+      (href, [key, value]) => href.replace(`$${key}`, value),
+      to,
+    );
+    const query = new URLSearchParams(search ?? {}).toString();
+    return (
+      <a href={query ? `${path}?${query}` : path} {...rest}>
+        {children}
+      </a>
+    );
   },
 }));
 
@@ -125,19 +173,85 @@ const SOURCE_FAILED = rule({
   group: "system",
 });
 
-const RULES = [MISSING_VENDOR, DUPLICATE, UNUSUAL_SPEND, SOURCE_FAILED];
+const MATERIAL_EXPENSE = rule({
+  definitionId: "00000000-0000-4000-8000-000000000005",
+  key: "material_expense",
+  name: "Material Expense",
+  group: "review",
+  configJson: JSON.stringify({ annualizedExpensePercent: 1 }),
+  openFindingCount: 1,
+  lastRunAt: new Date("2026-09-01T10:00:00.000Z"),
+  version: 1,
+});
 
-function renderSection(props: { onUnsavedChange?: (unsaved: boolean) => void } = {}) {
+const RULES = [MISSING_VENDOR, DUPLICATE, UNUSUAL_SPEND, MATERIAL_EXPENSE, SOURCE_FAILED];
+
+type Finding = Awaited<ReturnType<typeof listReviewFindings>>["findings"][number];
+
+const LEDGER_FINDING: Finding = {
+  id: "00000000-0000-4000-8000-0000000000f1",
+  ruleKey: "material_expense",
+  impact: "warning",
+  state: "open",
+  subjectType: "journal_header",
+  subjectId: "00000000-0000-4000-8000-0000000000a1",
+  message: "Material expense: 12,500.00 is above the 1% threshold.",
+  evidence: { threshold: "9800.00" },
+  firstSeenAt: new Date("2026-09-01T10:00:00.000Z"),
+  lastSeenAt: new Date("2026-09-01T10:00:00.000Z"),
+  resolvedAt: null,
+  resolutionNote: null,
+  inboxItemId: null,
+  resolvableHere: true,
+  subjectLabel: "JE-0042",
+  subjectSublabel: "Server rack",
+  subjectDate: "2026-08-14",
+  subjectAmount: "12500.00000000",
+  subjectCurrency: "USD",
+};
+
+const INBOX_BOUND_FINDING: Finding = {
+  ...LEDGER_FINDING,
+  id: "00000000-0000-4000-8000-0000000000f2",
+  message: "Posted to a parent category.",
+  inboxItemId: "00000000-0000-4000-8000-0000000000b1",
+  resolvableHere: false,
+};
+
+type Run = Awaited<ReturnType<typeof listReviewRuns>>[number];
+
+function run(overrides: Partial<Run> = {}): Run {
+  return {
+    id: "00000000-0000-4000-8000-0000000000c1",
+    status: "completed",
+    trigger: "manual",
+    windowStart: "2026-09-01",
+    windowEnd: "2026-09-30",
+    asOfDate: "2026-09-30",
+    counts: { scanned: 12, findings: 0 },
+    lastError: null,
+    startedAt: new Date("2026-09-30T08:00:00.000Z"),
+    completedAt: new Date("2026-09-30T08:00:02.000Z"),
+    ...overrides,
+  };
+}
+
+type SectionProps = { focusRuleKey?: string; onUnsavedChange?: (unsaved: boolean) => void };
+
+function renderSection(props: SectionProps = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+  const tree = (next: SectionProps) => (
     <QueryClientProvider client={queryClient}>
       <ToastProvider>
-        <ReviewRulesSettings {...props} />
+        <ReviewRulesSettings {...next} />
       </ToastProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree(props));
+  // Same page, new search: what Settings does when a second Inbox link arrives while it is open.
+  return { ...view, rerenderWith: (next: SectionProps) => view.rerender(tree(next)) };
 }
 
 function rowOf(name: string) {
@@ -152,7 +266,14 @@ beforeEach(() => {
   blocker.calls = [];
   blocker.resolver = { status: "idle" };
   permission.configure = true;
+  permission.run = true;
+  permission.resolve = true;
+  permission.loading = false;
   api.listReviewAgents.mockReset().mockResolvedValue(RULES);
+  api.listReviewRuns.mockReset().mockResolvedValue([]);
+  api.listReviewFindings.mockReset().mockResolvedValue({ findings: [], nextCursor: null });
+  api.runReviewAgents.mockReset();
+  api.resolveReviewFinding.mockReset().mockResolvedValue({ alreadyResolved: false });
   api.updateReviewAgent.mockReset().mockResolvedValue({
     id: "cfg",
     enabled: true,
@@ -435,5 +556,229 @@ describe("ReviewRulesSettings — unsaved drafts", () => {
     expect(proceed).toHaveBeenCalledTimes(1);
     expect(confirm).not.toHaveBeenCalled();
     confirm.mockRestore();
+  });
+});
+
+describe("ReviewRulesSettings — opened from an Inbox finding", () => {
+  it("opens the linked rule's settings without a click", async () => {
+    renderSection({ focusRuleKey: "missing_vendor" });
+
+    expect(await screen.findByRole("switch", { name: "Enable Missing Vendor" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close Missing Vendor" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Only the linked rule.
+    expect(screen.queryByRole("switch", { name: "Enable Unusual Spend" })).toBeNull();
+  });
+
+  it("opens a rule linked after Settings is already showing", async () => {
+    const view = renderSection({ focusRuleKey: "missing_vendor" });
+    expect(await screen.findByRole("switch", { name: "Enable Missing Vendor" })).toBeVisible();
+
+    view.rerenderWith({ focusRuleKey: "unusual_spend" });
+
+    expect(await screen.findByRole("switch", { name: "Enable Unusual Spend" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close Unusual Spend" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    // Rows open independently, so the earlier one stays as it was.
+    expect(screen.getByRole("switch", { name: "Enable Missing Vendor" })).toBeVisible();
+    // The ledger findings follow the link to that check.
+    await waitFor(() =>
+      expect(api.listReviewFindings).toHaveBeenCalledWith({
+        data: { ruleKey: "unusual_spend", state: "open", limit: 50 },
+      }),
+    );
+  });
+});
+
+describe("ReviewRulesSettings — Scan books", () => {
+  it("runs the existing ledger scan and reports what ran, not a fetch window or a total", async () => {
+    api.runReviewAgents.mockResolvedValue({
+      asOfDate: "2026-09-30",
+      // The fetch bound across every config, including Inbox checks the scan does not run.
+      windowStart: "2026-07-01",
+      rules: [
+        { ruleKey: "unusual_spend", findingCount: 0 },
+        { ruleKey: "material_expense", findingCount: 2 },
+      ],
+    });
+    const user = userEvent.setup();
+    renderSection();
+
+    const scan = await screen.findByRole("region", { name: "Scan books" });
+    await user.click(within(scan).getByRole("button", { name: "Scan books" }));
+
+    await waitFor(() => expect(api.runReviewAgents).toHaveBeenCalledTimes(1));
+    const [call] = api.runReviewAgents.mock.calls[0] as [{ data: { asOfDate: string } }];
+    // Every enabled ledger check, not a subset: no ruleKeys.
+    expect(call).toEqual({ data: { asOfDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) } });
+
+    const summary = await within(scan).findByRole("status");
+    expect(summary).toHaveTextContent("Scan as of 2026-09-30 finished · 2 checks ran.");
+    expect(summary).not.toHaveTextContent("2026-07-01");
+    expect(summary).not.toHaveTextContent(/2 findings/);
+
+    // Open counts and each check's own run row are re-read after a scan.
+    await waitFor(() => expect(api.listReviewAgents).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        api.listReviewRuns.mock.calls.filter(
+          ([input]) => (input as { data: { ruleKey: string } }).data.ruleKey === "material_expense",
+        ),
+      ).toHaveLength(2),
+    );
+  });
+
+  it("shows each check's own window and what it observed, apart from its Open count", async () => {
+    api.listReviewRuns.mockImplementation(async ({ data }: { data: { ruleKey: string } }) =>
+      data.ruleKey === "unusual_spend"
+        ? [run({ windowStart: "2026-04-01", counts: { scanned: 40, findings: 2 } })]
+        : [
+            run({
+              status: "running",
+              windowStart: "2026-09-01",
+              completedAt: null,
+              // Left running by a request that died two hours ago.
+              startedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+            }),
+          ],
+    );
+    renderSection();
+
+    const runs = await screen.findByRole("list", { name: "Ledger check runs" });
+    expect(api.listReviewRuns).toHaveBeenCalledWith({
+      data: { ruleKey: "unusual_spend", limit: 1 },
+    });
+    const spend = within(runs)
+      .getByRole("button", { name: "Unusual Spend, 0 open" })
+      .closest("li")!;
+    expect(await within(spend).findByText(/2026-04-01 → 2026-09-30/)).toBeVisible();
+    expect(spend).toHaveTextContent("2 observed this run");
+    expect(spend).toHaveTextContent(/Last run/);
+
+    const expense = within(runs)
+      .getByRole("button", { name: "Material Expense, 1 open" })
+      .closest("li")!;
+    expect(await within(expense).findByText(/Did not finish/)).toBeVisible();
+    expect(expense).not.toHaveTextContent("observed this run");
+  });
+
+  it("shows a run still in progress, a failed run, and its error", async () => {
+    api.listReviewRuns.mockImplementation(async ({ data }: { data: { ruleKey: string } }) =>
+      data.ruleKey === "unusual_spend"
+        ? [run({ status: "running", completedAt: null, startedAt: new Date() })]
+        : [run({ status: "failed", completedAt: null, lastError: "Ledger read timed out." })],
+    );
+    renderSection();
+
+    const runs = await screen.findByRole("list", { name: "Ledger check runs" });
+    expect(await within(runs).findByText(/Running · started/)).toBeVisible();
+    expect(within(runs).queryByText(/Did not finish/)).toBeNull();
+    expect(await within(runs).findByText(/Failed ·/)).toBeVisible();
+    expect(within(runs).getByText("Ledger read timed out.")).toBeVisible();
+  });
+
+  it("waits for the role before saying scanning or resolving is not allowed", async () => {
+    permission.loading = true;
+    api.listReviewFindings.mockResolvedValue({ findings: [LEDGER_FINDING], nextCursor: null });
+    renderSection();
+
+    const scan = await screen.findByRole("region", { name: "Scan books" });
+    const list = await within(scan).findByRole("list", { name: "Material Expense findings" });
+    expect(within(scan).queryByRole("button", { name: "Scan books" })).toBeNull();
+    expect(scan).not.toHaveTextContent(/requires the “run agent rules” permission/);
+    expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
+    expect(list).not.toHaveTextContent(/needs the “resolve review findings” permission/);
+  });
+
+  it("says resolving needs the review permission when the role lacks it", async () => {
+    permission.resolve = false;
+    api.listReviewFindings.mockResolvedValue({ findings: [LEDGER_FINDING], nextCursor: null });
+    renderSection();
+
+    const list = await screen.findByRole("list", { name: "Material Expense findings" });
+    expect(list).toHaveTextContent(
+      "Resolving this finding needs the “resolve review findings” permission.",
+    );
+    expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
+  });
+
+  it("is not offered without the run permission", async () => {
+    permission.run = false;
+    renderSection();
+
+    const scan = await screen.findByRole("region", { name: "Scan books" });
+    expect(within(scan).queryByRole("button", { name: "Scan books" })).toBeNull();
+    expect(scan).toHaveTextContent(/requires the “run agent rules” permission/);
+  });
+
+  it("lists a check's ledger findings and resolves one with a note", async () => {
+    api.listReviewFindings.mockImplementation(async ({ data }: { data: { ruleKey: string } }) =>
+      data.ruleKey === "material_expense"
+        ? { findings: [LEDGER_FINDING], nextCursor: null }
+        : { findings: [], nextCursor: null },
+    );
+    const user = userEvent.setup();
+    renderSection();
+
+    // The check with open findings is selected first.
+    const list = await screen.findByRole("list", { name: "Material Expense findings" });
+    expect(api.listReviewFindings).toHaveBeenCalledWith({
+      data: { ruleKey: "material_expense", state: "open", limit: 50 },
+    });
+    expect(within(list).getByText(LEDGER_FINDING.message)).toBeVisible();
+    expect(within(list).getByRole("link", { name: /JE-0042/ })).toHaveAttribute(
+      "href",
+      `/transactions/${LEDGER_FINDING.subjectId}`,
+    );
+
+    const resolve = within(list).getByRole("button", { name: "Resolve" });
+    expect(resolve).toBeDisabled();
+    await user.type(
+      within(list).getByRole("textbox", { name: `Resolution note for ${LEDGER_FINDING.message}` }),
+      "Approved capital purchase",
+    );
+    await user.click(resolve);
+
+    await waitFor(() =>
+      expect(api.resolveReviewFinding).toHaveBeenCalledWith({
+        data: { findingId: LEDGER_FINDING.id, resolutionNote: "Approved capital purchase" },
+      }),
+    );
+  });
+
+  it("sends an Inbox-bound finding to the Inbox instead of resolving it here", async () => {
+    api.listReviewFindings.mockResolvedValue({ findings: [INBOX_BOUND_FINDING], nextCursor: null });
+    renderSection();
+
+    const list = await screen.findByRole("list", { name: "Material Expense findings" });
+    expect(within(list).queryByRole("button", { name: "Resolve" })).toBeNull();
+    expect(within(list).getByRole("link", { name: /Open in Inbox/ })).toHaveAttribute(
+      "href",
+      `/inbox?selected=${INBOX_BOUND_FINDING.inboxItemId}&state=all`,
+    );
+  });
+
+  it("switches checks and between open and all findings", async () => {
+    const user = userEvent.setup();
+    renderSection();
+
+    const scan = await screen.findByRole("region", { name: "Scan books" });
+    await user.click(within(scan).getByRole("button", { name: "Unusual Spend, 0 open" }));
+    await waitFor(() =>
+      expect(api.listReviewFindings).toHaveBeenCalledWith({
+        data: { ruleKey: "unusual_spend", state: "open", limit: 50 },
+      }),
+    );
+    await user.click(within(scan).getByRole("button", { name: "All" }));
+    await waitFor(() =>
+      expect(api.listReviewFindings).toHaveBeenCalledWith({
+        data: { ruleKey: "unusual_spend", state: "all", limit: 50 },
+      }),
+    );
+    expect(await within(scan).findByText("Not scanned yet")).toBeVisible();
   });
 });

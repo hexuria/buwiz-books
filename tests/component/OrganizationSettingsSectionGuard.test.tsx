@@ -18,6 +18,10 @@ import type { ReviewRule } from "../../src/components/settings/ReviewRuleConfigF
 const api = vi.hoisted(() => ({
   listReviewAgents: vi.fn(),
   updateReviewAgent: vi.fn(),
+  runReviewAgents: vi.fn(),
+  listReviewFindings: vi.fn(),
+  listReviewRuns: vi.fn(),
+  resolveReviewFinding: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-review-agents", () => api);
 

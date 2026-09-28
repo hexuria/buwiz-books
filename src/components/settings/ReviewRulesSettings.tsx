@@ -4,8 +4,9 @@
  * Inbox book findings read `review_rule_configs` live per organization (src/lib/inbox/service.ts),
  * so this section is where an organization turns a check on or off, decides whether its findings
  * Stop approval or only Warn, and tunes thresholds and lookback. It edits exactly what the Review
- * Agents page edits, through the same server functions (src/routes/api/-review-agents.ts) — the
- * permission checks, bounds and optimistic versioning live there, not here.
+ * Agents page edited, through the same server functions (src/routes/api/-review-agents.ts) — the
+ * permission checks, bounds and optimistic versioning live there, not here. The ledger scan and
+ * its findings (LedgerScan) sit under the ledger checks they run.
  *
  * Unsaved drafts are guarded in two places. A route change (Back to app, browser back, any link
  * out) is held here with an in-page prompt. Settings sections are local state on the page, which
@@ -14,7 +15,7 @@
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useBlocker, type ShouldBlockFn } from "@tanstack/react-router";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { EmptyCatalogNotice } from "@/components/review-agents/EmptyCatalogNotice";
 import { LockIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
@@ -23,6 +24,7 @@ import { CADENCE_COPY, getAgentSchema } from "@/lib/review-agents/agent-config-s
 import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
 import { listReviewAgents } from "../../routes/api/-review-agents";
+import { LedgerScan } from "./LedgerScan";
 import {
   IMPACT_LABEL,
   ReviewRuleConfigForm,
@@ -44,7 +46,7 @@ const GROUP_COPY: Record<Group, { title: string; blurb: string }> = {
   review: {
     title: "Ledger checks",
     blurb:
-      "Run over your posted books on demand, looking for period-close problems. They never run on their own.",
+      "Look over your posted books for period-close problems when you press Scan books below. They never run on their own.",
   },
   system: {
     title: "System checks",
@@ -61,8 +63,11 @@ function errorMessage(error: unknown, fallback: string) {
 const leavesThisRoute: ShouldBlockFn = ({ current, next }) => next.routeId !== current.routeId;
 
 export function ReviewRulesSettings({
+  focusRuleKey,
   onUnsavedChange,
 }: {
+  /** Open and scroll to this rule — set when Settings is opened from a finding in the Inbox. */
+  focusRuleKey?: string;
   /**
    * Told whether any rule has an unsaved draft, and `false` on unmount. The Settings page uses it
    * to confirm a section switch. Must be referentially stable: it is an effect dependency.
@@ -184,15 +189,18 @@ export function ReviewRulesSettings({
       ) : (
         <div className="space-y-6">
           {groups.map(({ group, rules: groupRules }) => (
-            <RuleGroup
-              key={group}
-              group={group}
-              rules={groupRules}
-              canConfigure={canConfigure}
-              onDirtyChange={onDirtyChange}
-              onSaved={onSaved}
-              onError={onError}
-            />
+            <Fragment key={group}>
+              <RuleGroup
+                group={group}
+                rules={groupRules}
+                canConfigure={canConfigure}
+                focusRuleKey={focusRuleKey}
+                onDirtyChange={onDirtyChange}
+                onSaved={onSaved}
+                onError={onError}
+              />
+              {group === "review" && <LedgerScan rules={groupRules} focusRuleKey={focusRuleKey} />}
+            </Fragment>
           ))}
         </div>
       )}
@@ -204,6 +212,7 @@ function RuleGroup({
   group,
   rules,
   canConfigure,
+  focusRuleKey,
   onDirtyChange,
   onSaved,
   onError,
@@ -211,6 +220,7 @@ function RuleGroup({
   group: Group;
   rules: ReviewRule[];
   canConfigure: boolean;
+  focusRuleKey?: string;
   onDirtyChange: (key: string, dirty: boolean) => void;
   onSaved: (rule: ReviewRule) => Promise<void>;
   onError: (message: string) => void;
@@ -232,6 +242,7 @@ function RuleGroup({
             key={rule.key}
             rule={rule}
             canConfigure={canConfigure}
+            focused={rule.key === focusRuleKey}
             onDirtyChange={onDirtyChange}
             onSaved={onSaved}
             onError={onError}
@@ -245,20 +256,36 @@ function RuleGroup({
 function RuleRow({
   rule,
   canConfigure,
+  focused,
   onDirtyChange,
   onSaved,
   onError,
 }: {
   rule: ReviewRule;
   canConfigure: boolean;
+  focused: boolean;
   onDirtyChange: (key: string, dirty: boolean) => void;
   onSaved: (rule: ReviewRule) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  // A rule linked from an Inbox finding starts open, so the link lands on its settings.
+  const [open, setOpen] = useState(focused && rule.configurable);
   // Mounted on first open and then only hidden, so collapsing a row never drops unsaved edits.
-  const [mounted, setMounted] = useState(false);
+  const [mounted, setMounted] = useState(focused && rule.configurable);
   const panelId = useId();
+  const rowRef = useRef<HTMLLIElement>(null);
+  // Settings stays mounted when only the search changes (a second Inbox link, back/forward), so a
+  // rule linked after mount is opened here too, not just by the initial state above. Other open
+  // rows stay open: rows open independently.
+  useEffect(() => {
+    if (!focused) return;
+    if (rule.configurable) {
+      setMounted(true);
+      setOpen(true);
+    }
+    // Optional call: jsdom has no scrollIntoView.
+    rowRef.current?.scrollIntoView?.({ block: "center" });
+  }, [focused, rule.configurable]);
   const editable = canConfigure && rule.configurable;
   const toggleLabel = open ? "Close" : editable ? "Edit" : "View";
   // The unsaved draft, if any, so a collapsed row reads what will be saved, not what is stored.
@@ -273,7 +300,14 @@ function RuleRow({
   );
 
   return (
-    <li className="py-3 first:pt-0 last:pb-0">
+    <li
+      ref={rowRef}
+      className={
+        focused
+          ? "-mx-3 rounded-xl bg-[#0d9488]/5 px-3 py-3 dark:bg-teal-900/10"
+          : "py-3 first:pt-0 last:pb-0"
+      }
+    >
       <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1 basis-48">
           <p className="text-sm font-medium text-[#1e293b] dark:text-white">{rule.name}</p>

@@ -56,7 +56,8 @@ bun db:review-rules:status             # Read-only: inspect that catalog
 Every seeder above writes rows scoped to one organization. `db:seed:review-rules`
 writes to `review_rule_definitions`, which has **no `organization_id`** and is
 excluded from every RLS policy — a single empty table means every tenant sees
-zero review agents and `/review-agents` renders as if nothing were configured.
+zero review agents and Settings → Review Rules (formerly `/review-agents`) renders
+as if nothing were configured.
 
 It is idempotent and strictly additive (`ON CONFLICT (key) DO NOTHING`), and it
 never modifies a definition that already exists. That last part is load-bearing:

@@ -87,7 +87,7 @@ export function PointerIcon(props: IconProps) {
   );
 }
 
-/** The Review Agents nav glyph — so its empty state matches the item the user clicked. */
+/** The review-rule glyph, used by the empty-catalog notice in Settings -> Review Rules. */
 export function ClipboardCheckIcon(props: IconProps) {
   return (
     <Svg {...props}>

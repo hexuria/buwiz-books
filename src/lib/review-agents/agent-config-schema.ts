@@ -58,9 +58,9 @@ export type AgentCadence = "ingest" | "on_demand" | "ingest_and_on_demand" | "sy
 
 export const CADENCE_COPY: Record<AgentCadence, string> = {
   ingest: "Runs automatically on every transaction that enters the Inbox.",
-  on_demand: "Runs when you press Run review agents. It does not run on its own.",
+  on_demand: "Runs when you press Scan books. It does not run on its own.",
   ingest_and_on_demand:
-    "Runs automatically at ingest, and again over the posted ledger when you press Run review agents.",
+    "Runs automatically at ingest, and again over the posted ledger when you press Scan books.",
   system: "Raised automatically by inbound processing. There is nothing to configure or run.",
 };
 

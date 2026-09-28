@@ -6,6 +6,7 @@ import { EmptyState, type EmptyStateTone } from "@/components/ui/EmptyState";
 import { AlertTriangleIcon, CheckCircleIcon, PointerIcon, SearchIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/Toast";
 import { authClient } from "@/lib/auth-client";
+import { getActiveOrganizationId } from "@/lib/auth-types";
 import { keys } from "@/lib/query-keys";
 import { usePermission, useRole } from "@/lib/use-permission";
 import { callServerFn } from "@/lib/server-fn-client";
@@ -606,6 +607,7 @@ function InboxPage() {
               canUpdate={canUpdate}
               canResolve={canResolve}
               isOwner={role === "owner"}
+              organizationId={getActiveOrganizationId(session)}
               ownerOverrideRequired={ownerOverrideRequired}
               ownerOverrideAllowed={settingsQuery.data?.allowOwnerOverride ?? false}
               onBack={() =>
@@ -643,6 +645,7 @@ function InboxDetail({
   canUpdate,
   canResolve,
   isOwner,
+  organizationId,
   ownerOverrideRequired,
   ownerOverrideAllowed,
   onBack,
@@ -667,6 +670,8 @@ function InboxDetail({
   canUpdate: boolean;
   canResolve: boolean;
   isOwner: boolean;
+  /** Rule settings live under the organization's Settings page. */
+  organizationId: string | null;
   ownerOverrideRequired: boolean;
   ownerOverrideAllowed: boolean;
   onBack: () => void;
@@ -755,13 +760,16 @@ function InboxDetail({
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-baseline gap-2">
                     <p className="truncate text-sm font-semibold">{titleCase(finding.ruleKey)}</p>
-                    <Link
-                      to="/review-agents"
-                      search={{ agent: finding.ruleKey }}
-                      className="shrink-0 text-[11px] font-semibold text-teal-600 hover:underline dark:text-teal-400"
-                    >
-                      Agent settings
-                    </Link>
+                    {organizationId && (
+                      <Link
+                        to="/organization/$orgId/settings"
+                        params={{ orgId: organizationId }}
+                        search={{ section: "review-rules", rule: finding.ruleKey }}
+                        className="shrink-0 text-[11px] font-semibold text-teal-600 hover:underline dark:text-teal-400"
+                      >
+                        Rule settings
+                      </Link>
+                    )}
                   </div>
                   <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
                     {finding.state}
