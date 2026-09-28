@@ -51,6 +51,7 @@ import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
 import { createInvoiceCore } from "@/lib/posting/invoice-core";
 import { BILL_ACCRUAL_SHAPE_MESSAGE, BILL_SUB_CENT_MESSAGE } from "@/lib/posting/posting-lines";
 import { postTransactionCore } from "@/lib/posting/transaction-core";
+import { deleteBillCore } from "@/lib/posting/bill-delete";
 
 const BILL_DATE = "2026-07-20";
 
@@ -999,5 +1000,70 @@ describe("review_decisions actor columns (0053)", () => {
     await expect(
       db.insert(reviewDecisions).values({ ...base, actorType: "robot", actorKey: "jev" }),
     ).rejects.toThrow();
+  });
+});
+
+describe("deleting a bill while an approval is posting its accrual", () => {
+  it("waits for the approval, then voids the accrual it posted instead of orphaning it", async () => {
+    const fixture = await setupOrganization("bill-delete-race");
+    const bill = await submitEditorBill(fixture, editorBillDraft(fixture));
+    const actor = { type: "user" as const, userId: fixture.userId };
+
+    // The approval side: lock the bill row the way approval does, and hold it.
+    let releaseApproval!: () => void;
+    const approvalMayCommit = new Promise<void>((resolve) => {
+      releaseApproval = resolve;
+    });
+    let approvalLocked!: () => void;
+    const approvalHasLock = new Promise<void>((resolve) => {
+      approvalLocked = resolve;
+    });
+    const approval = withOrgContext(fixture.orgId, fixture.userId, "owner", async (tx) => {
+      await tx.select({ id: bills.id }).from(bills).where(eq(bills.id, bill.id)).for("update");
+      approvalLocked();
+      await approvalMayCommit;
+      const posted = await postTransactionCore(tx, fixture.orgId, actor, {
+        idempotencyKey: `race-accrual:${bill.id}`,
+        transactionDate: BILL_DATE,
+        transactionType: "journal" as const,
+        source: "bill" as const,
+        memo: "Accrual posted by the racing approval",
+        functionalCurrency: "USD",
+        sourceDocument: { id: bill.id, type: "bill" },
+        lines: [
+          { accountId: fixture.expense.id, debit: "45.50", credit: null, sortOrder: 0 },
+          { accountId: fixture.ap.id, debit: null, credit: "45.50", sortOrder: 1 },
+        ],
+      });
+      await tx
+        .update(bills)
+        .set({ journalHeaderId: posted.journalHeaderId, status: "awaiting_payment" })
+        .where(eq(bills.id, bill.id));
+      return posted.journalHeaderId;
+    });
+    await approvalHasLock;
+
+    // The delete side starts while approval holds the bill: it must wait.
+    let deleteSettled = false;
+    const deletion = withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      deleteBillCore(tx, fixture.orgId, fixture.userId, bill.id),
+    ).finally(() => {
+      deleteSettled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(deleteSettled).toBe(false);
+
+    releaseApproval();
+    const accrualId = await approval;
+    const deleted = await deletion;
+
+    // Delete saw the committed accrual and voided it with the bill.
+    expect(deleted.voidedJournalIds).toEqual([accrualId]);
+    const [accrual] = await db
+      .select()
+      .from(journalHeaders)
+      .where(eq(journalHeaders.id, accrualId));
+    expect(accrual.status).toBe("voided");
+    expect(await db.select().from(bills).where(eq(bills.id, bill.id))).toHaveLength(0);
   });
 });

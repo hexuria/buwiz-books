@@ -8,7 +8,7 @@ import type { DbExecutor } from "../../db";
 import { bills, billLineItems } from "../../db/schema/bills";
 import { parties } from "../../db/schema/parties";
 import { accounts } from "../../db/schema/accounts";
-import { journalHeaders, journalLines } from "../../db/schema/journals";
+import { journalHeaders } from "../../db/schema/journals";
 import { activityLogs } from "../../db/schema/activity-logs";
 import { eq, and, asc } from "drizzle-orm";
 import { z } from "zod";
@@ -16,10 +16,9 @@ import { createLogger } from "../../lib/logger";
 import { getClosedThrough, isDateLocked } from "../../lib/period-close";
 import { postBillAccrualJournal } from "../../lib/bill-journal";
 import { sumMoney } from "../../lib/inbox/money";
-import { statementLines, reconciliations } from "../../db/schema/reconciliations";
-import { inArray } from "drizzle-orm";
 import { isR2Configured, getPresignedDownloadUrl } from "../../lib/storage";
 import { documents, documentAttachments } from "../../db/schema/documents";
+import { deleteBillCore } from "../../lib/posting/bill-delete";
 import { ensureDocument } from "../../lib/documents/ensure-document";
 import { centsToMoney, moneyToCents } from "../../lib/money";
 import {
@@ -769,104 +768,7 @@ export const deleteBill = createServerFn({ method: "POST" }).handler(
       { routeKey: "bill:delete", limit: 20, windowMs: 60_000 },
       async ({ orgId, userId, db }) => {
         const parsed = deleteBillSchema.parse(rawData);
-
-        const [existing] = await db
-          .select()
-          .from(bills)
-          .where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)))
-          .limit(1);
-
-        if (!existing) {
-          throw new Error("Bill not found");
-        }
-
-        const linkedJournals = await db
-          .select()
-          .from(journalHeaders)
-          .where(
-            and(
-              eq(journalHeaders.sourceDocumentId, parsed.id),
-              eq(journalHeaders.sourceDocumentType, "bill"),
-              eq(journalHeaders.organizationId, orgId),
-              eq(journalHeaders.status, "posted"),
-            ),
-          )
-          .orderBy(asc(journalHeaders.id))
-          .for("update");
-
-        if (linkedJournals.length > 0) {
-          if (linkedJournals.some((journal) => journal.duplicateOfHeaderId !== null)) {
-            throw new Error(
-              "Cannot delete bill: a linked journal is a suppressed duplicate. Unmatch it first.",
-            );
-          }
-
-          // Voiding these journals changes the books — refuse when any falls in a
-          // closed period or is cleared by a finalized reconciliation.
-          const closedThrough = await getClosedThrough(orgId);
-          const inLocked = linkedJournals.find((j) =>
-            isDateLocked(j.transactionDate, closedThrough),
-          );
-          if (inLocked) {
-            throw new Error(
-              `Cannot delete bill: its journal dated ${inLocked.transactionDate} falls in a period locked through ${closedThrough}. Open the period first.`,
-            );
-          }
-
-          const journalIds = linkedJournals.map((j) => j.id);
-          const reconciled = await db
-            .select({ id: statementLines.id })
-            .from(statementLines)
-            .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
-            .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
-            .where(
-              and(
-                inArray(journalLines.journalHeaderId, journalIds),
-                eq(reconciliations.status, "finalized"),
-              ),
-            )
-            .limit(1);
-          if (reconciled.length > 0) {
-            throw new Error(
-              "Cannot delete bill: its journal is locked by a finalized reconciliation.",
-            );
-          }
-        }
-
-        for (const journal of linkedJournals) {
-          await db
-            .update(journalHeaders)
-            .set({ status: "voided", voidedAt: new Date(), updatedAt: new Date() })
-            .where(eq(journalHeaders.id, journal.id));
-
-          await db.insert(activityLogs).values({
-            organizationId: orgId,
-            entityType: "transaction",
-            entityId: journal.id,
-            action: "voided",
-            actorId: userId,
-            changes: { reason: "bill_deleted", billId: parsed.id },
-          });
-        }
-        await noteReversedMemoryEntries(db, {
-          orgId,
-          journalHeaderIds: linkedJournals.map((journal) => journal.id),
-          reason: "bill_deleted",
-          actorId: userId,
-        });
-
-        await db
-          .delete(documentAttachments)
-          .where(
-            and(
-              eq(documentAttachments.linkableId, parsed.id),
-              eq(documentAttachments.linkableType, "bill"),
-              eq(documentAttachments.organizationId, orgId),
-            ),
-          );
-
-        await db.delete(bills).where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)));
-
+        await deleteBillCore(db, orgId, userId, parsed.id);
         return { success: true };
       },
     );

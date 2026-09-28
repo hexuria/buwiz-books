@@ -25,9 +25,12 @@ describe("void integrity wiring", () => {
 
   it("every journal void in the bill routes stamps voidedAt", () => {
     // No bare status-void writes may remain; each must carry voidedAt.
-    expect(bills).not.toMatch(/set\(\{ status: "voided", updatedAt/);
-    const stamped = bills.match(/status: "voided", voidedAt: new Date\(\)/g) ?? [];
-    expect(stamped.length).toBeGreaterThanOrEqual(2); // void transition + delete path
+    // The delete path lives in the session-free core the deleteBill server function calls.
+    const billDelete = read("src/lib/posting/bill-delete.ts");
+    for (const source of [bills, billDelete]) {
+      expect(source).not.toMatch(/set\(\{ status: "voided", updatedAt/);
+      expect(source).toMatch(/status: "voided", voidedAt: new Date\(\)/); // void transition / delete path
+    }
   });
 
   it("bill and invoice void share the finalized-reconciliation guard", () => {
