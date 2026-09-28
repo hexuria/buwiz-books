@@ -64,7 +64,8 @@ export type InboxV2ReasonDetail =
   | "spot_check"
   | "ready"
   | "remembered"
-  | "jev_would_approve";
+  | "jev_would_approve"
+  | "sender_unverified";
 
 export interface InboxV2OpenFinding {
   ruleKey: string;
@@ -112,6 +113,12 @@ export interface InboxV2ReasonInput {
   remembered?: boolean;
   /** Jev's lane (at suggest or auto) would approve the paper as it stands. */
   jevWouldApprove?: boolean;
+  /**
+   * Jev held the emailed paper at its current revision because its sender could
+   * not be verified (src/lib/inbox/jev-approval/sender.ts). Read from the
+   * recorded decision, never recomputed.
+   */
+  senderUnverified?: boolean;
 }
 
 export interface InboxV2ReasonResult {
@@ -238,6 +245,7 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
   if (signals.length > 0) return result("jev_unsure", "model_unsure", signals);
 
   if (input.spotCheck) return result("spot_check", "spot_check", signals);
+  if (input.senderUnverified) return result("ready", "sender_unverified", signals);
 
   return result(
     "ready",
@@ -306,6 +314,8 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
       return "Answered from a correction you asked Jev to remember. No check blocks it. Review the entry and approve it.";
     case "jev_would_approve":
       return "Jev would approve this. Review the entry and approve it.";
+    case "sender_unverified":
+      return "Sender could not be verified — Jev won't approve this on its own. Check who sent it before you approve it.";
   }
 }
 

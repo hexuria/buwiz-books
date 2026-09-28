@@ -423,6 +423,9 @@ export function scoreJevCase(
       paymentDetailsFlagged: result.findings.some(
         (finding) => finding.ruleKey === PAYMENT_DETAILS_RULE_KEY,
       ),
+      // The golden pile records papers, not the messages they came in: no
+      // sender to verify (the sender check has its own unit and integration tests).
+      sender: null,
       duplicateCaseOpen: false,
       periodLocked: false,
       functionalTotal: sumMoney(lines.map((line) => line.debit)),

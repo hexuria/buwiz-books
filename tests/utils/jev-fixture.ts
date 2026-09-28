@@ -14,11 +14,10 @@ import { documents } from "@/db/schema/documents";
 import {
   inboxItems,
   organizationAccountingSettings,
-  reviewFindings,
   reviewRuleConfigs,
   reviewRuleDefinitions,
   sourceRecords,
-  transactionCandidateLines,
+  transactionCandidateSources,
   transactionCandidates,
 } from "@/db/schema/inbox";
 import { parties } from "@/db/schema/parties";
@@ -35,7 +34,11 @@ import { correctInboxCandidate } from "@/lib/inbox/candidate-correction";
 import { recordJevProposalAfterClassification } from "@/lib/inbox/jev-approval/after-classification";
 import { recordJevProposal } from "@/lib/inbox/jev-approval/proposal";
 import { rememberCorrection } from "@/lib/inbox/memory/service";
+import type { SenderAuthentication } from "@/lib/inbox/sender-authentication";
 import { createTransactionCandidate } from "@/lib/inbox/service";
+
+/** The fixture vendor's stored email: its bills come from this address. */
+export const JEV_VENDOR_EMAIL = "billing@paperstreet.example";
 
 export async function setupJevOrganization(
   prefix: string,
@@ -98,7 +101,12 @@ export async function setupJevOrganization(
     .returning();
   const [vendor] = await db
     .insert(parties)
-    .values({ organizationId: orgId, name: "Paper Street Supply", partyType: "vendor" })
+    .values({
+      organizationId: orgId,
+      name: "Paper Street Supply",
+      partyType: "vendor",
+      email: JEV_VENDOR_EMAIL,
+    })
     .returning();
   return {
     orgId,
@@ -343,14 +351,74 @@ async function invoiceDocument(fixture: JevFixture) {
 }
 
 /**
+ * The verdict the email job records for a message (src/lib/inbox/sender-authentication.ts):
+ * by default, DMARC passed for the fixture vendor's address.
+ */
+export function senderVerdict(overrides: Partial<SenderAuthentication> = {}): SenderAuthentication {
+  return {
+    version: 1,
+    passed: true,
+    reason: "passed",
+    method: "dmarc",
+    fromAddress: JEV_VENDOR_EMAIL,
+    fromDomain: "paperstreet.example",
+    authservId: "amazonses.com",
+    results: { dmarc: "pass", dkim: "pass", spf: "pass" },
+    ...overrides,
+  };
+}
+
+/**
+ * The inbound message a paper came in, linked to its candidate the way the
+ * email job links it (supporting), carrying the verdict recorded at ingest —
+ * or none, for a message received before verdicts were recorded.
+ */
+export async function attachInboundMessage(
+  fixture: JevFixture,
+  candidateId: string,
+  verdict: SenderAuthentication | null,
+) {
+  const [message] = await db
+    .insert(sourceRecords)
+    .values({
+      organizationId: fixture.orgId,
+      recordType: "email",
+      externalId: `jev-fixture-email-${randomUUID()}`,
+      providerStatus: "processed",
+      description: "Invoice from Paper Street Supply",
+      rawData: {
+        from: `"Paper Street Supply" <${verdict?.fromAddress ?? JEV_VENDOR_EMAIL}>`,
+        ...(verdict ? { senderAuthentication: verdict } : {}),
+      },
+    })
+    .returning();
+  await db.insert(transactionCandidateSources).values({
+    organizationId: fixture.orgId,
+    candidateId,
+    sourceRecordId: message.id,
+    relationship: "supporting",
+    isPrimary: false,
+  });
+  return message;
+}
+
+/**
  * An emailed vendor bill as the pipeline would propose it: the expense line Jev
- * picked, the A/P credit remembered (build step 10), the invoice attached, and
- * the source classified as an unpaid vendor bill (bill_accrual) the way
- * extraction classifies one. The proposal is recorded like stage 2's job does.
+ * picked, the A/P credit remembered (build step 10), the invoice attached, the
+ * source classified as an unpaid vendor bill (bill_accrual) the way extraction
+ * classifies one, and the message it came in — from the vendor's address,
+ * authenticated, unless `sender` says otherwise (null: no verdict on record).
+ * The proposal is recorded like stage 2's job does.
  */
 export async function submitJevBill(
   fixture: JevFixture,
-  input: { amount: string; day: number; confidence?: number },
+  input: {
+    amount: string;
+    day: number;
+    confidence?: number;
+    record?: boolean;
+    sender?: SenderAuthentication | null;
+  },
 ) {
   const dims = { departmentId: fixture.department.id, locationId: fixture.location.id };
   const confidence = input.confidence ?? 0.97;
@@ -396,9 +464,17 @@ export async function submitJevBill(
     .update(sourceRecords)
     .set({ economicEventClass: "bill_accrual", direction: "outflow" })
     .where(eq(sourceRecords.id, created.candidate.sourceRecordId!));
-  const proposal = await asOrg(fixture, (tx) =>
-    recordJevProposal(tx, { orgId: fixture.orgId, candidateId: created.candidate.id }),
+  await attachInboundMessage(
+    fixture,
+    created.candidate.id,
+    input.sender === undefined ? senderVerdict() : input.sender,
   );
+  const proposal =
+    input.record === false
+      ? null
+      : await asOrg(fixture, (tx) =>
+          recordJevProposal(tx, { orgId: fixture.orgId, candidateId: created.candidate.id }),
+        );
   return { item: created.inboxItem, candidate: created.candidate, proposal, document };
 }
 
@@ -422,54 +498,6 @@ export async function disableRule(orgId: string, key: string) {
       target: [reviewRuleConfigs.organizationId, reviewRuleConfigs.definitionId],
       set: { enabled: false },
     });
-}
-
-/**
- * Stands in for build step 10: a remembered answer fills the payment side
- * stage 2 leaves unpicked, on a new candidate revision, and the `uncategorized`
- * check that blank line tripped is re-evaluated away with it.
- */
-export async function rememberPaymentSide(
-  fixture: JevFixture,
-  input: { candidateId: string; inboxItemId: string; accountId: string },
-) {
-  await asOrg(fixture, async (tx) => {
-    const [candidate] = await tx
-      .select()
-      .from(transactionCandidates)
-      .where(eq(transactionCandidates.id, input.candidateId))
-      .for("update");
-    const lines = await tx
-      .select()
-      .from(transactionCandidateLines)
-      .where(eq(transactionCandidateLines.candidateId, input.candidateId));
-    const blank = lines.find((line) => line.accountId === null);
-    if (!blank) throw new Error("No blank line to remember.");
-    await tx
-      .update(transactionCandidateLines)
-      .set({ accountId: input.accountId, predictionEvidence: { source: "memory" } })
-      .where(eq(transactionCandidateLines.id, blank.id));
-    const next = candidate.revision + 1;
-    await tx
-      .update(transactionCandidates)
-      .set({ revision: next })
-      .where(eq(transactionCandidates.id, input.candidateId));
-    const [item] = await tx.select().from(inboxItems).where(eq(inboxItems.id, input.inboxItemId));
-    await tx
-      .update(inboxItems)
-      .set({ candidateRevision: next, lockVersion: item.lockVersion + 1 })
-      .where(eq(inboxItems.id, input.inboxItemId));
-    await tx
-      .update(reviewFindings)
-      .set({ state: "resolved", resolvedAt: new Date(), resolutionNote: "Remembered answer." })
-      .where(
-        and(
-          eq(reviewFindings.inboxItemId, input.inboxItemId),
-          eq(reviewFindings.ruleKey, "uncategorized"),
-          eq(reviewFindings.state, "open"),
-        ),
-      );
-  });
 }
 
 /**

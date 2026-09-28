@@ -203,6 +203,20 @@ describe("Jev approval lanes wiring", () => {
     expect(list).toContain("we.data->'evaluation'->>'heldForSpotCheck' = 'true'");
   });
 
+  it("judges every emailed paper's sender in the approval loader, and the Inbox reads the hold", () => {
+    const proposal = read("src/lib/inbox/jev-approval/proposal.ts");
+    expect(proposal).toContain(
+      "const sender = await loadJevSender(db, orgId, { candidate, sourceIds });",
+    );
+    const predicate = read("src/lib/inbox/jev-approval/predicate.ts");
+    expect(predicate).toContain('hold("sender_unverified", paper.sender.detail ?? undefined);');
+    const list = read("src/lib/inbox/v2/list.ts");
+    expect(list).toContain("senderUnverified: row.senderUnverified === true,");
+    expect(list).toContain(
+      `we.data->'evaluation'->'holds' @> '[{"reason":"sender_unverified"}]'::jsonb`,
+    );
+  });
+
   it("keeps remembered answers out of eligibility and calibration, but not demotion", () => {
     const lanes = read("src/lib/ai/autonomy-lanes.ts");
     expect(lanes).toContain(
@@ -239,5 +253,27 @@ describe("Jev approval lanes wiring", () => {
     expect(amendAt).toBeGreaterThan(noteAt);
     expect(resetAt).toBeGreaterThan(amendAt);
     expect(undo.slice(noteAt, amendAt)).toContain("reason: JEV_APPROVAL_UNDONE,");
+  });
+
+  it("lifts categorize for the inbox_approve lane only, by one named, documented exception", () => {
+    const autonomy = read("src/lib/ai/autonomy.ts");
+    expect(autonomy).toMatch(
+      /export const INBOX_APPROVE_LANE_EXCEPTIONS: ReadonlySet<AiProposalKind> = new Set<AiProposalKind>\(\[\s*"categorize",\s*\]\);/,
+    );
+    // The comment says why, what keeps it safe, and that the owner approved it.
+    for (const heading of ["WHY.", "OWNER-APPROVED.", "SCOPE.", "GUARDS."]) {
+      expect(autonomy).toContain(heading);
+    }
+    // categorize is still in the structural wall itself.
+    const wall = autonomy.slice(
+      autonomy.indexOf("export const STRUCTURAL_MANUAL_KINDS"),
+      autonomy.indexOf("]);", autonomy.indexOf("export const STRUCTURAL_MANUAL_KINDS")),
+    );
+    expect(wall).toContain('"categorize"');
+    // Nothing outside autonomy.ts may consult the exception directly.
+    const readers = sourceFiles("src", "server").filter((file) =>
+      read(file).includes("INBOX_APPROVE_LANE_EXCEPTIONS"),
+    );
+    expect(readers).toEqual(["src/lib/ai/autonomy.ts"]);
   });
 });

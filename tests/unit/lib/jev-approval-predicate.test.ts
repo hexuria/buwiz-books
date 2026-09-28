@@ -36,6 +36,7 @@ function passing(): JevApprovalInput {
       newPartyPending: false,
       openFindings: [],
       paymentDetailsFlagged: false,
+      sender: null,
       duplicateCaseOpen: false,
       periodLocked: false,
       functionalTotal: "84.25",
@@ -83,6 +84,12 @@ const PAPER_CASES: Array<[string, Mutation, JevHoldReason]> = [
     "payee bank details changed",
     (i) => void (i.paper.paymentDetailsFlagged = true),
     "payment_details_changed",
+  ],
+  [
+    "an emailed paper whose sender could not be verified",
+    (i) =>
+      void (i.paper.sender = { verified: false, detail: "it carries no authentication results" }),
+    "sender_unverified",
   ],
   ["period closed", (i) => void (i.paper.periodLocked = true), "period_locked"],
   [
@@ -186,6 +193,36 @@ describe("evaluateJevApproval", () => {
     expect(reasonsOf(input)).toEqual([]);
     input.paper.paymentDetailsFlagged = true;
     expect(reasonsOf(input)).toEqual(["payment_details_changed"]);
+  });
+
+  it("approves an emailed paper only with a verified sender, and says why not", () => {
+    const input = passing();
+    input.paper.sender = { verified: true, detail: null };
+    expect(evaluateJevApproval(input)).toMatchObject({ approve: true, holds: [] });
+
+    input.paper.sender = { verified: false, detail: "paperstreet-billing.example is new" };
+    input.sampled = true;
+    const decision = evaluateJevApproval(input);
+    // Held for the sender, not sampled: an unverified sender is never a spot check.
+    expect(decision).toMatchObject({
+      approve: false,
+      wouldApprove: false,
+      heldForSpotCheck: false,
+      holds: [
+        {
+          reason: "sender_unverified",
+          scope: "paper",
+          detail: "paperstreet-billing.example is new",
+        },
+      ],
+    });
+    expect(describeJevHolds(decision.holds)).toEqual([
+      "Sender could not be verified — Jev won't approve this on its own. (paperstreet-billing.example is new)",
+    ]);
+    input.paper.sender = { verified: false, detail: null };
+    expect(describeJevHolds(evaluateJevApproval(input).holds)).toEqual([
+      "Sender could not be verified — Jev won't approve this on its own.",
+    ]);
   });
 
   it("marks a spot check only when the sample is the ONLY hold", () => {

@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/db", () => ({ db: {}, dbAdmin: {} }));
 
 import {
+  AUTONOMY_ALLOWED_KINDS,
   AUTONOMY_CRITERIA,
+  canAutoApply,
+  computeAutonomyEligibility,
+  INBOX_APPROVE_LANE_EXCEPTIONS,
   judgeAutonomyEligibility,
   laneWalledKinds,
   LANE_APPLIED_KINDS,
@@ -68,11 +72,39 @@ describe("lane demotion window", () => {
 });
 
 describe("lane walls", () => {
-  it("inbox_approve applies categorize, which is still structurally manual", () => {
+  it("lifts categorize for the inbox_approve lane only, through a named exception", () => {
     expect(LANE_APPLIED_KINDS.inbox_approve).toEqual(["categorize"]);
+    expect([...INBOX_APPROVE_LANE_EXCEPTIONS]).toEqual(["categorize"]);
+    expect(laneWalledKinds("inbox_approve")).toEqual([]);
+  });
+
+  it("keeps categorize structurally manual on every other path", async () => {
     expect(STRUCTURAL_MANUAL_KINDS.has("categorize")).toBe(true);
-    // Until the lane gets its own exception, nothing it approves can post.
-    expect(laneWalledKinds("inbox_approve")).toEqual(["categorize"]);
+    expect(AUTONOMY_ALLOWED_KINDS.has("categorize")).toBe(false);
+    // Per-kind auto-apply (createProposalWithAutonomy's gate) never applies it.
+    expect(
+      canAutoApply({
+        kind: "categorize",
+        autonomy: { categorize: "auto_apply_high_confidence" },
+        confidence: 1,
+        threshold: 0,
+      }),
+    ).toBe(false);
+    // Per-kind eligibility refuses it before reading any history.
+    const untouchable = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error("The executor was used.");
+        },
+      },
+    ) as never;
+    await expect(
+      computeAutonomyEligibility(untouchable, "org-1", "categorize"),
+    ).resolves.toMatchObject({
+      eligible: false,
+      reason: '"categorize" is always applied by a human — it can never be automated.',
+    });
   });
 });
 
