@@ -211,6 +211,13 @@ export async function amendPostedJournal(
       accountId: line.accountId,
       debit: line.credit,
       credit: line.debit,
+      // The transaction-currency side swaps too, at the original's own rate:
+      // a foreign-currency entry's reversal nets to zero in both currencies.
+      originalDebit: line.originalCredit,
+      originalCredit: line.originalDebit,
+      originalCurrency: line.originalCurrency,
+      exchangeRate: line.exchangeRate,
+      exchangeRateId: line.exchangeRateId,
       lineDescription: `Reversal: ${line.lineDescription ?? ""}`.trim(),
       partyId: line.partyId,
       departmentId: line.departmentId,

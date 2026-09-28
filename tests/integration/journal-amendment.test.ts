@@ -149,6 +149,73 @@ describeDb("amend-by-reversal", () => {
     expect(result.reversalHeaderId).toEqual(expect.any(String));
   });
 
+  it("swaps the transaction-currency amounts too, at the original's rate", async () => {
+    const original = await db.transaction(async (tx: any) => {
+      const [header] = await tx
+        .insert(journalHeaders)
+        .values({
+          organizationId: ORG,
+          transactionDate: "2026-06-15",
+          transactionType: "journal",
+          source: "manual",
+          status: "posted",
+          totalAmount: "5600",
+          functionalCurrency: "PHP",
+          transactionCurrency: "USD",
+        })
+        .returning();
+      const fx = { originalCurrency: "USD", exchangeRate: "56.0000000000" };
+      await tx.insert(journalLines).values([
+        {
+          journalHeaderId: header.id,
+          accountId: accountA,
+          debit: "5600",
+          originalDebit: "100",
+          ...fx,
+          sortOrder: 0,
+        },
+        {
+          journalHeaderId: header.id,
+          accountId: accountB,
+          credit: "5600",
+          originalCredit: "100",
+          ...fx,
+          sortOrder: 1,
+        },
+      ]);
+      return header.id as string;
+    });
+
+    const result = await db.transaction((tx: any) =>
+      amendPostedJournal(tx, {
+        organizationId: ORG,
+        userId: "test-user",
+        headerId: original,
+        reason: "Undo",
+      }),
+    );
+    const [first, second] = await db
+      .select()
+      .from(journalLines)
+      .where(eq(journalLines.journalHeaderId, result.reversalHeaderId))
+      .orderBy(journalLines.sortOrder);
+    expect(first).toMatchObject({
+      accountId: accountA,
+      credit: "5600.00000000",
+      originalCredit: "100.00000000",
+      originalDebit: null,
+      originalCurrency: "USD",
+      exchangeRate: "56.0000000000",
+    });
+    expect(second).toMatchObject({
+      accountId: accountB,
+      debit: "5600.00000000",
+      originalDebit: "100.00000000",
+      originalCredit: null,
+      originalCurrency: "USD",
+    });
+  });
+
   it("records lineage on both new headers", async () => {
     const original = await post("300");
     const result = await db.transaction((tx: any) =>

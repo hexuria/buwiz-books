@@ -432,6 +432,24 @@ describeDb("Jev approves papers on an auto lane", () => {
     },
   );
 
+  it("a shadow-mode duplicate case is observe-only and does not hold Jev", async () => {
+    const { fixture } = await autoLaneOrganization("jev-auto-shadow-dup");
+    const paper = await proposeOnLane(fixture, { amount: "42.10", day: 3 });
+    const other = await submitJevExpense(fixture, { amount: "99.99", day: 28, record: false });
+    const [left, right] = [paper.candidate.sourceRecordId!, other.candidate.sourceRecordId!].sort();
+    await db.insert(sourceMatchCandidates).values({
+      organizationId: fixture.orgId,
+      leftSourceRecordId: left,
+      rightSourceRecordId: right,
+      matchType: "probable",
+      score: "80",
+      disposition: "shadow",
+    });
+
+    const { result } = await runQueuedJevJob(fixture, paper.candidate.id, paper.candidate.revision);
+    expect(result).toMatchObject({ status: "approved" });
+  });
+
   it("skips a paper a person changed after it was queued", async () => {
     const { fixture } = await autoLaneOrganization("jev-auto-stale");
     const paper = await proposeOnLane(fixture, { amount: "42.10", day: 3 });

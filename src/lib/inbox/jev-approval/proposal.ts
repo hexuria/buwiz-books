@@ -351,6 +351,10 @@ export async function loadJevPaperFacts(
               eq(sourceMatchCandidates.organizationId, orgId),
               eq(sourceMatchCandidates.state, "open"),
               eq(sourceMatchCandidates.matchClass, "duplicate"),
+              // A shadow case is observe-only: it raises no finding and never
+              // blocks a person's approval, so it does not hold Jev either.
+              // Approval re-runs the matcher at its final gate regardless.
+              eq(sourceMatchCandidates.disposition, "blocking"),
               or(
                 inArray(sourceMatchCandidates.leftSourceRecordId, sourceIds),
                 inArray(sourceMatchCandidates.rightSourceRecordId, sourceIds),

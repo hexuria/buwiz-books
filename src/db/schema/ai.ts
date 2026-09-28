@@ -395,6 +395,13 @@ export const aiAutonomyLanes = pgTable(
     uniqueIndex("ai_autonomy_lanes_partyless_unique")
       .on(table.organizationId, table.laneKey, table.docKind)
       .where(sql`${table.partyId} is null`),
+    // docKind is nullable too, so the two remaining NULL shapes get guards.
+    uniqueIndex("ai_autonomy_lanes_kindless_unique")
+      .on(table.organizationId, table.laneKey, table.partyId)
+      .where(sql`${table.docKind} is null`),
+    uniqueIndex("ai_autonomy_lanes_partyless_kindless_unique")
+      .on(table.organizationId, table.laneKey)
+      .where(sql`${table.partyId} is null and ${table.docKind} is null`),
     index("ai_autonomy_lanes_org_level_idx").on(table.organizationId, table.laneKey, table.level),
     check("ai_autonomy_lanes_level_check", sql`${table.level} in ('watch', 'suggest', 'auto')`),
     check("ai_autonomy_lanes_lane_key_check", sql`${table.laneKey} in ('inbox_approve')`),

@@ -72,6 +72,17 @@ describeDb("ai_autonomy_lanes constraints", () => {
         docKind: "expense",
       }),
     ).rejects.toThrow();
+
+    // A paper of unknown kind has a lane too, and it is just as unique.
+    const lane = { organizationId: orgId, laneKey: "inbox_approve" as const, docKind: null };
+    await db.insert(aiAutonomyLanes).values([
+      { ...lane, partyId: vendor.id },
+      { ...lane, partyId: null },
+    ]);
+    await expect(
+      db.insert(aiAutonomyLanes).values({ ...lane, partyId: vendor.id }),
+    ).rejects.toThrow();
+    await expect(db.insert(aiAutonomyLanes).values({ ...lane, partyId: null })).rejects.toThrow();
   });
 
   it("refuses an auto lane without its party, cap and threshold, and unknown levels or lanes", async () => {

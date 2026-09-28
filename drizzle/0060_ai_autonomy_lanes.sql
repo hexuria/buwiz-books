@@ -95,6 +95,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS ai_autonomy_lanes_identity_unique
 CREATE UNIQUE INDEX IF NOT EXISTS ai_autonomy_lanes_partyless_unique
   ON ai_autonomy_lanes (organization_id, lane_key, doc_kind)
   WHERE party_id IS NULL;
+-- doc_kind is nullable too (a paper whose kind is unknown), so the two
+-- remaining NULL shapes get their own guards.
+CREATE UNIQUE INDEX IF NOT EXISTS ai_autonomy_lanes_kindless_unique
+  ON ai_autonomy_lanes (organization_id, lane_key, party_id)
+  WHERE doc_kind IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS ai_autonomy_lanes_partyless_kindless_unique
+  ON ai_autonomy_lanes (organization_id, lane_key)
+  WHERE party_id IS NULL AND doc_kind IS NULL;
 CREATE INDEX IF NOT EXISTS ai_autonomy_lanes_org_level_idx
   ON ai_autonomy_lanes (organization_id, lane_key, level);
 

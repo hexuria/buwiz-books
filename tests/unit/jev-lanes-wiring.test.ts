@@ -75,6 +75,16 @@ describe("Jev approval lanes wiring", () => {
       unique: true,
       columns: ["organization_id", "lane_key", "doc_kind"],
     });
+    expect(indexes).toContainEqual({
+      name: "ai_autonomy_lanes_kindless_unique",
+      unique: true,
+      columns: ["organization_id", "lane_key", "party_id"],
+    });
+    expect(indexes).toContainEqual({
+      name: "ai_autonomy_lanes_partyless_kindless_unique",
+      unique: true,
+      columns: ["organization_id", "lane_key"],
+    });
     expect(lanes.checks.map((item) => item.name).sort()).toEqual(
       [
         "ai_autonomy_lanes_amount_cap_check",
