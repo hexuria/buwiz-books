@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useBlocker, useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AppErrorBoundary } from "@/components/error/AppErrorBoundary";
 import { EmptyCatalogNotice } from "@/components/review-agents/EmptyCatalogNotice";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -16,24 +16,19 @@ import {
 import { useToast } from "@/components/ui/Toast";
 import DayPicker from "@/components/ui/DayPicker";
 import { keys } from "@/lib/query-keys";
-import {
-  buildAgentConfigPayload,
-  CADENCE_COPY,
-  getAgentSchema,
-  splitStoredConfig,
-  validateAgentConfig,
-  type AgentConfigField,
-  type AgentConfirmCopy,
-} from "@/lib/review-agents/agent-config-schema";
+import { CADENCE_COPY, getAgentSchema } from "@/lib/review-agents/agent-config-schema";
 import { callServerFn } from "@/lib/server-fn-client";
 import { usePermission } from "@/lib/use-permission";
+import {
+  ReviewRuleConfigForm,
+  type ReviewRuleDraft,
+} from "@/components/settings/ReviewRuleConfigForm";
 import {
   listReviewAgents,
   listReviewFindings,
   listReviewRuns,
   resolveReviewFinding,
   runReviewAgents,
-  updateReviewAgent,
 } from "./api/-review-agents";
 
 type ReviewAgentsSearch = {
@@ -620,6 +615,10 @@ function AgentDetail({
   const schema = getAgentSchema(agent.key);
   const editable = canConfigure && agent.configurable;
   const cadence = schema?.cadence ?? (agent.group === "review" ? "on_demand" : "ingest");
+  const onDraftChange = useCallback(
+    (draft: ReviewRuleDraft | null) => onDirtyChange(draft !== null),
+    [onDirtyChange],
+  );
   const runnable = cadence === "on_demand" || cadence === "ingest_and_on_demand";
 
   return (
@@ -680,13 +679,20 @@ function AgentDetail({
       )}
 
       {agent.configurable && (
-        <AgentConfigForm
-          agent={agent}
-          editable={editable}
-          onDirtyChange={onDirtyChange}
-          onSaved={onSaved}
-          onError={onError}
-        />
+        <section className="mt-8 rounded-lg border border-slate-200 dark:border-slate-700">
+          <div className="border-b border-slate-200 px-5 py-3 dark:border-slate-700">
+            <h3 className="font-semibold">Configuration</h3>
+          </div>
+          <div className="p-5">
+            <ReviewRuleConfigForm
+              rule={agent}
+              editable={editable}
+              onDraftChange={onDraftChange}
+              onSaved={onSaved}
+              onError={onError}
+            />
+          </div>
+        </section>
       )}
 
       {runnable && <RunHistory ruleKey={agent.key} />}
@@ -1074,356 +1080,5 @@ function RunHistory({ ruleKey }: { ruleKey: string }) {
         )}
       </div>
     </section>
-  );
-}
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-type ConfirmState = { copy: AgentConfirmCopy; apply: () => void } | null;
-
-function AgentConfigForm({
-  agent,
-  editable,
-  onDirtyChange,
-  onSaved,
-  onError,
-}: {
-  agent: Agent;
-  editable: boolean;
-  onDirtyChange: (dirty: boolean) => void;
-  onSaved: () => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const schema = getAgentSchema(agent.key);
-  const parsed = useMemo(() => {
-    try {
-      return JSON.parse(agent.configJson) as Record<string, unknown>;
-    } catch {
-      return {};
-    }
-  }, [agent.configJson]);
-
-  const {
-    values: initialValues,
-    passthrough,
-    hiddenAdvanced,
-  } = useMemo(() => splitStoredConfig(schema, parsed), [parsed, schema]);
-
-  const [enabled, setEnabled] = useState(agent.enabled);
-  const [impact, setImpact] = useState<"blocking" | "warning">(
-    agent.impact === "warning" ? "warning" : "blocking",
-  );
-  const [lookback, setLookback] = useState(String(agent.lookbackMonths));
-  const [values, setValues] = useState<Record<string, string>>(initialValues);
-  const [confirm, setConfirm] = useState<ConfirmState>(null);
-
-  const markDirty = () => onDirtyChange(true);
-
-  const errors = useMemo(
-    () =>
-      validateAgentConfig(schema?.fields ?? [], values, lookback, schema?.usesLookback ?? false),
-    [schema, values, lookback],
-  );
-  const hasErrors = Object.keys(errors).length > 0;
-
-  const saveMutation = useMutation({
-    mutationFn: () =>
-      callServerFn(updateReviewAgent, {
-        data: {
-          definitionId: agent.definitionId,
-          enabled,
-          impact,
-          lookbackMonths: Number(lookback),
-          config: buildAgentConfigPayload(schema, values, passthrough),
-          expectedVersion: agent.version,
-        },
-      }),
-    onSuccess: onSaved,
-    onError: (error) => onError(errorMessage(error, "Agent instructions could not be saved.")),
-  });
-
-  const setValue = (key: string, value: string) => {
-    setValues((current) => ({ ...current, [key]: value }));
-    markDirty();
-  };
-
-  return (
-    <section className="mt-8 rounded-lg border border-slate-200 dark:border-slate-700">
-      <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-3 dark:border-slate-700">
-        <h3 className="font-semibold">Configuration</h3>
-        <label className="inline-flex items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
-            checked={enabled}
-            disabled={!editable}
-            onChange={(event) => {
-              const next = event.target.checked;
-              // duplicate-engine.ts treats `enabled: false` exactly like `mode: "off"`, so the
-              // checkbox needs the same confirmation the mode select gets.
-              if (!next && schema?.disableConfirm) {
-                setConfirm({
-                  copy: schema.disableConfirm,
-                  apply: () => {
-                    setEnabled(false);
-                    markDirty();
-                  },
-                });
-                return;
-              }
-              setEnabled(next);
-              markDirty();
-            }}
-            className="h-4 w-4 accent-teal-700"
-          />
-          Enabled
-        </label>
-      </div>
-
-      <div className="space-y-6 p-5">
-        {confirm && (
-          <div className="rounded-md border border-rose-300 bg-rose-50 p-4 text-sm dark:border-rose-900 dark:bg-rose-950/40">
-            <p className="font-semibold text-rose-900 dark:text-rose-100">{confirm.copy.title}</p>
-            <p className="mt-1 leading-6 text-rose-800 dark:text-rose-200">{confirm.copy.body}</p>
-            <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  confirm.apply();
-                  setConfirm(null);
-                }}
-                className="h-9 min-h-11 lg:min-h-0 rounded-md bg-rose-600 px-3 text-xs font-semibold text-white transition hover:bg-rose-700"
-              >
-                {confirm.copy.confirmLabel}
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirm(null)}
-                className="h-9 min-h-11 lg:min-h-0 rounded-md border border-rose-300 px-3 text-xs font-semibold text-rose-900 dark:border-rose-800 dark:text-rose-100"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Never fall back to an editable textarea for an agent we don't have a schema for. */}
-        {!schema && (
-          <div>
-            <p className="text-sm text-slate-500">
-              This agent's settings aren't editable in this release. Its configuration is shown as
-              stored.
-            </p>
-            <pre className="mt-2 overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-200">
-              {JSON.stringify(parsed, null, 2)}
-            </pre>
-          </div>
-        )}
-
-        {schema?.fields.map((field) => (
-          <ConfigFieldInput
-            key={field.key}
-            field={field}
-            value={values[field.key] ?? ""}
-            currency={
-              field.kind === "money" && field.currencyKey ? values[field.currencyKey] : undefined
-            }
-            error={errors[field.key]}
-            disabled={!editable}
-            onChange={(value) => setValue(field.key, value)}
-            onRequestConfirm={(copy, apply) => setConfirm({ copy, apply })}
-          />
-        ))}
-
-        {schema?.usesLookback ? (
-          <label className="block text-sm font-medium">
-            Lookback window
-            <div className="mt-1 flex items-center gap-2">
-              <input
-                type="number"
-                min={1}
-                max={24}
-                value={lookback}
-                disabled={!editable}
-                onChange={(event) => {
-                  setLookback(event.target.value);
-                  markDirty();
-                }}
-                className="h-9 min-h-11 lg:min-h-0 w-24 rounded-md border border-slate-200 bg-white px-2 text-base sm:text-sm tabular-nums outline-none focus:border-teal-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
-              />
-              <span className="text-xs text-slate-500">months</span>
-            </div>
-            {errors.lookbackMonths ? (
-              <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
-                {errors.lookbackMonths}
-              </p>
-            ) : (
-              <p className="mt-1 text-xs leading-5 text-slate-500">
-                How far back this agent reads when it runs.
-              </p>
-            )}
-          </label>
-        ) : (
-          <p className="text-xs text-slate-500">
-            Runs on each transaction as it arrives — there is no lookback window.
-          </p>
-        )}
-
-        <label className="block text-sm font-medium">
-          Approval impact
-          <select
-            value={impact}
-            disabled={!editable}
-            onChange={(event) => {
-              setImpact(event.target.value as "blocking" | "warning");
-              markDirty();
-            }}
-            className="mt-1 h-10 min-h-11 lg:min-h-0 w-full rounded-md border border-slate-200 bg-white px-3 text-base sm:text-sm outline-none focus:border-teal-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
-          >
-            <option value="blocking">Blocking</option>
-            <option value="warning">Warning</option>
-          </select>
-          <p className="mt-1 text-xs leading-5 text-slate-500">
-            {agent.group === "review"
-              ? "Blocking marks these as must-fix before you close the period. Warnings are informational."
-              : "Blocking findings stop Inbox approval until someone resolves them. Warnings stay visible but let approval through."}
-          </p>
-        </label>
-
-        {hiddenAdvanced.length > 0 && (
-          <details className="rounded-md border border-slate-200 p-3 dark:border-slate-700">
-            <summary className="cursor-pointer text-sm font-medium">
-              Advanced settings ({hiddenAdvanced.length})
-            </summary>
-            <p className="mt-2 text-xs text-slate-500">
-              These settings were saved by a newer version of this agent. They're preserved when you
-              save.
-            </p>
-            <pre className="mt-2 overflow-x-auto rounded-md bg-slate-50 p-3 font-mono text-xs text-slate-700 dark:bg-slate-950 dark:text-slate-200">
-              {JSON.stringify(Object.fromEntries(hiddenAdvanced), null, 2)}
-            </pre>
-          </details>
-        )}
-      </div>
-
-      <div className="flex items-center justify-between gap-4 border-t border-slate-200 px-5 py-3 dark:border-slate-700">
-        <p className="text-xs text-slate-500">
-          Formula v{agent.formulaVersion}
-          {agent.group === "book"
-            ? " · Runs automatically at ingest"
-            : agent.lastRunAt
-              ? ` · Last run ${new Date(agent.lastRunAt).toLocaleString()}`
-              : " · Not run yet"}
-        </p>
-        {editable && (
-          <button
-            type="button"
-            onClick={() => saveMutation.mutate()}
-            disabled={saveMutation.isPending || hasErrors}
-            title={hasErrors ? "Fix the highlighted settings first." : undefined}
-            className="h-10 min-h-11 lg:min-h-0 rounded-md bg-teal-700 px-4 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:opacity-60"
-          >
-            {saveMutation.isPending ? "Saving…" : "Save settings"}
-          </button>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function ConfigFieldInput({
-  field,
-  value,
-  currency,
-  error,
-  disabled,
-  onChange,
-  onRequestConfirm,
-}: {
-  field: AgentConfigField;
-  value: string;
-  currency?: string;
-  error?: string;
-  disabled: boolean;
-  onChange: (value: string) => void;
-  onRequestConfirm: (copy: AgentConfirmCopy, apply: () => void) => void;
-}) {
-  if (field.kind === "enum") {
-    const active = field.options.find((option) => option.value === value);
-    return (
-      <label className="block text-sm font-medium">
-        {field.label}
-        <select
-          value={value}
-          disabled={disabled}
-          onChange={(event) => {
-            const next = event.target.value;
-            const option = field.options.find((candidate) => candidate.value === next);
-            if (option?.confirm) {
-              onRequestConfirm(option.confirm, () => onChange(next));
-              return;
-            }
-            onChange(next);
-          }}
-          className="mt-1 h-10 min-h-11 lg:min-h-0 w-full rounded-md border border-slate-200 bg-white px-3 text-base sm:text-sm outline-none focus:border-teal-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
-        >
-          {field.options.map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-        {active?.description && (
-          <p className="mt-1 text-xs leading-5 text-slate-500">{active.description}</p>
-        )}
-        {error && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
-      </label>
-    );
-  }
-
-  if (field.kind === "currency") {
-    return (
-      <label className="block text-sm font-medium">
-        {field.label}
-        <input
-          value={value}
-          maxLength={3}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value.toUpperCase())}
-          className="mt-1 h-9 min-h-11 lg:min-h-0 w-24 rounded-md border border-slate-200 bg-white px-2 text-base sm:text-sm uppercase outline-none focus:border-teal-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
-        />
-        {field.help && <p className="mt-1 text-xs leading-5 text-slate-500">{field.help}</p>}
-        {error && <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{error}</p>}
-      </label>
-    );
-  }
-
-  const unit = field.kind === "percent" ? "%" : field.kind === "number" ? field.unit : undefined;
-  return (
-    <label className="block text-sm font-medium">
-      {field.label}
-      <div className="mt-1 flex items-center gap-2">
-        {field.kind === "money" && currency && (
-          <span className="text-xs font-semibold text-slate-500">{currency}</span>
-        )}
-        <input
-          type="number"
-          min={field.min}
-          max={field.kind === "money" ? undefined : field.max}
-          step={field.kind === "money" ? undefined : field.step}
-          value={value}
-          disabled={disabled}
-          onChange={(event) => onChange(event.target.value)}
-          className="h-9 min-h-11 lg:min-h-0 w-28 rounded-md border border-slate-200 bg-white px-2 text-base sm:text-sm tabular-nums outline-none focus:border-teal-500 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900"
-        />
-        {unit && <span className="text-xs text-slate-500">{unit}</span>}
-      </div>
-      {error ? (
-        <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">{error}</p>
-      ) : (
-        field.help && <p className="mt-1 text-xs leading-5 text-slate-500">{field.help}</p>
-      )}
-    </label>
   );
 }
