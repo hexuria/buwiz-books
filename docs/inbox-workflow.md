@@ -216,6 +216,22 @@ secret; writes need `integration:authorize`).
   `duplicate: true` and writes an `exact_replay_suppressed` workflow event
   (flagging a replayed id whose body changed) instead of vanishing.
 
+- **Schedules** use presets, not cron: `{ preset: "hourly" | "daily" | "weekly",
+at?: "HH:MM", weekday?: 0-6, timezone, source }` (`at` defaults to `00:00`;
+  hourly uses its minutes; `weekday` is required for, and only allowed on,
+  weekly). Times are wall-clock in the IANA `timezone`: a slot inside a
+  spring-forward gap runs shifted forward by the gap, a slot inside a fall-back
+  overlap runs once (the earlier instant), and hourly fires every real hour.
+  Creating, rescheduling, or enabling a schedule computes `next_run_at`;
+  disabling clears it. Every worker drain pass that may run
+  `routine_schedule_run` jobs first claims due routines (`FOR UPDATE SKIP
+LOCKED`, one org-context transaction each), enqueues one job per slot
+  (`dedupe_key routine:<id>:<slot>`), and advances `next_run_at` to the next
+  future slot — a late pass fires a missed slot once, never a backlog. The job
+  runs the `source` named in the config (`src/lib/routines/schedule-sources.ts`;
+  only `noop` exists so far) and records a `routine_schedule_run` workflow
+  event. `max_concurrent_runs` is stored but not yet enforced.
+
 ## Current integration boundary
 
 This release includes the normalized source, connection, ingestion, evidence,

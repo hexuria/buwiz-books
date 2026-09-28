@@ -25,12 +25,14 @@ import { processInboundEmailJob } from "./handlers/inbound-email";
 import { processStandaloneDocumentJob } from "./handlers/standalone-document";
 import { processStatementOcrJob } from "./handlers/statement-ocr";
 import { processRoutineWebhookJob } from "./handlers/routine-webhook";
+import { processRoutineScheduleRunJob } from "./handlers/routine-schedule-run";
 import {
   BUSINESS_GROUP_PROJECTION_JOB_TYPE,
   processBusinessGroupProjectionJob,
 } from "./handlers/business-group-projection";
 import { retryPolicyFor } from "./retry-policy";
-import { ROUTINE_WEBHOOK_JOB_TYPE } from "@/lib/routines/config";
+import { ROUTINE_SCHEDULE_RUN_JOB_TYPE, ROUTINE_WEBHOOK_JOB_TYPE } from "@/lib/routines/config";
+import { enqueueDueRoutineRuns } from "@/lib/routines/scheduler";
 
 const logger = createLogger("api.internal.inbox-worker");
 
@@ -65,6 +67,7 @@ export const JOB_HANDLERS: Record<string, JobHandler> = {
   coa_scaffold: processCoaScaffoldJob,
   [BUSINESS_GROUP_PROJECTION_JOB_TYPE]: processBusinessGroupProjectionJob,
   [ROUTINE_WEBHOOK_JOB_TYPE]: processRoutineWebhookJob,
+  [ROUTINE_SCHEDULE_RUN_JOB_TYPE]: processRoutineScheduleRunJob,
 };
 
 export const INBOX_JOB_TYPES = ["process_inbound_email", "process_standalone_document"];
@@ -171,6 +174,21 @@ export type RunJobWorkerResult =
   | JobHandlerResult;
 
 /**
+ * Turn due schedule routines into `routine_schedule_run` jobs (Inbox v2 §3)
+ * before the claim loop, so one worker tick both fires and runs them. A
+ * failed scan is logged loudly and never blocks draining the queue.
+ */
+async function fireDueScheduleRoutines(): Promise<void> {
+  try {
+    await enqueueDueRoutineRuns();
+  } catch (error) {
+    logger.error("Due schedule routines could not be fired; the queue still drains", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Claim-and-process loop shared by the worker routes.
  *
  * Processes up to `maxJobs` claimable jobs of the allowed types. Never
@@ -188,6 +206,9 @@ export async function runJobWorker(options: RunJobWorkerOptions = {}): Promise<R
     return { processed: false, reason: "no_registered_handlers" };
   }
   const maxJobs = Math.max(1, options.maxJobs ?? MAX_JOBS_PER_REQUEST);
+  // Only a pass allowed to run the resulting jobs fires schedules: a
+  // type-restricted nudge (statement OCR, inbound email) leaves them alone.
+  if (jobTypes.includes(ROUTINE_SCHEDULE_RUN_JOB_TYPE)) await fireDueScheduleRoutines();
 
   const results: JobHandlerResult[] = [];
   for (let index = 0; index < maxJobs; index += 1) {

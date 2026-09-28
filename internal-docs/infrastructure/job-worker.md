@@ -47,6 +47,10 @@ Content-Type: application/json
 {}                      # or {"jobTypes": ["process_inbound_email"]}
 ```
 
+A call that may run `routine_schedule_run` jobs (an empty body does) first
+fires due schedule routines — at most 25 per call — so the same tick is also
+the routine scheduler; there is nothing separate to deploy.
+
 One call drains at most `MAX_JOBS_PER_REQUEST` (5) jobs and returns. A minute
 tick therefore floors throughput at 5 jobs/min; bursts above that are normally
 absorbed by the self-trigger, and the backlog drains 5-per-tick regardless.

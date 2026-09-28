@@ -11,6 +11,9 @@
  * accounts. The one exception is the system-provisioned inbound email
  * routine, which starts enabled so that existing email intake keeps working
  * exactly as before routines existed.
+ *
+ * Setting a schedule (creating a schedule routine, changing its schedule, or
+ * enabling it) computes its first `next_run_at`; disabling clears it.
  */
 import { and, asc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -28,7 +31,10 @@ import {
   inboundEmailTriggerConfig,
   isInboundEmailRoutine,
   parseHmacWebhookConfig,
+  parseScheduleTriggerConfig,
 } from "./config";
+import { computeNextRunAt, scheduleConfigSchema, type ScheduleConfig } from "./schedule";
+import { getScheduleSource } from "./schedule-sources";
 import { generateRoutineWebhookSecret, replaceRoutineWebhookSecret } from "./secrets";
 
 export type RoutineRow = typeof routines.$inferSelect;
@@ -54,6 +60,11 @@ export interface RoutineView {
 }
 
 const routineName = z.string().trim().min(1).max(ROUTINE_NAME_MAX_LENGTH);
+const scheduleSource = z
+  .string()
+  .min(1)
+  .max(64)
+  .refine((key) => getScheduleSource(key) !== null, "Unknown schedule source.");
 
 export const createRoutineInputSchema = z.discriminatedUnion("triggerKind", [
   z.object({
@@ -61,12 +72,22 @@ export const createRoutineInputSchema = z.discriminatedUnion("triggerKind", [
     name: routineName,
     enabled: z.boolean().default(true),
   }),
+  z.object({
+    triggerKind: z.literal("schedule"),
+    name: routineName,
+    enabled: z.boolean().default(true),
+    schedule: scheduleConfigSchema,
+    source: scheduleSource,
+  }),
 ]);
 export type CreateRoutineInput = z.input<typeof createRoutineInputSchema>;
 
 export const updateRoutineInputSchema = z.object({
   routineId: z.string().uuid(),
   name: routineName.optional(),
+  /** Replaces the whole schedule (a schedule routine only). */
+  schedule: scheduleConfigSchema.optional(),
+  source: scheduleSource.optional(),
 });
 export type UpdateRoutineInput = z.input<typeof updateRoutineInputSchema>;
 
@@ -113,12 +134,31 @@ async function lockRoutine(db: DbExecutor, orgId: string, routineId: string): Pr
   return row;
 }
 
+/** The stored schedule's preset fields, without its source. */
+function scheduleOf(config: ScheduleConfig): ScheduleConfig {
+  return {
+    preset: config.preset,
+    at: config.at,
+    weekday: config.weekday,
+    timezone: config.timezone,
+  };
+}
+
 export async function createRoutine(
   db: DbExecutor,
-  input: { orgId: string; actorId: string; routine: CreateRoutineInput },
+  input: { orgId: string; actorId: string; routine: CreateRoutineInput; now?: Date },
 ): Promise<RoutineView> {
   const routine = createRoutineInputSchema.parse(input.routine);
   if (routine.enabled) await assertChartOfAccountsApplied(db, input.orgId);
+
+  const now = input.now ?? new Date();
+  const trigger =
+    routine.triggerKind === "schedule"
+      ? {
+          triggerConfig: { ...scheduleOf(routine.schedule), source: routine.source },
+          nextRunAt: routine.enabled ? computeNextRunAt(routine.schedule, now) : null,
+        }
+      : { triggerConfig: { ...defaultHmacWebhookConfig() }, nextRunAt: null };
 
   const [created] = await db
     .insert(routines)
@@ -127,7 +167,8 @@ export async function createRoutine(
       name: routine.name,
       enabled: routine.enabled,
       triggerKind: routine.triggerKind,
-      triggerConfig: { ...defaultHmacWebhookConfig() },
+      triggerConfig: trigger.triggerConfig,
+      nextRunAt: trigger.nextRunAt,
       createdBy: input.actorId,
     })
     .returning();
@@ -152,15 +193,44 @@ export async function createRoutine(
 
 export async function updateRoutine(
   db: DbExecutor,
-  input: { orgId: string; actorId: string; update: UpdateRoutineInput },
+  input: { orgId: string; actorId: string; update: UpdateRoutineInput; now?: Date },
 ): Promise<RoutineView> {
   const update = updateRoutineInputSchema.parse(input.update);
   const current = await lockRoutine(db, input.orgId, update.routineId);
-  if (update.name === undefined || update.name === current.name) return toRoutineView(current);
+  const now = input.now ?? new Date();
+
+  const set: Partial<typeof routines.$inferInsert> = {};
+  const changes: Record<string, { old: unknown; new: unknown }> = {};
+  if (update.name !== undefined && update.name !== current.name) {
+    set.name = update.name;
+    changes.name = { old: current.name, new: update.name };
+  }
+  if (update.schedule !== undefined || update.source !== undefined) {
+    if (current.triggerKind !== "schedule") {
+      throw new Error("Only a schedule routine has a schedule.");
+    }
+    const existing = parseScheduleTriggerConfig(current.triggerConfig);
+    const schedule = update.schedule ?? (existing ? scheduleOf(existing) : null);
+    const source = update.source ?? existing?.source;
+    if (!schedule || !source) {
+      throw new Error("Provide the full schedule and source for this routine.");
+    }
+    const triggerConfig = { ...schedule, source };
+    set.triggerConfig = triggerConfig;
+    // Setting a schedule computes its next slot; a corrected config also
+    // clears the error that stopped an invalid one from firing.
+    set.nextRunAt = current.enabled ? computeNextRunAt(schedule, now) : null;
+    set.lastError = null;
+    changes.triggerConfig = {
+      old: current.triggerConfig,
+      new: toSerializableRecord(triggerConfig),
+    };
+  }
+  if (Object.keys(set).length === 0) return toRoutineView(current);
 
   const [updated] = await db
     .update(routines)
-    .set({ name: update.name, updatedAt: new Date() })
+    .set({ ...set, updatedAt: now })
     .where(and(eq(routines.organizationId, input.orgId), eq(routines.id, current.id)))
     .returning();
   await insertActivityLog(
@@ -170,7 +240,7 @@ export async function updateRoutine(
       entityId: current.id,
       action: "routine_updated",
       actorId: input.actorId,
-      changes: { name: { old: current.name, new: updated.name } },
+      changes,
     },
     db,
   );
@@ -183,15 +253,33 @@ export async function updateRoutine(
  */
 export async function setRoutineEnabled(
   db: DbExecutor,
-  input: { orgId: string; actorId: string; routineId: string; enabled: boolean },
+  input: { orgId: string; actorId: string; routineId: string; enabled: boolean; now?: Date },
 ): Promise<RoutineView> {
   const current = await lockRoutine(db, input.orgId, input.routineId);
   if (current.enabled === input.enabled) return toRoutineView(current);
   if (input.enabled) await assertChartOfAccountsApplied(db, input.orgId);
 
+  const now = input.now ?? new Date();
+  let nextRunAt: Date | null | undefined;
+  if (current.triggerKind === "schedule") {
+    if (input.enabled) {
+      // Re-enabling starts from the next future slot — never a catch-up
+      // burst for the slots missed while the routine was off.
+      const config = parseScheduleTriggerConfig(current.triggerConfig);
+      if (!config) throw new Error("Fix this routine's schedule before enabling it.");
+      nextRunAt = computeNextRunAt(config, now);
+    } else {
+      nextRunAt = null;
+    }
+  }
+
   const [updated] = await db
     .update(routines)
-    .set({ enabled: input.enabled, updatedAt: new Date() })
+    .set({
+      enabled: input.enabled,
+      ...(nextRunAt !== undefined ? { nextRunAt } : {}),
+      updatedAt: now,
+    })
     .where(and(eq(routines.organizationId, input.orgId), eq(routines.id, current.id)))
     .returning();
   await insertActivityLog(
