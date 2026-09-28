@@ -45,6 +45,13 @@ jobs:
       - name: Component tests without a database or provider secrets
         run: bun run test:component
 
+      # Recorded mode only (the script pins AI_EVALS_MODE=recorded): replays
+      # stored provider responses and the golden rule-scorecard pile with no
+      # network and no database. Includes the scorecard gate, which fails
+      # unless every locked golden case reproduces exactly.
+      - name: Recorded evals and rule scorecard gate without a database or provider secrets
+        run: bun run test:evals
+
   integration-tests:
     if: github.repository_owner == 'hexuria'
     runs-on: ubuntu-latest

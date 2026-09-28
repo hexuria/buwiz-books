@@ -35,6 +35,17 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../../src/routes/api/-review-agents", () => api);
 
+// The section closes with the rule snapshots card (RuleSnapshotsPanel).
+const snapshotsApi = vi.hoisted(() => ({
+  listRuleSnapshots: vi.fn(),
+  createRuleSnapshot: vi.fn(),
+  pinRoutineRuleSnapshot: vi.fn(),
+  unpinRoutineRuleSnapshot: vi.fn(),
+}));
+vi.mock("../../src/routes/api/-rule-snapshots", () => snapshotsApi);
+const routinesApi = vi.hoisted(() => ({ listRoutines: vi.fn() }));
+vi.mock("../../src/routes/api/-routines", () => routinesApi);
+
 const permission = vi.hoisted(() => ({
   configure: true,
   run: true,
@@ -262,7 +273,41 @@ async function openRule(user: ReturnType<typeof userEvent.setup>, name: string) 
   await user.click(await screen.findByRole("button", { name: `Edit ${name}` }));
 }
 
+const BASELINE_SNAPSHOT = {
+  id: "00000000-0000-4000-8000-0000000000d1",
+  label: "Baseline",
+  createdBy: "user-1",
+  createdAt: new Date("2026-09-01T08:00:00.000Z"),
+  ruleCount: 14,
+  pinnedBy: [{ routineId: "routine-email", routineName: "Inbound email", slot: "active" as const }],
+};
+const STRICT_SNAPSHOT = {
+  ...BASELINE_SNAPSHOT,
+  id: "00000000-0000-4000-8000-0000000000d2",
+  label: "Receipts over 10",
+  createdAt: new Date("2026-09-20T08:00:00.000Z"),
+  pinnedBy: [],
+};
+const EMAIL_ROUTINE = {
+  id: "routine-email",
+  name: "Inbound email",
+  ruleSnapshotId: BASELINE_SNAPSHOT.id,
+  shadowRuleSnapshotId: null,
+};
+
 beforeEach(() => {
+  snapshotsApi.listRuleSnapshots
+    .mockReset()
+    .mockResolvedValue([STRICT_SNAPSHOT, BASELINE_SNAPSHOT]);
+  snapshotsApi.createRuleSnapshot.mockReset().mockResolvedValue({
+    ...STRICT_SNAPSHOT,
+    id: "00000000-0000-4000-8000-0000000000d3",
+    label: "Stricter receipts",
+    snapshot: [],
+  });
+  snapshotsApi.pinRoutineRuleSnapshot.mockReset().mockResolvedValue(EMAIL_ROUTINE);
+  snapshotsApi.unpinRoutineRuleSnapshot.mockReset().mockResolvedValue(EMAIL_ROUTINE);
+  routinesApi.listRoutines.mockReset().mockResolvedValue([EMAIL_ROUTINE]);
   blocker.calls = [];
   blocker.resolver = { status: "idle" };
   permission.configure = true;
@@ -780,5 +825,64 @@ describe("ReviewRulesSettings — Scan books", () => {
       }),
     );
     expect(await within(scan).findByText("Not scanned yet")).toBeVisible();
+  });
+});
+
+describe("ReviewRulesSettings — rule snapshots", () => {
+  it("closes the section with the saved snapshots and each routine's rules", async () => {
+    renderSection();
+
+    const card = await screen.findByRole("region", { name: "Rule snapshots" });
+    const list = await within(card).findByRole("list", { name: "Saved rule snapshots" });
+    expect(within(list).getByText("Baseline")).toBeVisible();
+    expect(within(list).getByText("Receipts over 10")).toBeVisible();
+    expect(within(list).getByText("Pinned on Inbound email")).toBeVisible();
+    expect(within(card).getByLabelText("Rules for Inbound email")).toHaveValue(
+      BASELINE_SNAPSHOT.id,
+    );
+    expect(within(card).getByLabelText("Shadow for Inbound email")).toHaveValue("");
+    // After the rule groups, so it reads as a snapshot of everything above.
+    const inbox = screen.getByRole("region", { name: "Inbox checks" });
+    expect(inbox.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("snapshots the current rules and pins through the server functions", async () => {
+    const user = userEvent.setup();
+    renderSection();
+    const card = await screen.findByRole("region", { name: "Rule snapshots" });
+
+    await user.type(within(card).getByLabelText("Snapshot label"), "Stricter receipts");
+    await user.click(within(card).getByRole("button", { name: "Snapshot current rules" }));
+    await waitFor(() =>
+      expect(snapshotsApi.createRuleSnapshot).toHaveBeenCalledWith({
+        data: { label: "Stricter receipts" },
+      }),
+    );
+    expect(await screen.findByText("Snapshot “Stricter receipts” saved.")).toBeVisible();
+
+    await user.selectOptions(
+      within(card).getByLabelText("Shadow for Inbound email"),
+      STRICT_SNAPSHOT.id,
+    );
+    await waitFor(() =>
+      expect(snapshotsApi.pinRoutineRuleSnapshot).toHaveBeenCalledWith({
+        data: { routineId: "routine-email", snapshotId: STRICT_SNAPSHOT.id, shadow: true },
+      }),
+    );
+    await user.selectOptions(within(card).getByLabelText("Rules for Inbound email"), "");
+    await waitFor(() =>
+      expect(snapshotsApi.unpinRoutineRuleSnapshot).toHaveBeenCalledWith({
+        data: { routineId: "routine-email", shadow: false },
+      }),
+    );
+    expect((await screen.findAllByText("Inbound email rules updated.")).length).toBeGreaterThan(0);
+  });
+
+  it("is read-only without the configure permission", async () => {
+    permission.configure = false;
+    renderSection();
+    const card = await screen.findByRole("region", { name: "Rule snapshots" });
+    expect(within(card).getByRole("button", { name: "Snapshot current rules" })).toBeDisabled();
+    expect(await within(card).findByLabelText("Rules for Inbound email")).toBeDisabled();
   });
 });

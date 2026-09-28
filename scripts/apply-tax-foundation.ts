@@ -48,6 +48,10 @@ try {
     // exist long before this runs, and creates `routines` itself so push
     // finds nothing left to prompt about.
     "0054_routines.sql",
+    // Inbox v2 rule snapshots. Creates `rule_snapshots` before push can
+    // prompt about it, adds the routine pin foreign keys and shadow column,
+    // and installs the immutability trigger (the part push cannot create).
+    "0055_rule_snapshots.sql",
     "0058_party_name_trigram.sql",
   ];
   for (const file of files) {

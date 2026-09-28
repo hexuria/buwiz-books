@@ -25,7 +25,7 @@ describe("routines wiring", () => {
     expect(migration).not.toMatch(/CREATE TABLE (?!IF NOT EXISTS)/);
     expect(migration).not.toMatch(/CREATE (UNIQUE )?INDEX (?!IF NOT EXISTS)/);
     expect(migration).not.toMatch(/ADD COLUMN (?!IF NOT EXISTS)/);
-    // rule_snapshots arrives in step 8; the column must not reference it yet.
+    // 0054 predates rule_snapshots; the pin's foreign key is 0055's job.
     expect(migration).not.toMatch(/REFERENCES rule_snapshots/);
   });
 

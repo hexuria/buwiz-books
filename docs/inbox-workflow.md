@@ -258,6 +258,85 @@ LOCKED`, one org-context transaction each), enqueues one job per slot
   only `noop` exists so far) and records a `routine_schedule_run` workflow
   event. `max_concurrent_runs` is stored but not yet enforced.
 
+## Rule snapshots
+
+A rule snapshot (`rule_snapshots`) freezes an organization's effective rule
+configuration: one `{ruleKey, enabled, impact, config, formulaVersion}` entry
+per configurable rule, with the accounting-settings thresholds baked into the
+book rules so a snapshot never moves when settings change later. Snapshots are
+immutable — no update path exists and the database rejects every `UPDATE` —
+and are managed through `src/routes/api/-rule-snapshots.ts` (create from live
+configs, list, get, pin, unpin; writes need `agentRule:configure`, reads
+`agentRule:view`).
+
+- **Pinning.** A routine's `rule_snapshot_id` names the rules its papers are
+  evaluated against; null means the organization's live `review_rule_configs`.
+  A paper is traced to its routine through its primary source record's
+  ingestion event. Every evaluation of a routine paper uses the pin: stage 2's
+  re-evaluation after classifying an emailed draft (whose pick threshold is the
+  pinned low-confidence threshold too) and a reviewer's correction. Manual
+  entry, imports, and bills are not routine papers and always use live configs.
+  A pinned snapshot that cannot be read fails the evaluation rather than
+  silently falling back to live.
+- **Traceability.** Every book finding carries `evidence.ruleSet =
+{ source: "live" | "snapshot", snapshotId, routineId }`, and the
+  `submitted` / `candidate_classified` / `candidate_corrected` workflow events
+  record the same value, so a paper evaluated with no findings is traceable too.
+- **Shadow.** `shadow_rule_snapshot_id` names a second snapshot that is
+  evaluated alongside and logged as a `rule_shadow_evaluated` workflow event
+  (its findings, the enforced findings, and the difference). Shadow output is
+  never a review finding, so it can never block approval or period close.
+- **Promote and roll back.** Pinning the routine's shadow snapshot promotes it
+  and clears the shadow; the previous snapshot stays for rollback. A pinned or
+  shadowed snapshot cannot be deleted (`ON DELETE RESTRICT`).
+- **Not yet covered.** Duplicate detection (`possible_duplicate`) runs on
+  source records across routines and still reads the live config; review
+  agents run on demand against the posted ledger. Both are captured in a
+  snapshot and replayed by the scorecard. System rules
+  (`party_payment_details_changed`, the source-processing rules) read no
+  config, so no snapshot includes or switches them off.
+
+## Rule scorecard
+
+`bun eval:scorecard` replays a pile of papers under a rule set and prints the
+metrics: `cases`, `real_problems_caught` (of `real_problems_total`),
+`false_alarms`, `approved_zero_edits`, `locked_cases_passing` of
+`locked_cases_total`, and `memory_hit_rate` / `cost_per_100` (null until
+memory lands, and always null in recorded mode).
+
+```text
+bun eval:scorecard --pile golden --json                     # no network, no database
+bun eval:scorecard --pile golden --rules <snapshot-id> --org <orgId>
+bun eval:scorecard --pile org:<orgId> --rules live --limit 500
+```
+
+- `--pile` is a JSONL file, `golden` (`tests/evals/scorecard/golden.jsonl`),
+  or `org:<orgId>` — the organization's most recently approved or rejected
+  Inbox items, read-only inside its org context. `--rules` is `default`
+  (catalog defaults), `live`, a snapshot id, or a JSON rules file. Only the
+  `recorded` chain runs: `default` and `jev` would call live models, which is
+  the nightly harness's job, not this command's.
+- A pile line is one case: `id`, `category`, `locked`, `candidate`
+  (`transactionDate`, `transactionType`, `originalCurrency`,
+  `functionalCurrency`, `exchangeRate`), `lines` (amounts in the original
+  currency, optional `categoryConfidence`), `accounts` keyed by the ids the
+  lines use, `party`, `documents`, optional `duplicate` (`source` and
+  `priorRecords` as duplicate-matcher inputs) and `ledgerHistory` (recent
+  posted rows, for `material_expense`), `paymentDetails` (the payee's stored
+  and printed bank details, for `party_payment_details_changed`), `expected`
+  (`problems` — the rule keys of the paper's real problems — and optional
+  `blocked`), and `outcome` (`decision`, `edits`).
+- Organization piles take labels from `ai_eval_cases` rows with task
+  `inbox_rules`, `input_ref.candidateId`, and `expected = { problems, blocked?,
+locked? }`; unlabeled cases count toward `cases` and `approved_zero_edits`
+  only. They replay book rules; duplicate, ledger, and payee bank-detail
+  context is not rebuilt.
+- **CI gate.** `tests/evals/scorecard.eval.ts` runs the golden pile under
+  `tests/evals/scorecard/golden-rules.json` in `bun run test:evals`, which CI's
+  hermetic job runs, and fails unless every locked case reproduces exactly.
+  Unlocked golden cases hold the known misses and false alarms the scorecard
+  tracks.
+
 ## Current integration boundary
 
 This release includes the normalized source, connection, ingestion, evidence,

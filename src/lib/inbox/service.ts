@@ -13,8 +13,6 @@ import {
   organizationAccountingSettings,
   reviewDecisions,
   reviewFindings,
-  reviewRuleConfigs,
-  reviewRuleDefinitions,
   sourceMatchCandidates,
   sourceRecordDocuments,
   sourceRecordVersions,
@@ -46,7 +44,9 @@ import {
 } from "./duplicate-matcher";
 import { loadDuplicateEngineConfig, runDuplicateMatchingForSource } from "./duplicate-engine";
 import { preserveAuthoritativeEconomicEvent } from "./economic-event";
-import { evaluateBookRules, type BookRuleAccount } from "./rules";
+import type { BookRuleAccount } from "./rules";
+import { evaluateCandidateRules, withRuleSetProvenance, type AppliedRuleSet } from "./rule-set";
+import { LIVE_RULE_SET_PROVENANCE, loadLiveRuleConfigs } from "./rule-snapshots";
 import {
   compareMoney,
   convertBalancedLines,
@@ -751,47 +751,29 @@ export async function createTransactionCandidate(
     );
   }
 
-  const configuredRules = await db
-    .select({
-      key: reviewRuleDefinitions.key,
-      enabled: reviewRuleConfigs.enabled,
-      impact: reviewRuleConfigs.impact,
-      config: reviewRuleConfigs.config,
-    })
-    .from(reviewRuleConfigs)
-    .innerJoin(reviewRuleDefinitions, eq(reviewRuleConfigs.definitionId, reviewRuleDefinitions.id))
-    .where(eq(reviewRuleConfigs.organizationId, orgId));
-  const ruleConfigByKey = new Map(configuredRules.map((rule) => [rule.key, rule]));
-  const lowConfidenceConfig = ruleConfigByKey.get("low_confidence_category")?.config as
-    | { threshold?: number }
-    | undefined;
-  const receiptConfig = ruleConfigByKey.get("missing_receipt")?.config as
-    | { threshold?: number; currency?: string }
-    | undefined;
-  const findings = evaluateBookRules({
-    candidate: { ...input, originalCurrency, functionalCurrency, exchangeRate },
-    lines: normalizedLines,
-    accounts: ruleInputs.accountMap,
-    party: ruleInputs.party,
-    documents: ruleInputs.documents,
-    settings: {
-      lowConfidenceThreshold: String(
-        lowConfidenceConfig?.threshold ?? settings.lowConfidenceThreshold,
-      ),
-      missingReceiptThreshold: String(receiptConfig?.threshold ?? settings.missingReceiptThreshold),
-      missingReceiptCurrency: normalizeCurrency(
-        receiptConfig?.currency ?? settings.missingReceiptCurrency,
-      ),
-      functionalCurrency,
+  // No routine brought this paper in — routine intake records its routine on
+  // an ingestion event, and this path creates its source record without one —
+  // so it is evaluated against the organization's live rule configs.
+  const ruleSet: AppliedRuleSet = {
+    provenance: LIVE_RULE_SET_PROVENANCE,
+    configByKey: await loadLiveRuleConfigs(db, orgId),
+    fallbacks: {
+      lowConfidenceThreshold: settings.lowConfidenceThreshold,
+      missingReceiptThreshold: settings.missingReceiptThreshold,
+      missingReceiptCurrency: settings.missingReceiptCurrency,
     },
-  })
-    .filter((finding) => ruleConfigByKey.get(finding.ruleKey)?.enabled !== false)
-    .map((finding) => ({
-      ...finding,
-      impact:
-        (ruleConfigByKey.get(finding.ruleKey)?.impact as "blocking" | "warning" | undefined) ??
-        finding.impact,
-    }));
+  };
+  const findings = withRuleSetProvenance(
+    evaluateCandidateRules(ruleSet, {
+      candidate: { ...input, originalCurrency, functionalCurrency, exchangeRate },
+      lines: normalizedLines,
+      accounts: ruleInputs.accountMap,
+      party: ruleInputs.party,
+      documents: ruleInputs.documents,
+      functionalCurrency,
+    }),
+    ruleSet.provenance,
+  );
   if (findings.length > 0) {
     await db.insert(reviewFindings).values(
       findings.map((finding) => ({
@@ -824,7 +806,11 @@ export async function createTransactionCandidate(
     actorType: "user",
     actorId: userId,
     idempotencyKey: `candidate:${candidate.id}:submitted`,
-    data: { sourceChannel: input.sourceChannel ?? "manual", findingCount },
+    data: {
+      sourceChannel: input.sourceChannel ?? "manual",
+      findingCount,
+      ruleSet: ruleSet.provenance,
+    },
   });
   await insertActivityLog(
     {

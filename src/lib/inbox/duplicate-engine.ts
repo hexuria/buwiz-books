@@ -93,17 +93,37 @@ export async function loadDuplicateEngineConfig(
     )
     .where(eq(reviewRuleDefinitions.key, "possible_duplicate"))
     .limit(1);
+  return duplicateEngineConfigFrom({
+    defaultConfig: row?.defaultConfig,
+    config: row?.config,
+    enabled: row?.enabled,
+    impact: row?.impact,
+    formulaVersion: row?.formulaVersion,
+  });
+}
 
-  const defaultConfig = (row?.defaultConfig ?? {}) as Record<string, unknown>;
-  const configured = (row?.config ?? {}) as Record<string, unknown>;
+/**
+ * The duplicate engine's config from one `possible_duplicate` rule — pure, so
+ * the rule replay (src/lib/inbox/rule-replay.ts) reads a snapshot entry the
+ * same way this engine reads the live row.
+ */
+export function duplicateEngineConfigFrom(row: {
+  defaultConfig?: Record<string, unknown> | null;
+  config?: Record<string, unknown> | null;
+  enabled?: boolean | null;
+  impact?: string | null;
+  formulaVersion?: number | null;
+}): DuplicateEngineConfig {
+  const defaultConfig = (row.defaultConfig ?? {}) as Record<string, unknown>;
+  const configured = (row.config ?? {}) as Record<string, unknown>;
   const merged = { ...defaultConfig, ...configured };
   const rawMode = merged.mode;
   const mode: DuplicateEngineConfig["mode"] =
     rawMode === "off" || rawMode === "shadow" || rawMode === "enforce" ? rawMode : "enforce";
   return {
     mode,
-    enabled: row?.enabled !== false,
-    impact: row?.impact === "warning" ? "warning" : "blocking",
+    enabled: row.enabled !== false,
+    impact: row.impact === "warning" ? "warning" : "blocking",
     matchWindowDays: numberConfig(merged, "matchWindowDays", 3),
     blockingScore: numberConfig(merged, "blockingScore", 70),
     shadowScore: numberConfig(merged, "shadowScore", 50),
@@ -116,7 +136,7 @@ export async function loadDuplicateEngineConfig(
     // explicit algorithmVersion config or the definition's formulaVersion).
     algorithmVersion: Math.max(
       numberConfig(merged, "algorithmVersion", DUPLICATE_MATCHER_VERSION),
-      row?.formulaVersion ?? 1,
+      row.formulaVersion ?? 1,
       DUPLICATE_MATCHER_VERSION,
     ),
   };
@@ -339,7 +359,7 @@ async function loadCandidateSources(
   );
 }
 
-function effectiveDisposition(
+export function effectiveDisposition(
   result: DuplicateMatchResult,
   config: DuplicateEngineConfig,
 ): DuplicateDisposition {

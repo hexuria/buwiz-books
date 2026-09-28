@@ -7,8 +7,6 @@ import {
   inboxItems,
   organizationAccountingSettings,
   reviewFindings,
-  reviewRuleConfigs,
-  reviewRuleDefinitions,
   sourceRecordDocuments,
   sourceRecords,
   transactionCandidateLines,
@@ -40,7 +38,9 @@ import {
   parseMoneyToScaled,
   sumMoney,
 } from "./money";
-import { evaluateBookRules, type BookRuleAccount } from "./rules";
+import type { BookRuleAccount } from "./rules";
+import { evaluateCandidateRules, withRuleSetProvenance, type CandidateRuleInput } from "./rule-set";
+import { recordShadowRuleEvaluation, resolveCandidateRuleSets } from "./rule-snapshots";
 import type { CandidateLineInput, InboxServiceContext } from "./types";
 import { enqueueCandidateClassification } from "./candidate-classification-job";
 import { collectDocumentFacts, loadCandidateDocuments } from "./candidate-document-facts";
@@ -776,23 +776,14 @@ export async function correctInboxCandidate(
     .where(eq(organizationAccountingSettings.organizationId, orgId))
     .limit(1);
   if (!settings) throw new Error("Accounting settings are not configured.");
-  const configuredRules = await db
-    .select({
-      key: reviewRuleDefinitions.key,
-      enabled: reviewRuleConfigs.enabled,
-      impact: reviewRuleConfigs.impact,
-      config: reviewRuleConfigs.config,
-    })
-    .from(reviewRuleConfigs)
-    .innerJoin(reviewRuleDefinitions, eq(reviewRuleConfigs.definitionId, reviewRuleDefinitions.id))
-    .where(eq(reviewRuleConfigs.organizationId, orgId));
-  const ruleConfigByKey = new Map(configuredRules.map((rule) => [rule.key, rule]));
-  const lowConfidenceConfig = ruleConfigByKey.get("low_confidence_category")?.config as
-    | { threshold?: number }
-    | undefined;
-  const receiptConfig = ruleConfigByKey.get("missing_receipt")?.config as
-    | { threshold?: number; currency?: string }
-    | undefined;
+  // The paper's routine decides the rules: its pinned snapshot when it has
+  // one, live configs otherwise. A shadow snapshot is evaluated below and only
+  // ever logged.
+  const ruleSets = await resolveCandidateRuleSets(db, orgId, row.candidate.id, {
+    lowConfidenceThreshold: settings.lowConfidenceThreshold,
+    missingReceiptThreshold: settings.missingReceiptThreshold,
+    missingReceiptCurrency: settings.missingReceiptCurrency,
+  });
   const correctionLines: CandidateLineInput[] = normalizedLines.map((line) => ({
     accountId: line.accountId,
     debit: line.originalDebit,
@@ -807,7 +798,7 @@ export async function correctInboxCandidate(
     row.candidate.id,
     sourceRecordIds,
   );
-  const findings = evaluateBookRules({
+  const ruleInput: CandidateRuleInput = {
     candidate: {
       transactionDate: input.transactionDate,
       transactionType: input.transactionType,
@@ -823,24 +814,10 @@ export async function correctInboxCandidate(
     accounts: ruleAccounts,
     party: party ? { id: party.id, partyType: party.partyType } : null,
     documents: candidateDocuments,
-    settings: {
-      lowConfidenceThreshold: String(
-        lowConfidenceConfig?.threshold ?? settings.lowConfidenceThreshold,
-      ),
-      missingReceiptThreshold: String(receiptConfig?.threshold ?? settings.missingReceiptThreshold),
-      missingReceiptCurrency: normalizeCurrency(
-        receiptConfig?.currency ?? settings.missingReceiptCurrency,
-      ),
-      functionalCurrency: row.candidate.functionalCurrency,
-    },
-  })
-    .filter((finding) => ruleConfigByKey.get(finding.ruleKey)?.enabled !== false)
-    .map((finding) => ({
-      ...finding,
-      impact:
-        (ruleConfigByKey.get(finding.ruleKey)?.impact as "blocking" | "warning" | undefined) ??
-        finding.impact,
-    }));
+    functionalCurrency: row.candidate.functionalCurrency,
+  };
+  const enforcedFindings = evaluateCandidateRules(ruleSets.active, ruleInput);
+  const findings = withRuleSetProvenance(enforcedFindings, ruleSets.active.provenance);
   if (findings.length > 0) {
     await db.insert(reviewFindings).values(
       findings.map((finding) => ({
@@ -857,8 +834,25 @@ export async function correctInboxCandidate(
       })),
     );
   }
+  // Shadow rules are evaluated on the same draft and only ever logged.
+  if (ruleSets.shadow) {
+    await recordShadowRuleEvaluation(db, {
+      orgId,
+      inboxItemId: row.item.id,
+      candidateId: row.candidate.id,
+      candidateRevision: nextRevision,
+      active: ruleSets.active,
+      activeFindings: enforcedFindings,
+      shadow: ruleSets.shadow,
+      shadowFindings: withRuleSetProvenance(
+        evaluateCandidateRules(ruleSets.shadow, ruleInput),
+        ruleSets.shadow.provenance,
+      ),
+    });
+  }
   // However the payee got linked, a document asking to be paid somewhere
-  // other than the payee's stored bank account needs a human.
+  // other than the payee's stored bank account needs a human. A system rule:
+  // no rule set, live or pinned, can switch it off.
   if (party && ["vendor", "both", "employee"].includes(party.partyType)) {
     await raisePaymentDetailsFindingIfChanged(db, {
       orgId,
@@ -907,6 +901,7 @@ export async function correctInboxCandidate(
       economicEventClassBefore: primarySource?.economicEventClass ?? null,
       economicEventClassAfter: classification.economicEventClass,
       economicEventChanged,
+      ruleSet: ruleSets.active.provenance,
     },
   });
   await insertActivityLog(
