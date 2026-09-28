@@ -4,11 +4,17 @@
  * Verifies Resend/Svix signatures, resolves the receiving address to one tenant,
  * preserves the provider event idempotently, and creates an Inbox source item
  * before any asynchronous attachment/OCR work begins.
+ *
+ * Inbound email is the organization's first webhook routine (Inbox v2 §3): the
+ * routine is provisioned on the first email, and every ingestion event and
+ * processing job it produces carries its routine_id. A disabled routine still
+ * RECORDS the email (the ingestion event keeps the full payload) but does not
+ * process it, and says so in workflow_events.
  */
 import { createError, defineEventHandler, getHeader, readRawBody } from "h3";
 import { Resend } from "resend";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { db } from "../../../../src/db";
+import { db, withOrgContext } from "../../../../src/db";
 import {
   inboxItems,
   ingestionEvents,
@@ -25,6 +31,7 @@ import {
 import { requeueFailedInboundEmailJob } from "../../../../src/lib/inbox/inbound-email-job";
 import { triggerWorker } from "../../../../src/lib/jobs/trigger";
 import { createLogger } from "../../../../src/lib/logger";
+import { ensureInboundEmailRoutine } from "../../../../src/lib/routines/service";
 
 const logger = createLogger("api.inbound-email.resend");
 
@@ -94,7 +101,10 @@ export default defineEventHandler(async (event) => {
 
   const deliveries: Array<Record<string, unknown> & { organizationId: string }> = [];
   for (const settings of matchedSettings) {
-    const outcome = await db.transaction(async (tx) => {
+    // Everything after org resolution runs in THAT organization's context,
+    // read from its own settings row, never across tenants.
+    const outcome = await withOrgContext(settings.organizationId, "system", "admin", async (tx) => {
+      const routine = await ensureInboundEmailRoutine(tx, settings.organizationId);
       const [source] = await tx
         .insert(integrationSources)
         .values({
@@ -119,6 +129,7 @@ export default defineEventHandler(async (event) => {
         .insert(ingestionEvents)
         .values({
           organizationId: settings.organizationId,
+          routineId: routine.id,
           sourceId: source.id,
           channel: "email",
           provider: "resend",
@@ -127,8 +138,9 @@ export default defineEventHandler(async (event) => {
           externalVersion: "1",
           payload: JSON.parse(rawBody) as Record<string, unknown>,
           headers: { "svix-id": id, "svix-timestamp": timestamp },
-          status: "received",
+          status: routine.enabled ? "received" : "skipped",
           occurredAt: new Date(payload.created_at),
+          processedAt: routine.enabled ? null : new Date(),
         })
         .onConflictDoNothing()
         .returning();
@@ -158,15 +170,51 @@ export default defineEventHandler(async (event) => {
             })
             .onConflictDoNothing();
         }
-        const requeued = await requeueFailedInboundEmailJob(tx, {
-          organizationId: settings.organizationId,
-          emailId: payload.data.email_id,
-        });
+        // A disabled routine processes nothing, replays included.
+        const requeued = routine.enabled
+          ? await requeueFailedInboundEmailJob(tx, {
+              organizationId: settings.organizationId,
+              emailId: payload.data.email_id,
+            })
+          : null;
         return {
           received: true,
           duplicate: true,
           requeued: Boolean(requeued),
           inboxItemId: (requeued?.payload as { inboxItemId?: string } | undefined)?.inboxItemId,
+        };
+      }
+
+      if (!routine.enabled) {
+        await tx
+          .insert(workflowEvents)
+          .values({
+            organizationId: settings.organizationId,
+            entityType: "ingestion_event",
+            entityId: ingestionEvent.id,
+            action: "routine_disabled_skipped",
+            actorType: "system",
+            idempotencyKey: `routine-disabled:ingestion:${ingestionEvent.id}`,
+            data: {
+              routineId: routine.id,
+              provider: "resend",
+              emailId: payload.data.email_id,
+              from: payload.data.from,
+              reason:
+                "The inbound email routine is disabled; the email was recorded, not processed.",
+            },
+          })
+          .onConflictDoNothing();
+        logger.info("Inbound email recorded without processing (routine disabled)", {
+          organizationId: settings.organizationId,
+          routineId: routine.id,
+          emailId: payload.data.email_id,
+        });
+        return {
+          received: true,
+          processed: false,
+          reason: "routine_disabled",
+          ingestionEventId: ingestionEvent.id,
         };
       }
 
@@ -302,6 +350,7 @@ export default defineEventHandler(async (event) => {
       });
       await tx.insert(processingJobs).values({
         organizationId: settings.organizationId,
+        routineId: routine.id,
         ingestionEventId: ingestionEvent.id,
         jobType: "process_inbound_email",
         dedupeKey: `resend-email:${payload.data.email_id}`,

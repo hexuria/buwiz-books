@@ -29,7 +29,13 @@ In `off` mode there are still two callers in practice:
 2. **The self-trigger** (`triggerWorker` in `src/lib/jobs/trigger.ts`), a
    fire-and-forget POST fired at enqueue time so interactive flows do not wait
    up to 60s. It is an optimisation, not a guarantee: it dies with the
-   instance, and it silently does nothing without `INBOX_WORKER_SECRET`.
+   instance.
+
+A production process in `off` mode **refuses to start** without
+`INBOX_WORKER_SECRET` (`server/plugins/job-drain.ts` throws at plugin init).
+It used to log an error and come up healthy, accepting webhooks and uploads
+whose jobs could never run. `JOB_DRAIN_MODE=inline` does not need the secret;
+dev and test are unaffected.
 
 Both hit the same endpoint:
 
@@ -117,9 +123,11 @@ Symptom: uploads/emails are accepted but nothing ever completes; rows pile up in
 
 **1. Is the secret set on the service?**
 
-No `INBOX_WORKER_SECRET` → the route returns `500 Inbox worker is not
-configured.` and the self-trigger no-ops. Logs show
-`Cannot trigger the job worker — queued jobs will not run` (once per instance).
+No `INBOX_WORKER_SECRET` → a production revision in `off` mode fails at
+startup with `Job worker is not configured: INBOX_WORKER_SECRET is not set`, so
+it never receives traffic. (Outside production the route returns `500 Inbox
+worker is not configured.` and the self-trigger logs
+`Cannot trigger the job worker — queued jobs will not run` once per instance.)
 Fix: add the secret to the deploy path and redeploy.
 
 Also confirm `JOB_DRAIN_MODE` is `off` (or unset) and `INTERNAL_WORKER_URL`

@@ -28,6 +28,7 @@ import { parties } from "./parties";
 import { dimensions } from "./dimensions";
 import { documents } from "./documents";
 import { journalHeaders } from "./journals";
+import { routines } from "./routines";
 
 export const organizationAccountingSettings = pgTable(
   "organization_accounting_settings",
@@ -289,11 +290,19 @@ export const ingestionEvents = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
+    // The routine that received this event (Inbox v2 §3). Null for events
+    // recorded before routines existed and for non-routine intake paths.
+    routineId: uuid("routine_id").references(() => routines.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("ingestion_events_org_provider_event_unique")
       .on(table.organizationId, table.provider, table.providerEventId)
       .where(sql`${table.providerEventId} is not null`),
+    // Routine-level delivery dedupe: one event id per routine. A suppressed
+    // duplicate is logged as a workflow event, never dropped silently.
+    uniqueIndex("ingestion_events_org_routine_event_unique")
+      .on(table.organizationId, table.routineId, table.providerEventId)
+      .where(sql`${table.routineId} is not null and ${table.providerEventId} is not null`),
     index("ingestion_events_org_status_received_idx").on(
       table.organizationId,
       table.status,
@@ -326,6 +335,10 @@ export const processingJobs = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // The routine whose run produced this job (Inbox v2 §3). Handlers load
+    // the routine inside the job's org context and require it to belong
+    // there; the payload alone never decides which books a job touches.
+    routineId: uuid("routine_id").references(() => routines.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("processing_jobs_org_dedupe_unique")
@@ -333,6 +346,7 @@ export const processingJobs = pgTable(
       .where(sql`${table.dedupeKey} is not null and ${table.status} in ('queued', 'running')`),
     index("processing_jobs_claim_idx").on(table.status, table.runAt, table.lockedUntil),
     index("processing_jobs_org_status_idx").on(table.organizationId, table.status),
+    index("processing_jobs_routine_idx").on(table.routineId),
   ],
 );
 

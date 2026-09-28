@@ -177,6 +177,45 @@ human must review, so a spoofed sender can at worst add review noise, never
 post to the ledger. Per-org sender allowlists are tracked in
 [docs/audit-backlog.md](audit-backlog.md), not implemented here.
 
+## Routines
+
+A routine is how papers get into the Inbox: a trigger plus its configuration
+(`routines` table). Every ingestion event and processing job a routine produces
+carries its `routine_id`. Routines are managed through the server functions in
+`src/routes/api/-routines.ts` (list, create, update, enable, disable, rotate
+secret; writes need `integration:authorize`).
+
+- **Chart gate.** Enabling a routine — at creation or later — requires an applied
+  chart of accounts: every bank, bill, and invoice mapping key must resolve
+  through `src/lib/coa/resolve-mapped-account.ts`. Otherwise the request fails
+  with "Set up your chart of accounts first." Disabling never needs a chart.
+- **Inbound email** is each organization's first webhook routine. It is
+  provisioned (enabled) by the Resend webhook the first time an email arrives
+  for the organization, so existing intake keeps working unchanged. While it is
+  disabled, an email is still **recorded** — the ingestion event keeps the full
+  provider payload with status `skipped` — but nothing is processed, provider
+  replays are not requeued, and a `routine_disabled_skipped` workflow event says
+  so.
+- **Generic webhooks.** `POST /api/routines/<routineId>/webhook` with a JSON
+  object body of at most 1 MB and three headers:
+
+  ```text
+  X-Buwiz-Timestamp: <unix seconds, within 300 s of our clock>
+  X-Buwiz-Signature: <hex HMAC-SHA256 of "<timestamp>.<raw body>">
+  X-Buwiz-Event-Id:  <the sender's unique id for this event>
+  ```
+
+  The HMAC key is the whole secret string returned by the rotate-secret server
+  function — the only time it is ever shown; it is stored encrypted in
+  `routine_secrets` and referenced from the routine by `secret_ref`. Rotating
+  retires the previous secret immediately. Every rejection (401 signature or
+  timestamp, 413 size, 404 routine) happens before any row is written. An
+  accepted payload becomes an ingestion event and a `routine_webhook` job whose
+  handler creates a source record and an Inbox item in `needs_information`.
+  Event ids are deduplicated per routine; a suppressed duplicate returns
+  `duplicate: true` and writes an `exact_replay_suppressed` workflow event
+  (flagging a replayed id whose body changed) instead of vanishing.
+
 ## Current integration boundary
 
 This release includes the normalized source, connection, ingestion, evidence,
