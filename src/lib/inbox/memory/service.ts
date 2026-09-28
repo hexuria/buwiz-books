@@ -41,7 +41,7 @@ import { roleHasPermission } from "@/lib/permission-policy";
 import { counterpartyRoleFor } from "../classification-plan";
 import { parseMoneyToScaled, scaledToMoney } from "../money";
 import {
-  accountSignature,
+  applyMemoryAnswer,
   buildMemoryAnswer,
   departsFromApplication,
   isMemoryDocKind,
@@ -435,24 +435,19 @@ export async function rememberCorrection(
   // A memory that is off — turned off by an admin, or by its own undo streak —
   // stays off until someone who manages memories turns it back on. Saving
   // over it is not a way around that.
-  if (previous && !previous.enabled && !canSaveCrossParty(ctx.role)) {
+  if (turnedOffForCaller(previous, ctx.role)) {
     throw new Error(
       "This memory is turned off. An owner or admin can turn it back on in Settings → Review Rules.",
     );
   }
+  // The WHOLE answer, not just its accounts: a re-save that changes a share,
+  // a currency or a tax code is a different answer, and keeping the old row
+  // while the lock below is rebuilt from the new one would split the two.
   const sameAnswer =
     previous !== undefined &&
-    previous.answerDocKind === answer.docKind &&
-    previous.answerPartyId === answer.partyId &&
-    accountSignature(
-      (previous.answerLines ?? []).map((line) => ({
-        side: line.lineMatch.side,
-        accountId: line.accountId,
-      })),
-    ) ===
-      accountSignature(
-        answer.lines.map((line) => ({ side: line.lineMatch.side, accountId: line.accountId })),
-      );
+    canonicalAnswer(previous.answerDocKind, previous.answerPartyId, previous.answerLines ?? []) ===
+      canonicalAnswer(answer.docKind, answer.partyId, answer.lines);
+  const reenabled = previous !== undefined && sameAnswer && !previous.enabled;
 
   let memory: typeof classificationMemories.$inferSelect;
   if (previous && sameAnswer) {
@@ -552,6 +547,29 @@ export async function rememberCorrection(
         : null,
     },
   });
+  if (reenabled) {
+    // Turned back on by an owner or admin's save: the same event the Settings
+    // switch writes, so the memory's history says who turned it on and when.
+    await db.insert(workflowEvents).values({
+      organizationId: orgId,
+      entityType: "classification_memory",
+      entityId: memory.id,
+      action: "memory_enabled",
+      actorType: "user",
+      actorId: userId,
+      data: { consecutiveUndosBefore: previous!.consecutiveUndos, via: "remember_correction" },
+    });
+    await insertActivityLog(
+      {
+        orgId,
+        entityType: "classification_memory",
+        entityId: memory.id,
+        action: "memory_enabled",
+        actorId: userId,
+      },
+      db,
+    );
+  }
   await insertActivityLog(
     {
       orgId,
@@ -579,6 +597,39 @@ export async function rememberCorrection(
     replaced: Boolean(previous),
     evalCaseId: evalCase.id,
   };
+}
+
+/**
+ * A memory that is off — by an admin, or by its own undo streak — stays off
+ * until someone who manages memories turns it on. Saving over it is refused
+ * for everyone else; the preview says so before they try.
+ */
+function turnedOffForCaller(
+  memory: { enabled: boolean } | null | undefined,
+  role: string,
+): boolean {
+  return Boolean(memory && !memory.enabled && !canSaveCrossParty(role));
+}
+
+/** A stable text form of a remembered answer, for "is this the same answer?". */
+function canonicalAnswer(
+  docKind: string | null,
+  partyId: string | null,
+  lines: readonly unknown[],
+): string {
+  const stable = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(stable);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>)
+          .filter(([, entry]) => entry !== undefined)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, entry]) => [key, stable(entry)]),
+      );
+    }
+    return value;
+  };
+  return JSON.stringify(stable({ docKind, partyId, lines }));
 }
 
 /** The lock rows ("Remember this?" test cases) a memory wrote. */
@@ -661,6 +712,7 @@ export async function previewMemoryScope(
       id: transactionCandidates.id,
       sourceRecordId: transactionCandidates.sourceRecordId,
       partyId: transactionCandidates.partyId,
+      originalCurrency: transactionCandidates.originalCurrency,
     })
     .from(transactionCandidates)
     .where(
@@ -717,16 +769,30 @@ export async function previewMemoryScope(
       })),
     };
     for (const paper of matched) {
+      const paperLines = lines.filter((line) => line.candidateId === paper.id);
       const settled = {
         docKind: paper.sourceRecordId ? (classById.get(paper.sourceRecordId) ?? null) : null,
         partyId: paper.partyId,
-        lines: lines
-          .filter((line) => line.candidateId === paper.id)
-          .map((line) => ({
-            side: line.originalDebit !== null ? ("debit" as const) : ("credit" as const),
-            accountId: line.accountId,
-          })),
+        lines: paperLines.map((line) => ({
+          side: line.originalDebit !== null ? ("debit" as const) : ("credit" as const),
+          accountId: line.accountId,
+        })),
       };
+      // Only a paper the memory would actually answer can be changed by it:
+      // the same gate classification applies (direction, currency, split
+      // totals). A key match it would refuse changes nothing.
+      const direction = memoryDirection(settled.docKind ?? "");
+      const debitTotal = paperLines.reduce(
+        (sum, line) => sum + parseMoneyToScaled(line.originalDebit ?? "0"),
+        0n,
+      );
+      if (!direction || debitTotal === 0n) continue;
+      const applied = applyMemoryAnswer(answer, {
+        direction,
+        total: scaledToMoney(debitTotal),
+        currency: paper.originalCurrency.trim().toUpperCase(),
+      });
+      if (!applied.ok) continue;
       if (departsFromApplication(application, settled)) changed += 1;
     }
   }
@@ -748,8 +814,9 @@ export async function previewMemoryScope(
     scope: input.scope,
     keyLabel: await labelMatchKey(db, orgId, input.scope, matchKey),
     requiresAdmin,
-    allowed: canSaveCrossParty(ctx.role) || (!requiresAdmin && !(existing && !existing.enabled)),
-    turnedOffNeedsAdmin: Boolean(existing && !existing.enabled && !canSaveCrossParty(ctx.role)),
+    allowed:
+      !turnedOffForCaller(existing, ctx.role) && (!requiresAdmin || canSaveCrossParty(ctx.role)),
+    turnedOffNeedsAdmin: turnedOffForCaller(existing, ctx.role),
     matched: matched.length,
     changed,
     examined: papers.length,

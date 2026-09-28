@@ -302,8 +302,10 @@ export async function lockAccruableEditorBill(
         .for("update")
     : [];
   if (!bill) throw new Error(BILL_DELETED_MESSAGE);
-  if (bill.journalHeaderId !== null) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
+  // Voided first: a bill voided after it accrued still carries its (now voided)
+  // journal id, and "voided" is the true reason, not "already approved".
   if (bill.status === "voided") throw new Error(BILL_VOIDED_MESSAGE);
+  if (bill.journalHeaderId !== null) throw new Error(BILL_ALREADY_ACCRUED_MESSAGE);
   if (moneyToCents(bill.amountPaid ?? "0", "amountPaid") !== 0) throw new Error(BILL_PAID_MESSAGE);
   // The Bills editor's own financial-edit guard, so the two paths can never disagree.
   assertBillFinanciallyEditable(bill);

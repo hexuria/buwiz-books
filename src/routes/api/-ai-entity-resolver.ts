@@ -41,7 +41,7 @@ import {
   normalizeTaxId,
 } from "../../lib/party-match/normalize";
 import {
-  decidePartyMatch,
+  outcomeForSearch,
   findPartyCandidates,
   type ExactTier,
   type PartyCandidateSearch,
@@ -190,16 +190,16 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
 
     // Outside any transaction: one model pick per entity that has look-alikes.
     const picks: Array<PartyPickResult | null> = [];
-    for (const prepared_ of prepared.searches) {
-      if (!prepared_.ok || prepared_.search.kind !== "candidates") {
+    for (const searched of prepared.searches) {
+      if (!searched.ok || searched.search.kind !== "candidates") {
         picks.push(null);
         continue;
       }
-      const { candidates } = prepared_.search;
+      const { candidates } = searched.search;
       picks.push(
         candidates.length === 0
           ? null
-          : await pickPartyWithModel(prepared_.query, candidates, {
+          : await pickPartyWithModel(searched.query, candidates, {
               orgId: prepared.orgId,
               userId: prepared.userId,
               complete: aiComplete,
@@ -228,17 +228,14 @@ export const resolveExtractedEntities = createServerFn({ method: "POST" })
 
         for (const [index, entity] of input.entities.entries()) {
           try {
-            const prepared_ = prepared.searches[index];
-            if (!prepared_.ok) throw prepared_.error;
-            const outcome: PartyMatchOutcome =
-              prepared_.search.kind === "exact"
-                ? {
-                    kind: "exact",
-                    tier: prepared_.search.tier,
-                    party: prepared_.search.party,
-                  }
-                : decidePartyMatch(prepared_.search.candidates, picks[index], minConfidence);
-            const match = await finishMatch(db, entity, prepared_.query, outcome, orgId);
+            const searched = prepared.searches[index];
+            if (!searched.ok) throw searched.error;
+            const outcome: PartyMatchOutcome = outcomeForSearch(
+              searched.search,
+              picks[index],
+              minConfidence,
+            );
+            const match = await finishMatch(db, entity, searched.query, outcome, orgId);
 
             if (match.status === "matched") {
               result.entities.push(match.resolved);

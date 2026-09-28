@@ -400,7 +400,7 @@ describe("entity resolver wiring", () => {
     // runs between the two org-context transactions, never inside one.
     expect(source).toContain("findPartyCandidates(query, lookups)");
     expect(source).toContain("partyLookups(db, orgId)");
-    expect(source).toContain("decidePartyMatch(");
+    expect(source).toContain("outcomeForSearch(");
     const [lookupPhase, rest] = source.split("// Outside any transaction:");
     expect(rest).toBeDefined();
     expect(lookupPhase).not.toContain("await pickPartyWithModel(");

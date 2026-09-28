@@ -15,15 +15,15 @@
  * accrual with no bill to pay or void (journal_headers.source_document_id is not
  * a foreign key).
  */
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { activityLogs } from "@/db/schema/activity-logs";
 import { bills } from "@/db/schema/bills";
 import { documentAttachments } from "@/db/schema/documents";
-import { journalHeaders, journalLines } from "@/db/schema/journals";
-import { reconciliations, statementLines } from "@/db/schema/reconciliations";
+import { journalHeaders } from "@/db/schema/journals";
 import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import { getClosedThrough, isDateLocked } from "@/lib/period-close";
+import { journalsClearedByFinalizedReconciliation } from "@/lib/reconciliation-claimed-lines";
 
 export async function deleteBillCore(
   db: DbExecutor,
@@ -74,20 +74,15 @@ export async function deleteBillCore(
       );
     }
 
-    const journalIds = linkedJournals.map((j) => j.id);
-    const reconciled = await db
-      .select({ id: statementLines.id })
-      .from(statementLines)
-      .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
-      .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
-      .where(
-        and(
-          inArray(journalLines.journalHeaderId, journalIds),
-          eq(reconciliations.status, "finalized"),
-        ),
+    // Shared with bill void and invoice void: it also sees journals cleared by
+    // SPLIT statement matches, not only the 1:1 matched-line column.
+    if (
+      await journalsClearedByFinalizedReconciliation(
+        db,
+        orgId,
+        linkedJournals.map((journal) => journal.id),
       )
-      .limit(1);
-    if (reconciled.length > 0) {
+    ) {
       throw new Error("Cannot delete bill: its journal is locked by a finalized reconciliation.");
     }
   }

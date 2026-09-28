@@ -201,5 +201,19 @@ export async function matchParty(
   const search = await findPartyCandidates(query, deps);
   if (search.kind === "exact") return search;
   const pick = search.candidates.length > 0 ? await deps.pick(query, search.candidates) : null;
-  return decidePartyMatch(search.candidates, pick, options.minConfidence);
+  return outcomeForSearch(search, pick, options.minConfidence);
+}
+
+/**
+ * The match a finished search and (optional) model pick add up to — the second
+ * half of matchParty, for callers that must run the pick outside the
+ * transaction the search ran in (src/routes/api/-ai-entity-resolver.ts).
+ */
+export function outcomeForSearch(
+  search: Awaited<ReturnType<typeof findPartyCandidates>>,
+  pick: PartyPickResult | null,
+  minConfidence: number,
+): PartyMatchOutcome {
+  if (search.kind === "exact") return search;
+  return decidePartyMatch(search.candidates, pick, minConfidence);
 }

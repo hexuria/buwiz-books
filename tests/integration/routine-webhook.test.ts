@@ -319,6 +319,57 @@ describeDb("routine webhook", () => {
     expect(logged.map(({ data }) => data.samePayload).sort()).toEqual([false, true]);
   });
 
+  it("revives a legacy skipped delivery only for the very body it stored", async () => {
+    const eventId = `evt-${randomUUID()}`;
+    const body = JSON.stringify({ vendor: "Acme", total: "12.00" });
+    const first = await deliver(fixture, { eventId, body });
+    const eventRowId = first.ingestionEventId as string;
+    // As a disabled routine used to leave it: stored, skipped, no live job.
+    await db
+      .update(ingestionEvents)
+      .set({ status: "skipped" })
+      .where(eq(ingestionEvents.id, eventRowId));
+    await db
+      .update(processingJobs)
+      .set({ status: "completed" })
+      .where(eq(processingJobs.ingestionEventId, eventRowId));
+    const liveJobs = async () =>
+      (
+        await db
+          .select()
+          .from(processingJobs)
+          .where(eq(processingJobs.ingestionEventId, eventRowId))
+      ).filter((job) => job.status === "queued");
+
+    // Same event id, different body: audited as a replay, never processed.
+    const tampered = await deliver(fixture, {
+      eventId,
+      body: JSON.stringify({ vendor: "Acme", total: "999.00" }),
+      timestamp: String(Number(nowSeconds()) + 1),
+    });
+    expect(tampered).toMatchObject({ duplicate: true, queued: false });
+    const [stillSkipped] = await db
+      .select()
+      .from(ingestionEvents)
+      .where(eq(ingestionEvents.id, eventRowId));
+    expect(stillSkipped.status).toBe("skipped");
+    expect(await liveJobs()).toHaveLength(0);
+
+    // The same body is the sender's retry: revived and queued once.
+    const retry = await deliver(fixture, {
+      eventId,
+      body,
+      timestamp: String(Number(nowSeconds()) + 2),
+    });
+    expect(retry).toMatchObject({ received: true, ingestionEventId: eventRowId, queued: true });
+    const [revived] = await db
+      .select()
+      .from(ingestionEvents)
+      .where(eq(ingestionEvents.id, eventRowId));
+    expect(revived.status).toBe("received");
+    expect(await liveJobs()).toHaveLength(1);
+  });
+
   it("dedupes per routine: another routine may reuse the same event id", async () => {
     const other = await withOrgContext(fixture.orgId, fixture.userId, "admin", async (tx) => {
       const routine = await createRoutine(tx, {

@@ -116,8 +116,10 @@ describe("bill mutation wiring", () => {
     for (const refusal of [
       '.for("update")',
       "throw new Error(BILL_DELETED_MESSAGE)",
-      "throw new Error(BILL_ALREADY_ACCRUED_MESSAGE)",
+      // Voided before accrued: a voided bill keeps its journal id, and
+      // "voided" is the reason a person needs to see.
       "throw new Error(BILL_VOIDED_MESSAGE)",
+      "throw new Error(BILL_ALREADY_ACCRUED_MESSAGE)",
       "throw new Error(BILL_PAID_MESSAGE)",
       "assertBillFinanciallyEditable(bill)",
     ]) {

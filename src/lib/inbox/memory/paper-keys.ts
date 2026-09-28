@@ -10,14 +10,13 @@
 // org-context executor, so RLS scopes it a second time.
 // ============================================================================
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { documentAttachments, documents } from "@/db/schema/documents";
-import { sourceRecordDocuments, sourceRecords, workflowEvents } from "@/db/schema/inbox";
+import { sourceRecordDocuments, sourceRecords } from "@/db/schema/inbox";
 import {
   derivePaperKeys,
   paperDocumentFacts,
-  parsePaperKeys,
   partyKey,
   type PaperDocumentFacts,
   type PaperKeyInput,
@@ -185,69 +184,33 @@ export async function loadPaperKeyInputs(
 }
 
 /**
- * The keys inbox stage 2 recorded for each paper when it classified it
- * (the latest candidate_classified event that carries them). Those are the
- * keys the paper was looked up by, so a memory saved from it must use them.
- */
-export async function loadRecordedPaperKeys(
-  db: DbExecutor,
-  orgId: string,
-  candidateIds: readonly string[],
-): Promise<Map<string, PaperKeys>> {
-  const recorded = new Map<string, PaperKeys>();
-  if (candidateIds.length === 0) return recorded;
-  const rows = await db
-    .select({
-      entityId: workflowEvents.entityId,
-      keys: sql<unknown>`${workflowEvents.data} -> 'memoryKeys'`,
-    })
-    .from(workflowEvents)
-    .where(
-      and(
-        eq(workflowEvents.organizationId, orgId),
-        eq(workflowEvents.entityType, "transaction_candidate"),
-        eq(workflowEvents.action, "candidate_classified"),
-        inArray(workflowEvents.entityId, [...candidateIds]),
-      ),
-    )
-    .orderBy(desc(workflowEvents.createdAt), desc(workflowEvents.id));
-  for (const row of rows) {
-    if (recorded.has(row.entityId)) continue;
-    const keys = parsePaperKeys(row.keys);
-    if (keys) recorded.set(row.entityId, keys);
-  }
-  return recorded;
-}
-
-/**
- * Keys for papers a person is looking at now: the recorded keys where stage 2
- * left them, the live derivation otherwise — and, either way, the party the
- * paper is settled on NOW, because "this party" means the one a person chose.
+ * Keys for papers a person is looking at now, derived exactly as inbox
+ * stage 2 derives them when it looks a paper up (lookupMemoryForDraft in
+ * ./store.ts): the same loader and the same derivation, from the paper as it
+ * is NOW. A memory saved from these keys is found by the next paper that
+ * produces them. The party is the one the paper is settled on now, because
+ * "this party" means the one a person chose.
+ *
+ * Remember used to prefer the keys stage 2 recorded when it classified the
+ * paper. Those went stale when extraction changed without a reclassify, and
+ * two events in the same millisecond tied on random ids.
  */
 export async function resolvePaperKeys(
   db: DbExecutor,
   orgId: string,
   subjects: readonly PaperSubject[],
 ): Promise<Map<string, PaperKeys>> {
-  const recorded = await loadRecordedPaperKeys(
-    db,
-    orgId,
-    subjects.map((subject) => subject.id),
-  );
-  const needLive = subjects.filter((subject) => !recorded.has(subject.id));
-  const live = await loadPaperKeyInputs(db, orgId, needLive);
+  const live = await loadPaperKeyInputs(db, orgId, subjects);
   const keys = new Map<string, PaperKeys>();
   for (const subject of subjects) {
-    const base =
-      recorded.get(subject.id) ??
-      derivePaperKeys(
-        live.get(subject.id) ?? {
-          documents: [],
-          from: null,
-          fallbackDescription: null,
-          partyId: null,
-        },
-      );
+    const base = derivePaperKeys(
+      live.get(subject.id) ?? {
+        documents: [],
+        from: null,
+        fallbackDescription: null,
+        partyId: null,
+      },
+    );
     const party = partyKey(subject.partyId);
     keys.set(subject.id, { ...base, party: party ? [party] : [] });
   }

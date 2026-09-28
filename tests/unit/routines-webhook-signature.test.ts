@@ -55,6 +55,11 @@ describe("routine webhook signatures", () => {
     });
   });
 
+  it("rejects the old timestamp.body digest, which did not bind the event id", () => {
+    const legacy = createHmac("sha256", SECRET).update(`${NOW_SECONDS}.${BODY}`).digest("hex");
+    expect(verify({ signature: legacy })).toEqual({ ok: false, reason: "signature_mismatch" });
+  });
+
   it("accepts a valid signature, in either hex case", () => {
     expect(verify()).toEqual({ ok: true });
     const upper = signRoutineWebhook(SECRET, String(NOW_SECONDS), EVENT, BODY).toUpperCase();

@@ -227,7 +227,10 @@ export function canAutoApply(input: {
 // ============================================================================
 // Lanes (Inbox v2 §8). A lane's auto level lets Jev approve a whole paper, and
 // approving a paper applies proposal kinds on the model's behalf. A lane may
-// only act when none of the kinds it applies is structurally manual.
+// only act when none of the kinds it applies is structurally manual, EXCEPT
+// the kinds its INBOX_APPROVE_LANE_EXCEPTIONS entry names (below): the
+// inbox_approve lane applies `categorize`, which stays walled everywhere else.
+// Do not "restore" the wall for that lane; the exception is deliberate.
 // ============================================================================
 
 /**

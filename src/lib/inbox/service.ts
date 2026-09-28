@@ -48,7 +48,11 @@ import {
   type EconomicEventClass,
   type TransactionDirection,
 } from "./duplicate-matcher";
-import { loadDuplicateEngineConfig, runDuplicateMatchingForSource } from "./duplicate-engine";
+import {
+  findOpenDuplicateCase,
+  loadDuplicateEngineConfig,
+  runDuplicateMatchingForSource,
+} from "./duplicate-engine";
 import { preserveAuthoritativeEconomicEvent } from "./economic-event";
 import { noteApprovalOfMemoryAnswer } from "./memory/tracking";
 import type { BookRuleAccount } from "./rules";
@@ -1149,6 +1153,20 @@ export async function approveInboxItem(
         approvalOutcome: "blocked",
         reason: "possible_duplicate",
         caseId: unresolvedDuplicateCase.id,
+        message: DUPLICATE_APPROVAL_BLOCKED_MESSAGE,
+      };
+    }
+  }
+  // Jev is held on ANY open duplicate case, as its lane predicate is: the
+  // matcher pass above can open a shadow or warning-impact case that does not
+  // block a person, and must not slip past a system approval either.
+  if (systemApproval) {
+    const openCase = await findOpenDuplicateCase(db, orgId, candidateSourceIds);
+    if (openCase) {
+      return {
+        approvalOutcome: "blocked",
+        reason: "possible_duplicate",
+        caseId: openCase.id,
         message: DUPLICATE_APPROVAL_BLOCKED_MESSAGE,
       };
     }

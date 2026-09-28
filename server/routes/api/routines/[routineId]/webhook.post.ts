@@ -29,7 +29,7 @@ import {
   type H3Event,
 } from "h3";
 import { and, eq, sql } from "drizzle-orm";
-import { db, withOrgContext } from "../../../../../src/db";
+import { db, withOrgContext, type DbExecutor } from "../../../../../src/db";
 import {
   ingestionEvents,
   integrationSources,
@@ -276,23 +276,20 @@ export default defineEventHandler(async (event) => {
             eq(ingestionEvents.providerEventId, eventId),
           ),
         )
-        .limit(1);
+        .limit(1)
+        // Two retries of the same event serialize here, so only one revives it.
+        .for("update");
       if (!existing) throw new Error("Duplicate routine webhook event could not be resolved.");
-      if (existing.status === "skipped") {
+      if (existing.status === "skipped" && existing.payloadHash === payloadHash) {
         // Recorded while the routine was disabled (before disabled deliveries
-        // were refused). The routine is on now, so this retry processes it.
+        // were refused). The routine is on now, so this retry processes it —
+        // only when it carries the very body that was stored; a different body
+        // under the same event id falls through to the replay audit below.
         await tx
           .update(ingestionEvents)
           .set({ status: "received", processedAt: null })
           .where(eq(ingestionEvents.id, existing.id));
-        await tx.insert(processingJobs).values({
-          organizationId: owner.organizationId,
-          routineId: routine.id,
-          ingestionEventId: existing.id,
-          jobType: ROUTINE_WEBHOOK_JOB_TYPE,
-          dedupeKey: `routine-webhook:${existing.id}`,
-          payload: { routineId: routine.id, ingestionEventId: existing.id },
-        });
+        await enqueueRoutineWebhookJob(tx, owner.organizationId, routine.id, existing.id);
         return { received: true, ingestionEventId: existing.id, queued: true };
       }
       await tx
@@ -316,14 +313,7 @@ export default defineEventHandler(async (event) => {
       return { received: true, duplicate: true, ingestionEventId: existing.id, queued: false };
     }
 
-    await tx.insert(processingJobs).values({
-      organizationId: owner.organizationId,
-      routineId: routine.id,
-      ingestionEventId: ingestionEvent.id,
-      jobType: ROUTINE_WEBHOOK_JOB_TYPE,
-      dedupeKey: `routine-webhook:${ingestionEvent.id}`,
-      payload: { routineId: routine.id, ingestionEventId: ingestionEvent.id },
-    });
+    await enqueueRoutineWebhookJob(tx, owner.organizationId, routine.id, ingestionEvent.id);
     logger.info("Routine webhook payload queued", {
       organizationId: owner.organizationId,
       routineId: routine.id,
@@ -344,3 +334,23 @@ export default defineEventHandler(async (event) => {
   if (outcome.queued) triggerWorker([ROUTINE_WEBHOOK_JOB_TYPE]);
   return outcome;
 });
+
+/** One processing job per stored delivery; the dedupe key keeps a retry from queueing it twice. */
+async function enqueueRoutineWebhookJob(
+  tx: DbExecutor,
+  organizationId: string,
+  routineId: string,
+  ingestionEventId: string,
+): Promise<void> {
+  await tx
+    .insert(processingJobs)
+    .values({
+      organizationId,
+      routineId,
+      ingestionEventId,
+      jobType: ROUTINE_WEBHOOK_JOB_TYPE,
+      dedupeKey: `routine-webhook:${ingestionEventId}`,
+      payload: { routineId, ingestionEventId },
+    })
+    .onConflictDoNothing();
+}

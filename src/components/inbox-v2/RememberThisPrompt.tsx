@@ -46,7 +46,7 @@ export const MEMORY_SCOPE_OPTIONS: ReadonlyArray<{
   {
     value: "line_text",
     label: "These words",
-    hint: "Every paper described with these words, from any party. Owners and admins only.",
+    hint: "Every paper described with these words, from any party. It fills the lines only: each paper keeps its own vendor or customer, or none if nothing matches it exactly. Owners and admins only.",
   },
 ];
 

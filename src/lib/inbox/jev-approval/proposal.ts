@@ -34,6 +34,7 @@ import {
 import { laneWalledKinds } from "@/lib/ai/autonomy";
 import { ensureAutonomyLane, type AutonomyLaneRow } from "@/lib/ai/autonomy-lanes";
 import { isDateInLockedPeriod } from "@/lib/period-close";
+import { findOpenDuplicateCase } from "../duplicate-engine";
 import type { RuleSetProvenance } from "../rule-set";
 import { CANDIDATE_CLASSIFIED_ACTION, CLASSIFICATION_EVIDENCE_SOURCE } from "../v2/model-doubt";
 import { deriveInboxV2Kind, REMEMBERED_EVIDENCE_SOURCE, type InboxV2Kind } from "../v2/triage";
@@ -341,28 +342,8 @@ export async function loadJevPaperFacts(
     .limit(1);
 
   const sourceIds = await candidateSourceIds(db, orgId, candidate, item);
-  const [duplicate] =
-    sourceIds.length > 0
-      ? await db
-          .select({ id: sourceMatchCandidates.id })
-          .from(sourceMatchCandidates)
-          .where(
-            and(
-              eq(sourceMatchCandidates.organizationId, orgId),
-              eq(sourceMatchCandidates.state, "open"),
-              eq(sourceMatchCandidates.matchClass, "duplicate"),
-              // A shadow case is observe-only: it raises no finding and never
-              // blocks a person's approval, so it does not hold Jev either.
-              // Approval re-runs the matcher at its final gate regardless.
-              eq(sourceMatchCandidates.disposition, "blocking"),
-              or(
-                inArray(sourceMatchCandidates.leftSourceRecordId, sourceIds),
-                inArray(sourceMatchCandidates.rightSourceRecordId, sourceIds),
-              ),
-            ),
-          )
-          .limit(1)
-      : [];
+  // Any open case, shadow or warning included: Jev is held where a person is only warned.
+  const duplicate = await findOpenDuplicateCase(db, orgId, sourceIds);
 
   const sender = await loadJevSender(db, orgId, { candidate, sourceIds });
   const period = await isDateInLockedPeriod(orgId, candidate.transactionDate, db);

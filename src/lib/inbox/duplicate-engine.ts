@@ -951,3 +951,35 @@ export async function runDuplicateMatchingForSource(
     mode: config.mode,
   };
 }
+
+/**
+ * Any open duplicate case touching these sources — shadow and warning cases
+ * included. Jev is held on this wider test (the lane predicate in
+ * src/lib/inbox/jev-approval/proposal.ts and the system-approval gate in
+ * approveInboxItem share it), while a person's approval blocks only on the
+ * cases the org's duplicate settings make blocking.
+ */
+export async function findOpenDuplicateCase(
+  db: DbExecutor,
+  orgId: string,
+  sourceRecordIds: readonly string[],
+): Promise<{ id: string } | null> {
+  if (sourceRecordIds.length === 0) return null;
+  const ids = [...sourceRecordIds];
+  const [row] = await db
+    .select({ id: sourceMatchCandidates.id })
+    .from(sourceMatchCandidates)
+    .where(
+      and(
+        eq(sourceMatchCandidates.organizationId, orgId),
+        eq(sourceMatchCandidates.state, "open"),
+        eq(sourceMatchCandidates.matchClass, "duplicate"),
+        or(
+          inArray(sourceMatchCandidates.leftSourceRecordId, ids),
+          inArray(sourceMatchCandidates.rightSourceRecordId, ids),
+        ),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}

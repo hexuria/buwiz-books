@@ -42,6 +42,8 @@ import {
   processingJobs,
   reviewDecisions,
   reviewFindings,
+  reviewRuleConfigs,
+  reviewRuleDefinitions,
   sourceMatchCandidates,
   transactionCandidates,
   workflowEvents,
@@ -438,7 +440,7 @@ describeDb("Jev approves papers on an auto lane", () => {
     },
   );
 
-  it("a shadow-mode duplicate case is observe-only and does not hold Jev", async () => {
+  it("holds Jev on a shadow-mode duplicate case a person would only be warned about", async () => {
     const { fixture } = await autoLaneOrganization("jev-auto-shadow-dup");
     const paper = await proposeOnLane(fixture, { amount: "42.10", day: 3 });
     const other = await submitJevExpense(fixture, { amount: "99.99", day: 28, record: false });
@@ -453,7 +455,11 @@ describeDb("Jev approves papers on an auto lane", () => {
     });
 
     const { result } = await runQueuedJevJob(fixture, paper.candidate.id, paper.candidate.revision);
-    expect(result).toMatchObject({ status: "approved" });
+    expect(result).toMatchObject({ status: "held" });
+    expect((result.holds as Array<{ reason: string }>).map((hold) => hold.reason)).toContain(
+      "duplicate_case",
+    );
+    expect(await journalsFor(paper.candidate.id)).toBeNull();
   });
 
   it("skips a paper a person changed after it was queued", async () => {
@@ -798,6 +804,80 @@ describeDb("the organization's Jev settings", () => {
 });
 
 describeDb("the system approval path", () => {
+  it("refuses a system approval at its last gate on any open duplicate case, shadow included", async () => {
+    const fixture = await readyOrganization("jev-auto-gate-dup");
+    // The matcher re-derives (and closes stale) cases when it runs; with it off
+    // the open shadow case below stands, so this exercises the gate alone.
+    const [duplicateRule] = await db
+      .select({ id: reviewRuleDefinitions.id })
+      .from(reviewRuleDefinitions)
+      .where(eq(reviewRuleDefinitions.key, "possible_duplicate"));
+    await db.insert(reviewRuleConfigs).values({
+      organizationId: fixture.orgId,
+      definitionId: duplicateRule.id,
+      enabled: false,
+      impact: "blocking",
+      updatedBy: fixture.userId,
+    });
+    const { item, candidate, proposal } = await submitJevExpense(fixture, {
+      amount: "42.10",
+      day: 3,
+    });
+    const other = await submitJevExpense(fixture, { amount: "99.99", day: 28, record: false });
+    const [left, right] = [candidate.sourceRecordId!, other.candidate.sourceRecordId!].sort();
+    const [shadowCase] = await db
+      .insert(sourceMatchCandidates)
+      .values({
+        organizationId: fixture.orgId,
+        leftSourceRecordId: left,
+        rightSourceRecordId: right,
+        matchType: "probable",
+        score: "80",
+        disposition: "shadow",
+      })
+      .returning();
+    const approve = (systemApproval: boolean) =>
+      asOrg(fixture, (tx) =>
+        approveInboxItem(
+          {
+            db: tx,
+            orgId: fixture.orgId,
+            userId: systemApproval ? JEV_AUDIT_ACTOR_ID : fixture.reviewerId,
+            role: systemApproval ? "system" : "admin",
+          },
+          {
+            inboxItemId: item.id,
+            expectedRevision: candidate.revision,
+            expectedLockVersion: item.lockVersion,
+          },
+          systemApproval
+            ? {
+                systemApproval: {
+                  grant: mintJevApprovalGrant({
+                    laneId: proposal!.laneId,
+                    candidateId: candidate.id,
+                    candidateRevision: candidate.revision,
+                    confidence: 0.97,
+                  }),
+                  laneId: proposal!.laneId,
+                  confidence: 0.97,
+                  ruleSnapshotId: null,
+                  makerCheckerOptIn: false,
+                },
+              }
+            : {},
+        ),
+      );
+    expect(await approve(true)).toMatchObject({
+      approvalOutcome: "blocked",
+      reason: "possible_duplicate",
+      caseId: shadowCase.id,
+    });
+    expect(await journalsFor(candidate.id)).toBeNull();
+    // A person is only warned by a shadow case, and can still approve.
+    expect(await approve(false)).toMatchObject({ approvalOutcome: "approved" });
+  });
+
   it("posts through the same approval and cores, naming Jev and borrowing no user", async () => {
     const fixture = await readyOrganization("jev-auto-path");
     const { item, candidate, proposal } = await submitJevExpense(fixture, {

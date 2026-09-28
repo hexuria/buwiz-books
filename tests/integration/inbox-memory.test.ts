@@ -672,6 +672,24 @@ integrationDescribe("memory answers the next paper, with no model", () => {
     expect((await reloadCandidate(next.candidate.id)).partyId).toBe(vendor.id);
   });
 
+  it("a party memory does not answer a paper only a model could match to that party", async () => {
+    const fixture = await createOrganizationWithChart("memory-party-model");
+    const { saved } = await rememberedReceipt(fixture, "party");
+
+    // "Staples Office Store" is not an exact match: only the model could link it,
+    // and the memory pass runs before any model, so the party memory stays out.
+    const next = await uploadReceipt(fixture, {
+      party: "Staples Office Store",
+      description: "Envelopes",
+      amount: "7.10",
+    });
+    const { complete, calls } = stubbedComplete("67200");
+    const result = await classify(fixture, next.candidate, complete);
+    expect(result).not.toMatchObject({ memory: { outcome: "hit" } });
+    expect(calls).toContain("categorize_lines");
+    expect((await memoryRow(saved.memoryId)).uses).toBe(0);
+  });
+
   it("a remembered doc kind reclassifies the paper the way a reviewer would", async () => {
     const fixture = await createOrganizationWithChart("memory-kind");
     const chart = await chartOf(fixture);
@@ -1373,6 +1391,31 @@ integrationDescribe("permissions", () => {
       enabled: true,
       consecutiveUndos: 0,
     });
+    // …and its history says so, as the Settings switch would have.
+    const enabled = await eventsFor(saved.memoryId, "memory_enabled");
+    expect(enabled).toHaveLength(1);
+    expect(enabled[0]).toMatchObject({ data: { via: "remember_correction" } });
+  });
+
+  it("the same accounts split differently is a different answer, with a new id", async () => {
+    const fixture = await createOrganizationWithChart("memory-resave-split");
+    const { chart, vendor, first, saved } = await rememberedReceipt(fixture, "file_hash");
+    await correct(fixture, first.inboxItemId, {
+      partyId: vendor.id,
+      lines: [
+        { accountId: chart.office.id, debit: "50.00" },
+        { accountId: chart.office.id, debit: "34.25" },
+        { accountId: chart.bank.id, credit: "84.25" },
+      ],
+    });
+    const again = await remember(fixture, first.candidate.id, "file_hash");
+    expect(again).toMatchObject({ replaced: true });
+    expect(again.memoryId).not.toBe(saved.memoryId);
+    const row = await memoryRow(again.memoryId);
+    expect(row.answerLines).toHaveLength(3);
+    // The lock is rebuilt from the same answer the memory now holds.
+    const [lock] = await db.select().from(aiEvalCases).where(eq(aiEvalCases.id, again.evalCaseId));
+    expect((lock.expected as { lines: unknown[] }).lines).toHaveLength(3);
   });
 
   it("a sender memory with no tax id to pin the party is admin-only", async () => {
@@ -1490,6 +1533,10 @@ integrationDescribe("scope preview", () => {
     await uploadReceipt(fixture, { description: "PRINTER paper and TONER." });
     // A different description does not match at all.
     await uploadReceipt(fixture, { description: "Coffee beans" });
+    // Same words in another currency: matched, but the memory would refuse
+    // it (currency_differs), so it is not a paper it would have changed.
+    const euro = await uploadReceipt(fixture, { currency: "EUR" });
+    expect((await reloadCandidate(euro.candidate.id)).originalCurrency).toBe("EUR");
 
     // Another organization with the very same words is invisible here.
     const elsewhere = await createOrganizationWithChart("memory-preview-b");
@@ -1510,7 +1557,7 @@ integrationDescribe("scope preview", () => {
     expect(preview).toMatchObject({
       available: true,
       keyLabel: "and paper printer toner",
-      matched: 3,
+      matched: 4,
       changed: 2,
       capped: false,
       windowMonths: 12,
@@ -1518,7 +1565,7 @@ integrationDescribe("scope preview", () => {
     });
     if (!preview.available) throw new Error("preview unavailable");
     // Past papers only: this one is not counted against itself.
-    expect(preview.examined).toBe(4);
+    expect(preview.examined).toBe(5);
 
     const byFile = await api.previewMemoryScope({
       data: { candidateId: target.candidate.id, scope: "file_hash" },
@@ -1534,7 +1581,7 @@ integrationDescribe("scope preview", () => {
       await api.previewMemoryScope({
         data: { candidateId: target.candidate.id, scope: "line_text" },
       }),
-    ).toMatchObject({ matched: 2, changed: 1 });
+    ).toMatchObject({ matched: 3, changed: 1 });
   });
 });
 
