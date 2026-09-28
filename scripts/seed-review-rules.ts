@@ -7,8 +7,9 @@
  * Its 14 original rows only ever shipped inside drizzle/0019_inbox_review_foundation.sql, a
  * hand-applied migration that `drizzle-kit` does not run (0019 is absent from
  * drizzle/meta/_journal.json). `db:fresh`, `make migrate` and the CI deploy all create the
- * table from the Drizzle schema and leave it empty, which is why `/review-agents` renders
- * "No review agents are configured." on an otherwise healthy database.
+ * table from the Drizzle schema and leave it empty, which is why the review-rule screen (then
+ * `/review-agents`, now Settings → Review Rules) reported "No review agents are configured." on an
+ * otherwise healthy database.
  *
  * Idempotent and additive: ON CONFLICT (key) DO NOTHING. Existing rows are never modified —
  * 0020 already changed `possible_duplicate`'s defaults, and re-asserting a TypeScript constant
@@ -116,7 +117,7 @@ async function reportStatus() {
   if (!(await catalogTableExists("review_findings"))) return;
 
   // Findings written by the pre-fix engine, which never set inbox_item_id. Their only resolution
-  // path is the /review-agents findings panel.
+  // path is Ledger findings under Settings -> Review Rules.
   const orphaned = await query(sql`
     SELECT rule_key, state, count(*)::int AS n
     FROM review_findings WHERE inbox_item_id IS NULL
@@ -127,7 +128,7 @@ async function reportStatus() {
     console.log("   none — the on-demand run has never produced findings here.");
   } else {
     for (const row of orphaned) console.log(`   ${row.rule_key} (${row.state}): ${row.n}`);
-    console.log("   Resolve these from the /review-agents findings panel.");
+    console.log("   Resolve these from Ledger findings under Settings → Review Rules.");
   }
 
   // Calibration evidence for the enforce-vs-shadow decision.

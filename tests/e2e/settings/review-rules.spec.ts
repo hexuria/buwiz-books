@@ -55,6 +55,17 @@ test.describe("Settings Review Rules", () => {
     await expect(page.getByText(/there is no lookback window/i)).toBeVisible();
   });
 
+  test("holds the ledger scan and its findings next to the ledger checks", async ({ page }) => {
+    const scan = page.getByRole("region", { name: "Scan books" });
+    await expect(scan.getByRole("button", { name: "Scan books", exact: true })).toBeEnabled();
+    // One line per check from its own last run, and the findings of the selected check.
+    await expect(scan.getByRole("list", { name: "Ledger check runs" })).toBeVisible();
+    await expect(scan.getByRole("button", { name: /^Unusual Spend, \d+ open$/ })).toBeVisible();
+    await expect(scan.getByText(/^Ledger findings · /)).toBeVisible();
+    await expect(scan.getByRole("button", { name: "Open", exact: true })).toBeVisible();
+    await expect(scan.getByRole("button", { name: "All", exact: true })).toBeVisible();
+  });
+
   test("offers Save only for a real change, and Discard puts it back", async ({ page }) => {
     await page.getByRole("button", { name: "Edit Missing Receipt" }).click();
     const save = page.getByRole("button", { name: "Save", exact: true });
@@ -68,5 +79,26 @@ test.describe("Settings Review Rules", () => {
     await page.getByRole("button", { name: "Discard" }).click();
     await expect(threshold).toHaveValue(original);
     await expect(save).toBeDisabled();
+  });
+});
+
+test.describe("Settings Review Rules deep link", () => {
+  test.use({ storageState: "tests/e2e/.auth/user.json" });
+
+  test("opens straight onto the linked rule, as the Inbox's Rule settings link does", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    const settingsLink = page.getByRole("link", { name: "Settings" });
+    await expect(settingsLink).toHaveAttribute("href", /\/organization\/[a-zA-Z0-9-]+\/settings$/);
+    const href = await settingsLink.getAttribute("href");
+    await page.goto(`${href}?section=review-rules&rule=missing_receipt`);
+
+    await expect(page.getByRole("heading", { name: "Review Rules", level: 2 })).toBeVisible();
+    await expect(page.getByRole("switch", { name: "Enable Missing Receipt" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Close Missing Receipt" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 });

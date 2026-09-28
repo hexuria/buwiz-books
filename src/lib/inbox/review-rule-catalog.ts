@@ -13,8 +13,9 @@ import type { DbExecutor } from "@/db";
  * from every RLS policy list. Its rows were historically inserted only by the raw SQL in
  * drizzle/0019_inbox_review_foundation.sql, which `drizzle-kit` never runs (0019 is not in
  * drizzle/meta/_journal.json) and which only the since-removed `db:dedup:migrate` applied.
- * Every other path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so
- * `/review-agents` rendered "No review agents are configured." on a healthy database.
+ * Every other path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so the
+ * review-rule screen (then `/review-agents`, now Settings → Review Rules) rendered "No review
+ * agents are configured." on a healthy database.
  *
  * This module is what the seeder, the engine, and the server functions all read.
  *

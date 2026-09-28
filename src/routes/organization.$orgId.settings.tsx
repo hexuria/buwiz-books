@@ -6,7 +6,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { keys } from "../lib/query-keys";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -49,7 +49,20 @@ import type { AITaskCategory } from "@/lib/ai-models";
 // Route
 // ============================================================================
 
+type SettingsSearch = {
+  /** Opens the page on this section — e.g. the Inbox links a finding to `review-rules`. */
+  section?: SettingsSection;
+  /** With `section=review-rules`: the rule to open and scroll to. */
+  rule?: string;
+};
+
 export const Route = createFileRoute("/organization/$orgId/settings")({
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
+    section: SECTIONS.some((entry) => entry.key === search.section)
+      ? (search.section as SettingsSection)
+      : undefined,
+    rule: typeof search.rule === "string" && search.rule.length <= 64 ? search.rule : undefined,
+  }),
   component: SettingsPage,
 });
 
@@ -212,8 +225,9 @@ const SECTIONS: { key: SettingsSection; label: string; icon: React.ReactNode }[]
 function SettingsPage() {
   const { data: session } = useSession();
   const { orgId } = Route.useParams();
+  const search = Route.useSearch();
   const queryClient = useQueryClient();
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsSection>(search.section ?? "general");
   // Sections are local state, not routes, so leaving one unmounts it and no router blocker sees
   // it. Review Rules reports unsaved drafts here, and the switch is confirmed before it happens.
   const [reviewRulesUnsaved, setReviewRulesUnsaved] = useState(false);
@@ -228,6 +242,16 @@ function SettingsPage() {
     setPendingSection(null);
     setSection(next);
   };
+
+  // A link into a section while this page is already mounted changes only the search. It goes
+  // through the same unsaved-draft check as a click.
+  const selectSectionRef = useRef(selectSection);
+  useEffect(() => {
+    selectSectionRef.current = selectSection;
+  });
+  useEffect(() => {
+    if (search.section) selectSectionRef.current(search.section);
+  }, [search.section]);
 
   // Fetch settings
   const { data: settings, isLoading } = useQuery({
@@ -334,7 +358,10 @@ function SettingsPage() {
                 <EmailSection settings={settings} orgId={orgId} queryClient={queryClient} />
               )}
               {section === "review-rules" && (
-                <ReviewRulesSettings onUnsavedChange={setReviewRulesUnsaved} />
+                <ReviewRulesSettings
+                  focusRuleKey={search.rule}
+                  onUnsavedChange={setReviewRulesUnsaved}
+                />
               )}
               {section === "ai-credentials" && (
                 <AICredentialsSection settings={settings} orgId={orgId} queryClient={queryClient} />

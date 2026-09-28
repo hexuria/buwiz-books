@@ -16,7 +16,7 @@ scanned documents, bills, and inbound email.
 
 Review rules are not part of this lifecycle. They run on demand across the
 posted ledger and attach to journals and account-months rather than to Inbox
-items — see [Review agents](#review-agents) below.
+items — see [Review rules](#review-rules) below.
 
 Exact duplicate provider records are idempotent. Possible cross-source
 duplicates create a blocking finding and must be reviewed. Whether semantic
@@ -42,16 +42,20 @@ behavior are described in
 Impact is per-agent and per-organization, and the group only supplies the
 default. A rule's group determines _when it runs_, not how hard it bites.
 
-## Review agents
+## Review rules
 
-The **Review Agents** page configures the rule catalog and shows what each rule
-has flagged. Two groups, two moments:
+**Settings → Review Rules** configures the rule catalog for the organization —
+on or off, **Stop** (stored as `blocking`) or **Warn** (`warning`), thresholds
+and lookback — and holds the ledger scan with its findings. It saves through the
+same server functions the retired Review Agents page used, and the old
+`/review-agents` address now redirects to the Inbox. Each finding in the Inbox
+links to its rule there. Two groups, two moments:
 
-| Group      | Count | Runs                                                                   | Findings attach to            |
-| ---------- | ----- | ---------------------------------------------------------------------- | ----------------------------- |
-| **Book**   | 9     | Automatically, on every candidate at ingest and after every correction | The Inbox item                |
-| **Review** | 5     | Only when someone presses **Run review agents**                        | A journal or an account-month |
-| **System** | 2     | Raised by inbound processing. Not configurable, not runnable           | The Inbox item                |
+| Group                        | Count | Runs                                                                   | Findings attach to            |
+| ---------------------------- | ----- | ---------------------------------------------------------------------- | ----------------------------- |
+| **Book** (_Inbox checks_)    | 9     | Automatically, on every candidate at ingest and after every correction | The Inbox item                |
+| **Review** (_Ledger checks_) | 5     | Only when someone presses **Scan books**                               | A journal or an account-month |
+| **System** (_System checks_) | 2     | Raised by inbound processing. Not configurable, not runnable           | The Inbox item                |
 
 Group is not a perfect proxy for cadence, and the UI states the cadence per
 agent rather than deriving it: `transaction_in_parent_category` is a Review rule
@@ -66,15 +70,15 @@ the rules and auto-resolves anything no longer true, or **document an
 exception** with a note of at least three characters. Possible duplicates accept
 neither — they require a structured decision in the duplicate comparison view.
 
-A Review finding has no Inbox item, so it is resolved in place from the findings
-panel on **Review Agents**, with the same note requirement. Resolving is
+A Review finding has no Inbox item, so it is resolved in place from **Ledger
+findings** under Settings → Review Rules, with the same note requirement. Resolving is
 permanent: a later run that observes the same condition advances `lastSeenAt`
 but does not reopen the finding, because re-observing a fact a reviewer already
 documented an exception for is not new information.
 
 ### The on-demand run
 
-**Run review agents** evaluates only the five Review rules, as of a date you
+**Scan books** evaluates only the five Review rules, as of a date you
 choose — set it to a period end to reproduce a close. Book rules are excluded
 deliberately: they already ran at ingest, against the candidate, at the only
 point where their findings could still be acted on. Running them across posted
@@ -85,8 +89,8 @@ journals produced blocking findings on entries that can no longer be un-posted.
 `review_rule_definitions` is a **global** table — no `organization_id`, and
 excluded from every RLS policy — so one empty table means every organization
 sees zero agents. It is seeded from `src/lib/inbox/review-rule-catalog.ts` on
-every path that builds a database. If the page reports that no agents are set
-up, inspect the database before anything else:
+every path that builds a database. If Settings → Review Rules reports that no
+agents are set up, inspect the database before anything else:
 
 ```bash
 bun db:review-rules:status

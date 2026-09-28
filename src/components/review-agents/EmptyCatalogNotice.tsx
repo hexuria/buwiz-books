@@ -2,18 +2,17 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ClipboardCheckIcon } from "@/components/ui/icons";
 
 /**
- * What `/review-agents` shows when `review_rule_definitions` is empty.
+ * What Settings -> Review Rules shows when `review_rule_definitions` is empty.
  *
  * This is the state the page shipped in for as long as the catalog went unseeded, and the copy is
  * the whole point of it: the previous version said only "No review agents are configured.", which
  * told an administrator nothing about what was missing, what it cost them, or who could fix it.
  *
- * It also replaces the entire two-column section rather than sitting in its right pane — a 320px
- * empty rail beside the words "no agents" was the original absurdity.
+ * It replaces the whole rule list rather than sitting beside it — on the retired Review Agents
+ * page, a 320px empty rail beside the words "no agents" was the original absurdity.
  *
- * Lives outside the route module so it can be rendered in a test without pulling server functions
- * into jsdom; the route's own query is executed during SSR, so this branch is not reachable
- * through network interception.
+ * Lives in its own module so it can be rendered in a test without pulling server functions into
+ * jsdom.
  */
 export function EmptyCatalogNotice({ onReload }: { onReload: () => void }) {
   return (

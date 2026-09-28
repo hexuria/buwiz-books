@@ -6,11 +6,10 @@
  * whether a check runs at all, whether its findings Stop approval or only Warn, and where its
  * thresholds sit.
  *
- * Extracted from the Review Agents page so Settings and that page edit through one component. It
- * saves only through the existing `updateReviewAgent` server function, which owns the permission
- * check (`agentRule:configure`), the per-rule bounds and the optimistic version check. The
- * client-side validation mirrors those bounds so a bad value never reaches the server as a generic
- * error; it is not the enforcement.
+ * Extracted from the retired Review Agents page. It saves only through the existing
+ * `updateReviewAgent` server function, which owns the permission check (`agentRule:configure`),
+ * the per-rule bounds and the optimistic version check. The client-side validation mirrors those
+ * bounds so a bad value never reaches the server as a generic error; it is not the enforcement.
  *
  * Stored impact values stay `blocking` / `warning`. Only the labels say Stop / Warn.
  */
