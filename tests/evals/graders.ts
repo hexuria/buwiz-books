@@ -319,3 +319,26 @@ export function confidenceOnUnitScale(path = "confidence"): OutputInvariant {
     },
   };
 }
+
+/**
+ * Every value at `path` (`[]` walks an array) is one the request offered.
+ * The closed-list tasks (categorize_lines, match_party) answer with a code or
+ * ref from a per-request enum; an answer outside it is wrong whatever the
+ * fixture expected, and must never be mapped to an account or a party.
+ */
+export function valueInSet(path: string, allowed: readonly string[]): OutputInvariant {
+  const permitted = new Set(allowed);
+  return {
+    name: `${path} is one of the offered values`,
+    check(output) {
+      const [head, field] = path.split("[].");
+      const values = field ? rows(output, head).map((row) => row[field]) : [get(output, path)];
+      for (const value of values) {
+        if (typeof value !== "string" || !permitted.has(value)) {
+          return `${JSON.stringify(value)} was not offered`;
+        }
+      }
+      return null;
+    },
+  };
+}

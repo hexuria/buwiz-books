@@ -29,6 +29,9 @@ export const extractedEntityPayloadSchema = z.object({
   identifier: z.string().default(""),
   accountType: z.string().default(""),
   matchedPartyId: z.string().default(""),
+  /** Tax id and email as printed; set on the party only when it is created. */
+  taxId: z.string().max(50).default(""),
+  email: z.string().max(255).default(""),
 });
 
 export const createPartyProposalSchema = z.object({

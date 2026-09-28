@@ -36,6 +36,32 @@ export const emailExtractionOutputSchema = z.object({
   description: z
     .string()
     .describe("Short factual description of the purchase, sale, bill, or payment."),
+  // Counterparty identity and payment details (prompt 1.1.0). Optional on
+  // purpose: extractions cached before they existed stay reusable, and each
+  // one only ever feeds a read — exact party matching (TIN, email) and the
+  // payment-details-change check. Nothing writes them to a party.
+  partyEmail: z
+    .string()
+    .catch("")
+    .describe("The counterparty's email address exactly as printed, or an empty string."),
+  partyTaxId: z
+    .string()
+    .catch("")
+    .describe(
+      "The counterparty's tax identification number (TIN, VAT, EIN, ABN) exactly as printed, or an empty string.",
+    ),
+  payeeBankAccountNumber: z
+    .string()
+    .catch("")
+    .describe(
+      "Only when the document asks the organization to pay the counterparty by bank transfer: the destination bank account number or IBAN exactly as printed. Otherwise an empty string.",
+    ),
+  payeeBankRoutingNumber: z
+    .string()
+    .catch("")
+    .describe(
+      "The routing, sort, BSB, or SWIFT/BIC code printed with that destination account, or an empty string.",
+    ),
 });
 
 export type EmailExtractionOutput = z.infer<typeof emailExtractionOutputSchema>;

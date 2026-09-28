@@ -38,6 +38,8 @@ import { isPdfPasswordRequiredError } from "@/lib/pdf-unlock";
 import { deriveEmailAttachmentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import type { DocumentSourceFacts } from "@/lib/inbox/email-attachment-source";
 import { createLogger } from "@/lib/logger";
+import { CLASSIFY_INBOX_CANDIDATE_JOB_TYPE } from "@/lib/inbox/candidate-classification-job";
+import { triggerWorker } from "../trigger";
 import type { JobContext, JobHandlerResult, ProcessingJob } from "../registry";
 
 /**
@@ -610,6 +612,7 @@ export async function processInboundEmailJob(
     );
   }
 
+  let enrichedCandidateCount = 0;
   const finalized = await orgTx(async (tx) => {
     if (!(await completeProcessingJob(tx, job.id, workerId))) return false;
 
@@ -824,6 +827,7 @@ export async function processInboundEmailJob(
             },
           });
       }
+      if (enrichment.enriched) enrichedCandidateCount += 1;
       assignedCandidates.push({
         candidateId: candidate.id,
         inboxItemId: inboxItem.id,
@@ -981,5 +985,7 @@ export async function processInboundEmailJob(
     });
     return { processed: false, reason: "lease_lost", jobId: job.id };
   }
+  // Enrichment queued stage 2 inside the transaction that just committed.
+  if (enrichedCandidateCount > 0) triggerWorker([CLASSIFY_INBOX_CANDIDATE_JOB_TYPE]);
   return { processed: true, jobId: job.id };
 }

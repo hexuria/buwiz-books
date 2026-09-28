@@ -58,6 +58,9 @@ const POLICIES: Record<string, RetryPolicy> = {
   coa_scaffold: INTERACTIVE,
   process_inbound_email: BACKGROUND,
   process_standalone_document: BACKGROUND,
+  // Inbox stage 2. Model failures degrade the draft instead of throwing, so
+  // only a database error retries — and nobody is waiting on it.
+  classify_inbox_candidate: BACKGROUND,
   ai_reflection: BACKGROUND,
   business_group_projection_refresh: BACKGROUND,
   // Inbox v2 routines: nobody watches a spinner for a webhook delivery.
