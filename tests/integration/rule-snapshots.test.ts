@@ -439,7 +439,7 @@ describeDb("rule snapshots", () => {
       await correct(tenant, itemId);
       const findings = await openFindings(itemId);
       expect(findings.map((finding) => finding.ruleKey)).toEqual(["missing_receipt"]);
-      expect(findings[0].message).toBe("Attach a receipt for expenses over USD 10.");
+      expect(findings[0].message).toBe("Attach a receipt for expenses over USD 10.00.");
       expect(findings[0].evidence.ruleSet).toEqual({
         source: "snapshot",
         snapshotId: strict.id,
@@ -508,7 +508,7 @@ describeDb("rule snapshots", () => {
         {
           ruleKey: "missing_receipt",
           impact: "blocking",
-          message: "Attach a receipt for expenses over USD 75.00000000.",
+          message: "Attach a receipt for expenses over USD 75.00.",
         },
       ]);
       expect(shape(pinned)).toEqual(shape(live));

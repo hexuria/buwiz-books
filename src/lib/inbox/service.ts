@@ -35,6 +35,7 @@ import {
   createBillCore,
   lockAccruableEditorBill,
   touchesAccountsPayable,
+  voidUnbookedEditorBill,
 } from "@/lib/posting/bill-core";
 import {
   postTransactionCore,
@@ -1734,5 +1735,30 @@ export async function rejectInboxItem(
     userId: ctx.userId,
     note: reason,
   });
-  return { id: item.id, state: "rejected" as const };
+  // A bill the Bills editor submitted for this review is rejected with it
+  // (src/lib/posting/bill-inbox-link.ts): voided while still unbooked.
+  let billVoided = false;
+  if (candidate.candidateType === "bill" && item.sourceRecordId) {
+    const [billSource] = await ctx.db
+      .select({ externalId: sourceRecords.externalId })
+      .from(sourceRecords)
+      .innerJoin(integrationSources, eq(sourceRecords.sourceId, integrationSources.id))
+      .where(
+        and(
+          eq(sourceRecords.organizationId, ctx.orgId),
+          eq(sourceRecords.id, item.sourceRecordId),
+          eq(integrationSources.provider, "internal_bills"),
+        ),
+      )
+      .limit(1);
+    if (billSource?.externalId) {
+      billVoided = await voidUnbookedEditorBill(ctx.db, {
+        orgId: ctx.orgId,
+        billId: billSource.externalId,
+        actorId: ctx.userId,
+        reason,
+      });
+    }
+  }
+  return { id: item.id, state: "rejected" as const, billVoided };
 }

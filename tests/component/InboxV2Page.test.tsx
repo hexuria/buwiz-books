@@ -127,7 +127,7 @@ vi.mock("../../src/components/transactions/editor/TransactionEditor", async () =
       <div data-testid="transaction-editor">
         <input ref={input} aria-label="Transaction memo" />
         <button type="button" onClick={() => onSubmit?.(current())}>
-          Save & run checks
+          Save
         </button>
       </div>
     );
@@ -671,9 +671,7 @@ describe("Inbox v2 approval", { timeout: 30_000 }, () => {
 
     await user.click(screen.getByRole("button", { name: "Approve" }));
     expect(
-      await screen.findByText(
-        "Saved, but a check now blocks approval: Assign a vendor to this expense transaction.",
-      ),
+      await screen.findByText("Saved, but a check still blocks approval: Vendor needed."),
     ).toBeInTheDocument();
     expect(api.approveInbox).not.toHaveBeenCalled();
     expect(rows()[0]).toHaveTextContent("Ace Hardware");
@@ -804,7 +802,7 @@ describe("Inbox v2 memory", { timeout: 30_000 }, () => {
     renderInbox();
     await screen.findByTestId("transaction-editor");
 
-    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
     const prompt = await screen.findByRole("region", { name: "Remember this?" });
     await waitFor(() =>
       expect(memoryApi.previewMemoryScope).toHaveBeenCalledWith({
@@ -827,8 +825,8 @@ describe("Inbox v2 memory", { timeout: 30_000 }, () => {
     renderInbox();
     await screen.findByTestId("transaction-editor");
 
-    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
-    expect(await screen.findByText("Saved. The book checks ran again.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/^Saved\./u)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Remember this?" })).not.toBeInTheDocument();
     expect(memoryApi.previewMemoryScope).not.toHaveBeenCalled();
   });
@@ -886,8 +884,8 @@ describe("Inbox v2 memory", { timeout: 30_000 }, () => {
     renderInbox();
     await screen.findByTestId("transaction-editor");
 
-    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
-    expect(await screen.findByText("Saved. The book checks ran again.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/^Saved\./u)).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Remember this?" })).not.toBeInTheDocument();
   });
 

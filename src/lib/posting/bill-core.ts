@@ -515,3 +515,49 @@ async function attachBillDocuments(
     })),
   );
 }
+
+/** Bill statuses that mean "saved, not booked": a rejected review voids these. */
+const UNBOOKED_BILL_STATUSES = new Set(["draft", "in_review", "pending_approval"]);
+
+/**
+ * Rejecting an editor bill's Inbox item rejects the bill: it was only ever a
+ * draft waiting for that review, so it is voided rather than left in review
+ * forever. A bill that is somehow already booked (a journal, a payment) is
+ * left alone — rejecting the review does not unbook the ledger; voiding it is
+ * a separate, explicit action in Bills.
+ *
+ * Called by rejectInboxItem after it has locked the Inbox item, so the lock
+ * order (item, then bill) matches approval's.
+ */
+export async function voidUnbookedEditorBill(
+  db: DbExecutor,
+  input: { orgId: string; billId: string; actorId: string; reason: string },
+): Promise<boolean> {
+  if (!BILL_ID_SHAPE.test(input.billId)) return false;
+  const [bill] = await db
+    .select()
+    .from(bills)
+    .where(and(eq(bills.id, input.billId), eq(bills.organizationId, input.orgId)))
+    .limit(1)
+    .for("update");
+  if (!bill || bill.journalHeaderId !== null || !UNBOOKED_BILL_STATUSES.has(bill.status)) {
+    return false;
+  }
+  if (moneyToCents(bill.amountPaid ?? "0", "amountPaid") !== 0) return false;
+  await db
+    .update(bills)
+    .set({ status: "voided", updatedAt: new Date() })
+    .where(and(eq(bills.id, bill.id), eq(bills.organizationId, input.orgId)));
+  await insertActivityLog(
+    {
+      orgId: input.orgId,
+      entityType: "bill",
+      entityId: bill.id,
+      action: "voided",
+      actorId: input.actorId,
+      changes: { previousStatus: bill.status, reason: input.reason, via: "inbox_rejected" },
+    },
+    db,
+  );
+  return true;
+}

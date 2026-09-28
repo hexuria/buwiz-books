@@ -10,6 +10,8 @@
  *     under the usual period and reconciliation locks);
  *   • delete first — approval's lock finds no row and refuses with the
  *     "deleted in Bills" message.
+ * A pending Inbox review of the bill is rejected first (./bill-inbox-link.ts).
+ *
  * Before this, delete read the bill without a lock, scanned journals, and then
  * deleted: an approval committing between the scan and the DELETE left a posted
  * accrual with no bill to pay or void (journal_headers.source_document_id is not
@@ -22,6 +24,8 @@ import { bills } from "@/db/schema/bills";
 import { documentAttachments } from "@/db/schema/documents";
 import { journalHeaders } from "@/db/schema/journals";
 import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
+import { rejectInboxItem } from "@/lib/inbox/service";
+import { findPendingInboxReviewForBill } from "./bill-inbox-link";
 import { getClosedThrough, isDateLocked } from "@/lib/period-close";
 import { journalsClearedByFinalizedReconciliation } from "@/lib/reconciliation-claimed-lines";
 
@@ -30,7 +34,31 @@ export async function deleteBillCore(
   orgId: string,
   userId: string,
   billId: string,
+  role: string,
 ): Promise<{ success: true; voidedJournalIds: string[] }> {
+  // A bill still under Inbox review takes its review with it. Rejected BEFORE
+  // the bill is locked, in approval's lock order (Inbox item, then bill), so a
+  // delete and an approval can never deadlock. The whole delete is one
+  // transaction: if it is refused below, the rejection rolls back too.
+  const pending = await findPendingInboxReviewForBill(db, orgId, billId);
+  if (pending) {
+    try {
+      await rejectInboxItem(
+        { db, orgId, userId, role },
+        {
+          inboxItemId: pending.inboxItemId,
+          expectedLockVersion: pending.lockVersion,
+          reason: "The bill was deleted in Bills.",
+        },
+      );
+    } catch (error) {
+      // An approval that held the item committed while this waited: the review
+      // is over and its accrual is posted, which the lock below now sees and
+      // voids with the bill. Anything else is a real refusal.
+      if (await findPendingInboxReviewForBill(db, orgId, billId)) throw error;
+    }
+  }
+
   const [existing] = await db
     .select({ id: bills.id })
     .from(bills)

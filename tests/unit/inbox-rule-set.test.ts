@@ -133,10 +133,21 @@ describe("evaluateCandidateRules", () => {
     // If an evaluator's hardcoded impact ever drifts from its group default, a
     // snapshot of an organization with no saved rows would stop matching live.
     const groupOf = new Map(REVIEW_RULE_CATALOG.map((rule) => [rule.key, rule.group]));
-    const findings = evaluateCandidateRules(
-      { configByKey: new Map(), fallbacks: DEFAULT_BOOK_RULE_FALLBACKS },
-      EVERYTHING_WRONG,
-    );
+    const findings = [
+      ...evaluateCandidateRules(
+        { configByKey: new Map(), fallbacks: DEFAULT_BOOK_RULE_FALLBACKS },
+        EVERYTHING_WRONG,
+      ),
+      // A payable asks for the vendor's bill, not a receipt, so the receipt
+      // rule is exercised on a paid expense.
+      ...evaluateCandidateRules(
+        { configByKey: new Map(), fallbacks: DEFAULT_BOOK_RULE_FALLBACKS },
+        input([
+          { accountId: "expense", debit: "500.00" },
+          { accountId: "bank", credit: "500.00" },
+        ]),
+      ).filter((finding) => finding.ruleKey === "missing_receipt"),
+    ];
     expect(ruleKeys(findings)).toEqual([
       "low_confidence_category",
       "missing_customer",

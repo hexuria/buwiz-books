@@ -191,7 +191,7 @@ describe("Missing Receipt across currencies", () => {
       {
         ruleKey: "missing_receipt",
         impact: "blocking",
-        message: "Attach a receipt for expenses over USD 75.",
+        message: "Attach a receipt for expenses over USD 75.00.",
         evidence: {
           expenseTotal: "77",
           threshold: "75",
@@ -229,5 +229,36 @@ describe("Missing Receipt across currencies", () => {
     ]);
     // Tiny totals never become exponent strings the decimal parser rejects.
     expect(receiptFindings("0.00000001", "USD", "1")).toEqual([]);
+  });
+});
+
+describe("a vendor bill asks for one document", () => {
+  it("asks for the vendor's bill, not also a receipt, on a payable over the receipt threshold", () => {
+    const lines = [
+      { accountId: "expense", debit: "1050", departmentId: "department", locationId: "location" },
+      { accountId: "ap", credit: "1050", departmentId: "department", locationId: "location" },
+    ];
+    const findings = evaluateBookRules({
+      candidate: {
+        transactionDate: "2026-09-14",
+        transactionType: "journal",
+        originalCurrency: "USD",
+        functionalCurrency: "USD",
+        exchangeRate: "1",
+        lines,
+      },
+      lines,
+      accounts: new Map([
+        ["expense", account("expense", "expense", "office_supplies")],
+        ["ap", account("ap", "liability", "accounts_payable")],
+      ]),
+      party: { id: "vendor", partyType: "vendor" },
+      documents: [],
+      settings,
+    });
+    expect(findings.map((finding) => finding.ruleKey)).toEqual(["missing_invoice"]);
+    expect(findings[0].message).toBe(
+      "Attach the vendor's bill: the invoice the vendor sent you for this payable.",
+    );
   });
 });

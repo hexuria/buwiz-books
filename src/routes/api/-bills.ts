@@ -43,6 +43,8 @@ import {
 import { extractBoundingBoxes } from "./-ai-bill-ocr";
 import { generateThumbnail } from "@/services/thumbnail-generator";
 import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
+import { BillInInboxError, findPendingInboxReviewForBill } from "@/lib/posting/bill-inbox-link";
+import { rejectInboxItem } from "@/lib/inbox/service";
 import { listOrganizationBills } from "@/lib/bill-list";
 import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import {
@@ -97,6 +99,14 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 };
 
 const JOURNAL_PRODUCING_BILL_STATUSES = new Set(["awaiting_payment", "scheduled"]);
+/** Transitions that approve, book or pay a bill: the Inbox decides these while it reviews one. */
+const INBOX_REVIEWED_BILL_STATUSES = new Set([
+  "pending_approval",
+  "awaiting_payment",
+  "scheduled",
+  "paid",
+  "partial",
+]);
 
 // ============================================================================
 // Schemas
@@ -202,6 +212,8 @@ export type BillListItem = typeof bills.$inferSelect & {
 };
 
 export type BillDetail = typeof bills.$inferSelect & {
+  /** The Inbox item still reviewing this bill; approving it there books the bill. */
+  pendingInboxItemId?: string | null;
   vendorName: string | null;
   vendorEmail: string | null;
   vendorPhone: string | null;
@@ -340,7 +352,18 @@ export const getBill = createServerFn({ method: "GET" }).handler(
         .where(eq(billLineItems.billId, parsed.id))
         .orderBy(asc(billLineItems.sortOrder));
 
-      return { ...bill, documentUrl: resolvedDocumentUrl, previewImageUrl, lineItems };
+      // A bill the editor submitted is booked from its Inbox item, not here.
+      const pendingReview =
+        bill.journalHeaderId === null
+          ? await findPendingInboxReviewForBill(db, orgId, bill.id)
+          : null;
+      return {
+        ...bill,
+        documentUrl: resolvedDocumentUrl,
+        previewImageUrl,
+        lineItems,
+        pendingInboxItemId: pendingReview?.inboxItemId ?? null,
+      };
     });
   },
 );
@@ -523,6 +546,18 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
               throw new PhTaxFilingUnavailableError();
             }
           }
+          // A bill still under Inbox review is not booked yet; paying it here
+          // would post around that review. Locked so an approval cannot slip in.
+          const [unbooked] = await db
+            .select({ id: bills.id, journalHeaderId: bills.journalHeaderId })
+            .from(bills)
+            .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+            .limit(1)
+            .for("update");
+          if (unbooked && unbooked.journalHeaderId === null) {
+            const pending = await findPendingInboxReviewForBill(db, orgId, billId);
+            if (pending) throw new BillInInboxError(pending.inboxItemId);
+          }
           return recordManualBillPayment(db, {
             organizationId: orgId,
             userId,
@@ -548,6 +583,31 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           throw new Error("Payment amount must be positive");
         }
 
+        const voidingPendingReview = newStatus === "voided";
+        if (voidingPendingReview) {
+          // Voiding a bill still under Inbox review ends that review: the item
+          // is rejected, which voids the unbooked bill (rejectInboxItem). Done
+          // BEFORE locking the bill, in the order approval takes its locks
+          // (Inbox item, then bill), so the two can never deadlock.
+          const pending = await findPendingInboxReviewForBill(db, orgId, billId);
+          if (pending) {
+            await rejectInboxItem(
+              { db, orgId, userId, role },
+              {
+                inboxItemId: pending.inboxItemId,
+                expectedLockVersion: pending.lockVersion,
+                reason: "The bill was voided in Bills.",
+              },
+            );
+            const [voided] = await db
+              .select()
+              .from(bills)
+              .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+              .limit(1);
+            if (voided?.status === "voided") return voided;
+          }
+        }
+
         const [bill] = await db
           .select()
           .from(bills)
@@ -558,6 +618,17 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
         if (!bill) {
           throw new Error("Bill not found");
         }
+
+        // One booking path per bill (src/lib/posting/bill-inbox-link.ts): a bill
+        // the editor submitted is booked by approving its Inbox item, not here.
+        const pendingReview =
+          bill.journalHeaderId === null
+            ? await findPendingInboxReviewForBill(db, orgId, billId)
+            : null;
+        if (pendingReview && INBOX_REVIEWED_BILL_STATUSES.has(newStatus)) {
+          throw new BillInInboxError(pendingReview.inboxItemId);
+        }
+
         const requiresIdempotency =
           JOURNAL_PRODUCING_BILL_STATUSES.has(newStatus) ||
           (newStatus === "voided" && bill.journalHeaderId !== null);
@@ -766,9 +837,9 @@ export const deleteBill = createServerFn({ method: "POST" }).handler(
       "bill",
       "delete",
       { routeKey: "bill:delete", limit: 20, windowMs: 60_000 },
-      async ({ orgId, userId, db }) => {
+      async ({ orgId, userId, role, db }) => {
         const parsed = deleteBillSchema.parse(rawData);
-        await deleteBillCore(db, orgId, userId, parsed.id);
+        await deleteBillCore(db, orgId, userId, parsed.id, role);
         return { success: true };
       },
     );

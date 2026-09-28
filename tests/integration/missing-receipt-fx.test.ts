@@ -112,7 +112,7 @@ describeDb("Missing Receipt in the functional currency", () => {
     const [eurFinding] = await receiptFindings(eur.inboxItem.id);
     expect(eurFinding).toMatchObject({
       impact: "blocking",
-      message: "Attach a receipt for expenses over USD 75.00000000.",
+      message: "Attach a receipt for expenses over USD 75.00.",
       evidence: {
         expenseTotal: "77",
         threshold: "75.00000000",

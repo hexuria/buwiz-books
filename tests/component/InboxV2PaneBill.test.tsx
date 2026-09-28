@@ -247,10 +247,8 @@ describe("a vendor bill in the Inbox v2 reading pane", { timeout: 30_000 }, () =
     await user.click(screen.getByRole("option", { name: "Operations" }));
     await user.click(picker("Location for line 1"));
     await user.click(await screen.findByRole("option", { name: "Main Office" }));
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Save & run checks" })).toBeEnabled(),
-    );
-    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(api.updateInboxCandidate).toHaveBeenCalledTimes(1));
     const { data } = api.updateInboxCandidate.mock.calls[0][0];

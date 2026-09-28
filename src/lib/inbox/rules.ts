@@ -1,5 +1,15 @@
 import type { CandidateLineInput, CreateCandidateInput, ReviewFindingDraft } from "./types";
 import { compareMoney, multiplyMoney, sumMoney } from "./money";
+import { centsToMoney, moneyToCents } from "@/lib/money";
+
+/** A stored decimal(20,8) amount as people read it: "75.00000000" → "75.00". */
+function displayMoney(amount: string): string {
+  try {
+    return centsToMoney(moneyToCents(amount));
+  } catch {
+    return amount;
+  }
+}
 
 /** Every rule key evaluateBookRules can emit. Re-evaluation resolves exactly these. */
 export const BOOK_RULE_KEYS = [
@@ -193,8 +203,20 @@ export function evaluateBookRules(input: {
       : thresholdCurrency === originalCurrency
         ? multiplyMoney(settings.missingReceiptThreshold, candidate.exchangeRate ?? "1")
         : settings.missingReceiptThreshold;
+  // A payable (a vendor bill booked to pay later) is supported by the vendor's
+  // bill, which missing_invoice below asks for. Asking for a receipt as well
+  // made one missing PDF read as two blocking checks with two names, and a
+  // vendor bill is not a receipt.
+  const hasApCredit = lines.some((line, index) => {
+    const account = resolvedAccounts[index];
+    const isAp =
+      account?.subtype === "accounts_payable" ||
+      (line.accountId ? apAccountIds.has(line.accountId) : false);
+    return isAp && Number(line.credit ?? 0) > 0;
+  });
   const hasReceipt = documents.some((document) => document.documentType === "receipt");
   if (
+    !hasApCredit &&
     compareMoney(expenseTotal, "0") > 0 &&
     compareMoney(expenseTotal, thresholdInFunctionalCurrency) > 0 &&
     !hasReceipt
@@ -202,7 +224,7 @@ export function evaluateBookRules(input: {
     findings.push({
       ruleKey: "missing_receipt",
       impact: "blocking",
-      message: `Attach a receipt for expenses over ${settings.missingReceiptCurrency} ${settings.missingReceiptThreshold}.`,
+      message: `Attach a receipt for expenses over ${settings.missingReceiptCurrency} ${displayMoney(settings.missingReceiptThreshold)}.`,
       evidence: {
         // Functional currency: what was compared with the threshold.
         expenseTotal,
@@ -219,13 +241,6 @@ export function evaluateBookRules(input: {
     });
   }
 
-  const hasApCredit = lines.some((line, index) => {
-    const account = resolvedAccounts[index];
-    const isAp =
-      account?.subtype === "accounts_payable" ||
-      (line.accountId ? apAccountIds.has(line.accountId) : false);
-    return isAp && Number(line.credit ?? 0) > 0;
-  });
   const hasInvoice = documents.some((document) =>
     ["invoice", "bill"].includes(document.documentType),
   );
@@ -233,7 +248,7 @@ export function evaluateBookRules(input: {
     findings.push({
       ruleKey: "missing_invoice",
       impact: "blocking",
-      message: "Attach the invoice supporting this Accounts Payable credit.",
+      message: "Attach the vendor's bill: the invoice the vendor sent you for this payable.",
       evidence: {},
     });
   }

@@ -137,7 +137,7 @@ describe("replayRules", () => {
       rules: { entries: rules({ missing_receipt: { config: { threshold: 10 } } }) },
     });
     expect(strict.findings).toMatchObject([
-      { ruleKey: "missing_receipt", message: "Attach a receipt for expenses over USD 10." },
+      { ruleKey: "missing_receipt", message: "Attach a receipt for expenses over USD 10.00." },
     ]);
     const [lenient] = replayRules({
       cases: [paper("receipt", "50.00", { documents: [] })],

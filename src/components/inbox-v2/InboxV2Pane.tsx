@@ -6,6 +6,7 @@
  * same correction first when the editor has unsaved changes, then asks the page to approve — and
  * approval posts through the shared posting cores.
  */
+import { checkFix, checkLines, checkTitle, summarizeCheckChange } from "@/lib/inbox/v2/check-copy";
 import {
   lazy,
   Suspense,
@@ -317,7 +318,18 @@ export function InboxV2Pane({
       return { saved, changed };
     },
     onSuccess: async ({ saved, changed }) => {
-      showToast("Saved. The book checks ran again.", { icon: "success" });
+      const before = detail ? blockingFindings(detail).map((finding) => finding.ruleKey) : [];
+      const fresh = await queryClient
+        .fetchQuery({
+          queryKey: keys.inbox.detail(item.id),
+          queryFn: () => callServerFn(getInboxItem, { data: { id: item.id } }),
+          staleTime: 0,
+        })
+        .catch(() => null);
+      const after = fresh ? blockingFindings(fresh).map((finding) => finding.ruleKey) : null;
+      showToast(after ? summarizeCheckChange(before, after) : "Saved.", {
+        icon: after && after.length > 0 ? "info" : "success",
+      });
       setRememberOffer(
         changed
           ? { candidateId: saved.candidateId, candidateRevision: saved.candidateRevision }
@@ -421,9 +433,12 @@ export function InboxV2Pane({
         const nowBlocking = blockingFindings(fresh);
         if (nowBlocking.length > 0) {
           actingRef.current = false;
-          showToast(`Saved, but a check now blocks approval: ${nowBlocking[0].message}`, {
-            icon: "error",
-          });
+          showToast(
+            `Saved, but a check still blocks approval: ${checkTitle(nowBlocking[0].ruleKey)}.`,
+            {
+              icon: "error",
+            },
+          );
           // The save stands, and so does the offer to remember it.
           if (changed) {
             setRememberOffer({
@@ -553,7 +568,7 @@ export function InboxV2Pane({
         <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{item.reasonText}</p>
         {approveBlocker && blocking.length > 0 && (
           <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
-            {approveBlocker} Saving your edits runs the checks again.
+            {approveBlocker} Each one says what fixes it, just below.
           </p>
         )}
         {openDuplicates.length > 0 && (
@@ -620,6 +635,8 @@ export function InboxV2Pane({
       </div>
 
       <div className="space-y-4 p-4">
+        <Checks detail={detail} canResolve={canResolve} />
+
         {rememberOffer && canApprove && (
           <RememberThisPrompt
             key={`${rememberOffer.candidateId}:${rememberOffer.candidateRevision}`}
@@ -713,7 +730,7 @@ export function InboxV2Pane({
             defaultLineAccountId={mappedQuery.data?.default_expense ?? ""}
             pending={saveMutation.isPending}
             submitDisabled={!editable || busy || mappedQuery.isPending}
-            submitLabel="Save & run checks"
+            submitLabel="Save"
             title={partyName ? `Bill from ${partyName}` : "Vendor bill"}
             subtitle="Edit it like any bill. Approve books the accrual and adds it to Bills."
             headingLevel="h2"
@@ -740,7 +757,7 @@ export function InboxV2Pane({
             }
             pending={saveMutation.isPending}
             submitDisabled={!editable || busy}
-            submitLabel="Save & run checks"
+            submitLabel="Save"
           />
         )}
 
@@ -770,8 +787,6 @@ export function InboxV2Pane({
             </ul>
           </PaneSection>
         )}
-
-        <Checks detail={detail} canResolve={canResolve} />
 
         {openDuplicates.length > 0 && (
           <PaneSection title={`Possible duplicate (${openDuplicates.length})`}>
@@ -814,6 +829,7 @@ function Checks({ detail, canResolve }: { detail: InboxDetail; canResolve: boole
   const open = detail.findings
     .filter((finding) => finding.state === "open")
     .sort((a, b) => Number(b.impact === "blocking") - Number(a.impact === "blocking"));
+  const blockingCount = open.filter((finding) => finding.impact === "blocking").length;
 
   const resolveMutation = useMutation({
     mutationFn: ({ findingId, note }: { findingId: string; note: string }) =>
@@ -851,7 +867,13 @@ function Checks({ detail, canResolve }: { detail: InboxDetail; canResolve: boole
   }
 
   return (
-    <PaneSection title={`Checks (${open.length})`}>
+    <PaneSection
+      title={
+        blockingCount > 0
+          ? `What blocks approval (${blockingCount})${open.length > blockingCount ? ` · warnings (${open.length - blockingCount})` : ""}`
+          : `Warnings (${open.length})`
+      }
+    >
       <ul className="space-y-2">
         {open.map((finding) => {
           const emailId = (finding.evidence as { emailId?: unknown }).emailId;
@@ -865,12 +887,19 @@ function Checks({ detail, canResolve }: { detail: InboxDetail; canResolve: boole
               }`}
             >
               <div className="flex items-center justify-between gap-3">
-                <p className="text-sm font-semibold">{titleCase(finding.ruleKey)}</p>
+                <p className="text-sm font-semibold">{checkTitle(finding.ruleKey)}</p>
                 <span className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
                   {finding.impact === "blocking" ? "Blocks approval" : "Warning"}
                 </span>
               </div>
-              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{finding.message}</p>
+              <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                {checkFix(finding.ruleKey) ?? finding.message}
+              </p>
+              {checkLines(finding.evidence, detail.lines) && (
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                  On: {checkLines(finding.evidence, detail.lines)}
+                </p>
+              )}
               {canResolve &&
                 finding.ruleKey === "source_processing_failed" &&
                 typeof emailId === "string" && (
@@ -891,7 +920,7 @@ function Checks({ detail, canResolve }: { detail: InboxDetail; canResolve: boole
                       setNotes((current) => ({ ...current, [finding.id]: event.target.value }))
                     }
                     placeholder="Resolution or documented exception"
-                    aria-label={`Resolution note for ${titleCase(finding.ruleKey)}`}
+                    aria-label={`Resolution note for ${checkTitle(finding.ruleKey)}`}
                     className="h-8 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2 text-base outline-none focus:border-teal-500 sm:text-xs dark:border-slate-700 dark:bg-slate-900"
                   />
                   <button

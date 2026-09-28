@@ -8,7 +8,38 @@
  * sub-cent amount instead of letting the 2-decimal bills table round it.
  */
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The Bills server functions run for real below, as the signed-in caller.
+const caller = vi.hoisted(() => ({ userId: "", orgId: "" }));
+
+vi.mock("@tanstack/react-start", () => {
+  type Validator = (input: unknown) => unknown;
+  type Handler = (opts: { data: unknown }) => unknown;
+  const builder = (validate?: Validator) => ({
+    inputValidator: (next: Validator) => builder(next),
+    validator: (next: Validator) => builder(next),
+    handler: (fn: Handler) => async (opts?: { data?: unknown }) =>
+      fn({ data: validate ? validate(opts?.data) : opts?.data }),
+  });
+  return { createServerFn: () => builder() };
+});
+
+vi.mock("@tanstack/react-start/server", () => ({
+  getRequest: () => new Request("http://localhost:3001/_serverFn/bills", { method: "POST" }),
+}));
+
+vi.mock("@/lib/auth", () => ({
+  auth: {
+    api: {
+      getSession: vi.fn(async () => ({
+        user: { id: caller.userId },
+        session: { activeOrganizationId: caller.orgId },
+      })),
+      setActiveOrganization: vi.fn(),
+    },
+  },
+}));
 import { and, eq, sql } from "drizzle-orm";
 import { db, withOrgContext } from "@/db";
 import { accounts } from "@/db/schema/accounts";
@@ -53,6 +84,7 @@ import { BILL_ACCRUAL_SHAPE_MESSAGE, BILL_SUB_CENT_MESSAGE } from "@/lib/posting
 import { postTransactionCore } from "@/lib/posting/transaction-core";
 import type { DbExecutor } from "@/db";
 import { deleteBillCore } from "@/lib/posting/bill-delete";
+import { BILL_IN_INBOX_MESSAGE } from "@/lib/posting/bill-inbox-link";
 
 const BILL_DATE = "2026-07-20";
 
@@ -1056,7 +1088,7 @@ describe("deleting a bill while an approval is posting its accrual", () => {
     // The real delete starts while approval holds the bill: it must wait.
     let deleteSettled = false;
     const deletion = withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
-      deleteBillCore(tx, fixture.orgId, fixture.userId, bill.id),
+      deleteBillCore(tx, fixture.orgId, fixture.userId, bill.id, "owner"),
     ).finally(() => {
       deleteSettled = true;
     });
@@ -1084,7 +1116,7 @@ describe("deleting a bill while an approval is posting its accrual", () => {
 
     // The real delete, holding its transaction (and the bill row lock) open.
     const deletion = heldTransaction(fixture, (tx) =>
-      deleteBillCore(tx, fixture.orgId, fixture.userId, bill.id),
+      deleteBillCore(tx, fixture.orgId, fixture.userId, bill.id, "owner"),
     );
     await deletion.didRun;
 
@@ -1101,7 +1133,8 @@ describe("deleting a bill while an approval is posting its accrual", () => {
     ).finally(() => {
       approvalSettled = true;
     });
-    const refusal = expect(approval).rejects.toThrow(BILL_DELETED_MESSAGE);
+    // Delete rejected the review first, so approval finds nothing to approve.
+    const refusal = expect(approval).rejects.toThrow();
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(approvalSettled).toBe(false);
 
@@ -1111,6 +1144,106 @@ describe("deleting a bill while an approval is posting its accrual", () => {
 
     expect(await orgJournals(fixture.orgId)).toHaveLength(0);
     expect(await orgBills(fixture.orgId)).toHaveLength(0);
-    expect((await itemFor(bill.inboxItemId)).state).toBe("ready_for_review");
+    // The review went with the bill: nothing is left pending in the Inbox.
+    expect((await itemFor(bill.inboxItemId)).state).toBe("rejected");
+  });
+});
+
+describe("one booking path for a bill under Inbox review", () => {
+  const billsApi = () => import("@/routes/api/-bills");
+  const as = (fixture: Fixture) => {
+    caller.orgId = fixture.orgId;
+    caller.userId = fixture.userId;
+  };
+  async function itemState(inboxItemId: string) {
+    const [item] = await db.select().from(inboxItems).where(eq(inboxItems.id, inboxItemId));
+    return item.state;
+  }
+
+  it("refuses to approve, book or pay it on the Bills page, and names the Inbox item", async () => {
+    const fixture = await setupOrganization("bill-one-path-book");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    const { transitionBillStatus } = await billsApi();
+    as(fixture);
+    for (const newStatus of ["pending_approval", "awaiting_payment"]) {
+      await expect(
+        transitionBillStatus({
+          data: { billId: submitted.id, newStatus, idempotencyKey: randomUUID() },
+        } as never),
+      ).rejects.toThrow(BILL_IN_INBOX_MESSAGE);
+    }
+    await expect(
+      transitionBillStatus({
+        data: {
+          billId: submitted.id,
+          newStatus: "paid",
+          bankAccountId: fixture.bank.id,
+          idempotencyKey: randomUUID(),
+        },
+      } as never),
+    ).rejects.toThrow(BILL_IN_INBOX_MESSAGE);
+    expect(await orgJournals(fixture.orgId)).toHaveLength(0);
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill).toMatchObject({ status: "in_review", journalHeaderId: null });
+    expect(await itemState(submitted.inboxItemId)).toBe("ready_for_review");
+  });
+
+  it("voiding it in Bills rejects its review", async () => {
+    const fixture = await setupOrganization("bill-one-path-void");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    const { transitionBillStatus } = await billsApi();
+    as(fixture);
+    await transitionBillStatus({
+      data: { billId: submitted.id, newStatus: "voided" },
+    } as never);
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill).toMatchObject({ status: "voided", journalHeaderId: null });
+    expect(await itemState(submitted.inboxItemId)).toBe("rejected");
+    expect(await orgJournals(fixture.orgId)).toHaveLength(0);
+  });
+
+  it("deleting it in Bills rejects its review", async () => {
+    const fixture = await setupOrganization("bill-one-path-delete");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    const { deleteBill } = await billsApi();
+    as(fixture);
+    await deleteBill({ data: { id: submitted.id } } as never);
+    expect(await orgBills(fixture.orgId)).toHaveLength(0);
+    expect(await itemState(submitted.inboxItemId)).toBe("rejected");
+  });
+
+  it("rejecting it in the Inbox voids the unbooked bill", async () => {
+    const fixture = await setupOrganization("bill-one-path-reject");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    const [item] = await db
+      .select()
+      .from(inboxItems)
+      .where(eq(inboxItems.id, submitted.inboxItemId));
+    const rejected = await withOrgContext(fixture.orgId, fixture.userId, "owner", (tx) =>
+      rejectInboxItem(
+        { db: tx, orgId: fixture.orgId, userId: fixture.userId, role: "owner" },
+        { inboxItemId: item.id, expectedLockVersion: item.lockVersion, reason: "Not ours." },
+      ),
+    );
+    expect(rejected).toMatchObject({ state: "rejected", billVoided: true });
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill).toMatchObject({ status: "voided", journalHeaderId: null });
+  });
+
+  it("once approved in the Inbox, the Bills page takes it from there", async () => {
+    const fixture = await setupOrganization("bill-one-path-after");
+    await disableRule(fixture, "missing_invoice");
+    const submitted = await submitEditorBill(fixture, editorBillDraft(fixture));
+    assertApproved(await approve(fixture, submitted.inboxItemId));
+    const [bill] = await orgBills(fixture.orgId);
+    expect(bill.journalHeaderId).not.toBeNull();
+    const { transitionBillStatus } = await billsApi();
+    as(fixture);
+    // No review is pending any more: voiding is an ordinary Bills action again.
+    await transitionBillStatus({
+      data: { billId: submitted.id, newStatus: "voided", idempotencyKey: randomUUID() },
+    } as never);
+    const [voided] = await orgBills(fixture.orgId);
+    expect(voided.status).toBe("voided");
   });
 });

@@ -76,16 +76,19 @@ link with a `?state=` filter lands on the same screen.
     approve this on its own. Check who sent it before you approve it."
 - **Rows** show who, kind of paper, relative date, amount, and the one reason chip.
 - **The reading pane is the real editor, prefilled**: vendor bills open in the Bills editor (with
-  the paper beside it), everything else in the New transaction editor on its tab. Save runs the
-  candidate correction and the book checks; Approve first saves any unsaved edits the same way,
-  then approves through the posting cores. Approve stays off while a blocking check is open.
+  the paper beside it), everything else in the New transaction editor on its tab. **Save** runs the
+  candidate correction and the book checks again, and its toast says which checks it cleared and
+  which still block; Approve first saves any unsaved edits the same way, then approves through the
+  posting cores. Approve stays off while a blocking check is open.
   Bill lines have Department and Location pickers, as the New transaction editor's lines do, so
   the Missing Department and Missing Location checks clear when a reviewer picks them and saves
   (they post on the accrual's expense lines and on the bill's own lines).
 - **The strip** above the editor says the reason, shows **Remembered** or Jev's confidence
   ("Jev 62%") when classification wrote the lines, warns of a possible duplicate (with the
-  duplicate comparison below), and holds Approve and Reject. Open checks are listed with their
-  resolve-with-a-note and retry actions.
+  duplicate comparison below), and holds Approve and Reject. Open checks are listed right under
+  it, as **What blocks approval**: each in plain words ("Category needed", "Vendor's bill not
+  attached"), with what fixes it, the lines it is about, and the resolve-with-a-note and retry
+  actions (`src/lib/inbox/v2/check-copy.ts`).
 - **Keyboard:** `j` / `k` move, `a` approves, `r` rejects with a reason, `e` jumps into the
   editor. Shortcuts are ignored while typing, with a modifier, or inside another dialog.
 - A decision removes the row at once and moves to the next item; a failure puts the row back and
@@ -111,11 +114,21 @@ so these bills are due on the bill date until their terms are set on the bill.
 A Bills-editor bill already exists when its item is approved, and a reviewer may have corrected
 the entry in the Inbox first. Approval accrues it through the same core, which brings the bill in
 line with what posts — amount, balance due, line items, vendor, bill date and number (its terms
-stay as set) — in the approval's transaction, under the same A/P-shape and whole-cent rules. The
-bill can also be approved, scheduled, paid, voided or deleted on the Bills page while its Inbox
-item is still pending. Those actions already post, cancel or remove its accrual, so approval
-refuses, with nothing written, a bill that was deleted, voided, already accrued from Bills
-(approving would post it twice), or has payments recorded; reject such an item instead.
+stay as set) — in the approval's transaction, under the same A/P-shape and whole-cent rules.
+
+**One booking path.** While a Bills-editor bill's Inbox item is pending, the Inbox is the only
+place it is approved (`src/lib/posting/bill-inbox-link.ts`). The Bills page refuses to send it
+for approval, approve, schedule or pay it, and shows **Review in Inbox** instead of Approve.
+Voiding or deleting the bill on the Bills page rejects its Inbox item, and rejecting the item in
+the Inbox voids the unbooked bill, so neither side is left behind. Voiding and deleting take the
+Inbox item's lock before the bill's, the order approval takes them, so the two never deadlock.
+Approval still refuses, with nothing written, a bill that was deleted, voided, already accrued
+(an older bill booked before this rule), or has payments recorded; reject such an item instead.
+
+**One document check for a bill.** An entry that credits Accounts Payable is supported by the
+vendor's bill (`missing_invoice`: "Vendor's bill not attached"); the receipt check
+(`missing_receipt`) applies to paid purchases only, so one missing PDF no longer shows as two
+blocking checks.
 
 ### Approval policy
 
