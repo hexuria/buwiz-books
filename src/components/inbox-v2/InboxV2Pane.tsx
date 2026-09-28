@@ -56,6 +56,8 @@ import {
   type EditorDraft,
 } from "./candidate-draft";
 import { ReasonChip } from "./ReasonChip";
+import { correctionChangesAnswer, type DraftAnswer, type RememberOffer } from "./remember-offer";
+import { RememberThisPrompt } from "./RememberThisPrompt";
 
 const InteractiveDocumentViewer = lazy(() => import("../bills/InteractiveDocumentViewer"));
 
@@ -66,6 +68,11 @@ export interface ApproveRequest {
   expectedRevision: number;
   expectedLockVersion: number;
   overrideReason?: string;
+  /**
+   * The correction saved on the way to approval changed the answer, so the page offers
+   * "Remember this?" once the approval lands. Absent when nothing changed.
+   */
+  remember?: RememberOffer & { who: string };
 }
 
 export interface RejectRequest {
@@ -117,6 +124,18 @@ function draftSource(detail: InboxDetail): DraftSourceCandidate {
       departmentId: line.departmentId,
       locationId: line.locationId,
     })),
+  };
+}
+
+/** The answer the draft states now, to tell whether a saved correction changed it. */
+function draftAnswer(detail: InboxDetail): DraftAnswer {
+  return {
+    lines: detail.lines.map((line) => ({
+      accountId: line.accountId,
+      originalDebit: line.originalDebit,
+    })),
+    partyId: detail.candidate.partyId,
+    economicEventClass: detail.economicEvent?.economicEventClass ?? null,
   };
 }
 
@@ -213,6 +232,8 @@ export function InboxV2Pane({
   const [rejectReason, setRejectReason] = useState("");
   const [overrideReason, setOverrideReason] = useState("");
   const [preparing, setPreparing] = useState(false);
+  // "Remember this?" after a save that changed the answer. Non-blocking: nothing waits on it.
+  const [rememberOffer, setRememberOffer] = useState<RememberOffer | null>(null);
   const billRef = useRef<BillEditorHandle>(null);
   const transactionRef = useRef<TransactionEditorHandle>(null);
   const rejectInputRef = useRef<HTMLTextAreaElement>(null);
@@ -282,9 +303,10 @@ export function InboxV2Pane({
   };
 
   const saveMutation = useMutation({
-    mutationFn: (correction: CandidateCorrection) => {
+    mutationFn: async (correction: CandidateCorrection) => {
       if (!detail) throw new Error("This item is still loading.");
-      return callServerFn(updateInboxCandidate, {
+      const changed = correctionChangesAnswer(draftAnswer(detail), correction);
+      const saved = await callServerFn(updateInboxCandidate, {
         data: {
           inboxItemId: detail.item.id,
           expectedRevision: detail.item.candidateRevision,
@@ -292,9 +314,15 @@ export function InboxV2Pane({
           ...correction,
         },
       });
+      return { saved, changed };
     },
-    onSuccess: async () => {
+    onSuccess: async ({ saved, changed }) => {
       showToast("Saved. The book checks ran again.", { icon: "success" });
+      setRememberOffer(
+        changed
+          ? { candidateId: saved.candidateId, candidateRevision: saved.candidateRevision }
+          : null,
+      );
       await queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
     },
     onError: (error) => showToast(errorMessage(error), { icon: "error" }),
@@ -363,6 +391,7 @@ export function InboxV2Pane({
     actingRef.current = true;
     let expectedRevision = detail.item.candidateRevision;
     let expectedLockVersion = detail.item.lockVersion;
+    let remember: ApproveRequest["remember"];
     const handle = editorDraft.editor === "bill" ? billRef.current : transactionRef.current;
     const needsSave = (handle?.isDirty() ?? false) || detail.item.state !== "ready_for_review";
     if (needsSave) {
@@ -372,9 +401,10 @@ export function InboxV2Pane({
         actingRef.current = false;
         return;
       }
+      const changed = correctionChangesAnswer(draftAnswer(detail), correction);
       setPreparing(true);
       try {
-        await callServerFn(updateInboxCandidate, {
+        const saved = await callServerFn(updateInboxCandidate, {
           data: {
             inboxItemId: detail.item.id,
             expectedRevision,
@@ -394,10 +424,24 @@ export function InboxV2Pane({
           showToast(`Saved, but a check now blocks approval: ${nowBlocking[0].message}`, {
             icon: "error",
           });
+          // The save stands, and so does the offer to remember it.
+          if (changed) {
+            setRememberOffer({
+              candidateId: saved.candidateId,
+              candidateRevision: saved.candidateRevision,
+            });
+          }
           return;
         }
         expectedRevision = fresh.item.candidateRevision;
         expectedLockVersion = fresh.item.lockVersion;
+        if (changed && canApprove) {
+          remember = {
+            candidateId: saved.candidateId,
+            candidateRevision: saved.candidateRevision,
+            who: item.who,
+          };
+        }
       } catch (error) {
         actingRef.current = false;
         showToast(errorMessage(error), { icon: "error" });
@@ -411,6 +455,7 @@ export function InboxV2Pane({
       expectedRevision,
       expectedLockVersion,
       overrideReason: ownerMayOverride ? overrideReason.trim() : undefined,
+      ...(remember ? { remember } : {}),
     });
   };
 
@@ -575,6 +620,16 @@ export function InboxV2Pane({
       </div>
 
       <div className="space-y-4 p-4">
+        {rememberOffer && canApprove && (
+          <RememberThisPrompt
+            key={`${rememberOffer.candidateId}:${rememberOffer.candidateRevision}`}
+            candidateId={rememberOffer.candidateId}
+            candidateRevision={rememberOffer.candidateRevision}
+            onSaved={() => setRememberOffer(null)}
+            onDismiss={() => setRememberOffer(null)}
+          />
+        )}
+
         {canBookAs && (
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <span className="font-medium">Book as</span>

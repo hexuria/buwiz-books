@@ -12,8 +12,13 @@
  *   jev_unsure  a real model-unsure signal: a low-confidence category, or an answer stage 2
  *               could not use (a category or counterparty below the threshold, or none at all)
  *   spot_check  a held-back sample of what Jev would have approved (step 11; never yet)
- *   ready       nothing above: a clean entry (typed by hand, or a confident paper) waiting for
- *               approval
+ *   ready       nothing above: a clean entry (typed by hand, a confident paper, or one a
+ *               classification memory answered) waiting for approval
+ *
+ * Memories (step 10): a remembered answer carries no model doubt, so a memory-answered entry
+ * that no check blocks is Ready to approve, said as such. Two memories that disagree raise the
+ * blocking `memory_conflict` finding; when it is open it is the fix the strip names, ahead of the
+ * `uncategorized` line it leaves behind.
  *
  * A blocking finding that exists only because the model was unsure is Jev unsure, not a fix:
  * stage 2 parks an unsure category on Uncategorized and leaves an unsure counterparty empty, so
@@ -54,7 +59,8 @@ export type InboxV2ReasonDetail =
   | "low_confidence"
   | "model_unsure"
   | "spot_check"
-  | "ready";
+  | "ready"
+  | "remembered";
 
 export interface InboxV2OpenFinding {
   ruleKey: string;
@@ -95,6 +101,8 @@ export interface InboxV2ReasonInput {
   modelUnsureSignals?: readonly ModelUnsureSignal[];
   /** STEP 11 HOOK: a held-back autonomy sample. Always false until lanes exist. */
   spotCheck?: boolean;
+  /** A classification memory answered the entry (a line's evidence source is "memory"). */
+  remembered?: boolean;
 }
 
 export interface InboxV2ReasonResult {
@@ -110,6 +118,8 @@ export interface InboxV2ReasonResult {
 
 export const SOURCE_PROCESSING_FAILED_RULE = "source_processing_failed";
 export const LOW_CONFIDENCE_CATEGORY_RULE = "low_confidence_category";
+/** Raised by stage 2 when two remembered answers of one specificity disagree. */
+export const MEMORY_CONFLICT_RULE = "memory_conflict";
 const UNCATEGORIZED_RULE = "uncategorized";
 const MISSING_PARTY_RULES = new Set(["missing_vendor", "missing_customer"]);
 
@@ -193,11 +203,14 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
   );
   const unsureParty = signals.some((signal) => signal.subject === "party");
 
-  const blocking = firstFix(
-    findings.filter(
-      (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
-    ),
-  );
+  // Disagreeing memories are the fix to name: the Uncategorized line they leave is their symptom.
+  const blocking =
+    findings.find((finding) => finding.blocking && finding.ruleKey === MEMORY_CONFLICT_RULE) ??
+    firstFix(
+      findings.filter(
+        (finding) => finding.blocking && !explainedByDoubt(finding, unsureLines, unsureParty),
+      ),
+    );
   if (blocking) return result("needs_fix", "blocking_finding", signals, blocking);
   // Judged on the entry, not the lifecycle state: stage 2 fills lines without moving an item
   // out of needs_information. A line with no account is missing a detail unless it is a
@@ -217,7 +230,7 @@ export function deriveInboxV2Reason(input: InboxV2ReasonInput): InboxV2ReasonRes
 
   if (input.spotCheck) return result("spot_check", "spot_check", signals);
 
-  return result("ready", "ready", signals);
+  return result("ready", input.remembered ? "remembered" : "ready", signals);
 }
 
 /**
@@ -276,6 +289,8 @@ export function describeInboxV2Reason(reason: InboxV2ReasonResult): string {
       return "Spot check: Jev would have approved this. Your answer keeps its approvals honest.";
     case "ready":
       return "No check blocks it. Review the entry and approve it.";
+    case "remembered":
+      return "Answered from a correction you asked Jev to remember. No check blocks it. Review the entry and approve it.";
   }
 }
 

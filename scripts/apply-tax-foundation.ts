@@ -53,6 +53,9 @@ try {
     // and installs the immutability trigger (the part push cannot create).
     "0055_rule_snapshots.sql",
     "0058_party_name_trigram.sql",
+    // Inbox v2 memory (step 10). Creates classification_memories itself, so
+    // push finds nothing left to prompt about.
+    "0059_classification_memories.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

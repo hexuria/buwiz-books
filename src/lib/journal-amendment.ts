@@ -29,6 +29,7 @@ import { and, asc, eq, ne } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { activityLogs } from "@/db/schema/activity-logs";
+import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { journalsClearedByFinalizedReconciliation } from "@/lib/reconciliation-claimed-lines";
@@ -217,6 +218,20 @@ export async function amendPostedJournal(
       sortOrder: index,
     })),
   );
+
+  // An entry an Inbox memory answered, reversed after it was approved, is an
+  // undo for that memory (Inbox v2 §7) — unless the replacement keeps its
+  // accounts, which only fixes figures.
+  await noteReversedMemoryEntries(db, {
+    orgId: input.organizationId,
+    journalHeaderIds: [original.id],
+    reason: input.lines?.length ? "posted_entry_amended" : "posted_entry_reversed",
+    actorId: input.userId,
+    replacementLines: input.lines?.map((line) => ({
+      side: line.debit != null && line.debit !== "" ? ("debit" as const) : ("credit" as const),
+      accountId: line.accountId,
+    })),
+  });
 
   let replacementId: string | null = null;
 

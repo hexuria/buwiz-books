@@ -45,6 +45,7 @@ import { extractBoundingBoxes } from "./-ai-bill-ocr";
 import { generateThumbnail } from "@/services/thumbnail-generator";
 import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
 import { listOrganizationBills } from "@/lib/bill-list";
+import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import {
   inboxItems,
   integrationSources,
@@ -696,6 +697,13 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
               changes: { reason: "bill_voided", billId },
             });
           }
+          // Voiding a bill an Inbox memory answered is an undo for that memory.
+          await noteReversedMemoryEntries(db, {
+            orgId,
+            journalHeaderIds: linkedJournals.map((journal) => journal.id),
+            reason: "bill_voided",
+            actorId: userId,
+          });
         }
 
         await db.insert(activityLogs).values({
@@ -840,6 +848,12 @@ export const deleteBill = createServerFn({ method: "POST" }).handler(
             changes: { reason: "bill_deleted", billId: parsed.id },
           });
         }
+        await noteReversedMemoryEntries(db, {
+          orgId,
+          journalHeaderIds: linkedJournals.map((journal) => journal.id),
+          reason: "bill_deleted",
+          actorId: userId,
+        });
 
         await db
           .delete(documentAttachments)

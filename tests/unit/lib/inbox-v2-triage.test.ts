@@ -342,3 +342,48 @@ describe("isInboxV2Enabled", () => {
     expect(isInboxV2Enabled({ inboxV2: true })).toBe(true);
   });
 });
+
+describe("memory answers (Inbox v2 step 10)", () => {
+  it("reads a remembered entry no check blocks as Ready to approve, in its own words", () => {
+    const reason = reasonFor({ state: "needs_information", remembered: true });
+    expect(reason).toMatchObject({ reason: "ready", detail: "remembered", signals: [] });
+    expect(describeInboxV2Reason(reason)).toBe(
+      "Answered from a correction you asked Jev to remember. No check blocks it. Review the entry and approve it.",
+    );
+  });
+
+  it("never lets a remembered answer hide a check that blocks", () => {
+    expect(
+      reasonFor({
+        remembered: true,
+        openFindings: [blocking("party_payment_details_changed", "Bank details changed.")],
+      }),
+    ).toMatchObject({
+      reason: "needs_fix",
+      detail: "blocking_finding",
+      ruleKey: "party_payment_details_changed",
+    });
+  });
+
+  it("names disagreeing memories as the fix, ahead of the Uncategorized line they leave", () => {
+    const reason = reasonFor({
+      state: "needs_information",
+      openFindings: [
+        blocking("uncategorized", UNCATEGORIZED_MESSAGE, [0, 1]),
+        blocking(
+          "memory_conflict",
+          "2 remembered answers for this file disagree about this paper.",
+        ),
+      ],
+    });
+    expect(reason).toMatchObject({
+      reason: "needs_fix",
+      detail: "blocking_finding",
+      ruleKey: "memory_conflict",
+      message: "2 remembered answers for this file disagree about this paper.",
+    });
+    expect(describeInboxV2Reason(reason)).toBe(
+      "2 remembered answers for this file disagree about this paper.",
+    );
+  });
+});

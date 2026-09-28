@@ -24,6 +24,7 @@ export * from "./number-sequences";
 export * from "./inbox";
 export * from "./routines";
 export * from "./rule-snapshots";
+export * from "./classification-memories";
 export * from "./operation-idempotency";
 export * from "./ai";
 export * from "./business-groups";

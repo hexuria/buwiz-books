@@ -100,6 +100,14 @@ the same Inbox items, so switching moves no data and open items carry over.
 - A correction keeps each line's counterparty: payable and receivable lines
   take the entry's vendor or customer, and other lines keep the party they had
   unless the correction names one.
+- An entry a classification memory answered carries a **Remembered** badge. With
+  no check blocking it, it reads Ready to approve ("Answered from a correction
+  you asked Jev to remember…"); disagreeing memories read Needs a fix, named by
+  their `memory_conflict` check.
+- After a save that changed the answer (accounts, counterparty, or kind of
+  paper), the pane offers **Remember this?** above the editor; approving with
+  such a change offers it in a corner card once the approval lands. Both are
+  optional and block nothing. Settings → Review Rules lists the memories.
 
 ## Review policy
 
@@ -227,8 +235,45 @@ placeholder lines and a `classify_inbox_candidate` job. That job:
   ones. Editing the entry never clears it; resolve it with a note after
   confirming the change through a contact you already trust.
 
-The payment side (bank, card, cash, AP, or AR) is always left for the reviewer.
-With Jev opted in, Jev answers both picks first and Gemini is the fallback.
+The payment side (bank, card, cash, AP, or AR) is left for the reviewer unless a
+memory answers it (below). With Jev opted in, Jev answers both picks first and
+Gemini is the fallback.
+
+### Memories ("Remember this?")
+
+After correcting a draft, a reviewer who can approve Inbox items may choose
+**Remember this?** and a scope: this file (the document's sha256), this sender
+(sender email plus printed tax id), this party, or these words (the
+description's alias-normalized tokens). The prompt first shows how many papers
+from the last 12 months the scope would have matched, and how many of them it
+would have changed. Scopes that can answer more than one party's papers — these
+words, or a sender without a party — need `agentRule:configure` (owners and
+admins). A memory stores the kind of paper, the party, and each line's account;
+never bank or payment details, and nothing is written to the party.
+
+Stage 2 consults memories **before any model**, most specific first (file,
+sender, party, words). A hit writes the remembered answer with no model call at
+all; the book rules and the payment-details check still run on it, so blocking
+findings still block. A memory's accounts and party must pass the same checks as
+a model's pick (active leaf accounts of this organization, still of the type
+they had, a party of the right kind); one that fails is skipped and reported on
+the memory. Two memories of the same specificity that disagree apply nothing and
+raise the blocking `memory_conflict` finding. When a remembered answer settles
+the whole entry — every line has an account, the counterparty is set where the
+kind of paper has one — and no finding blocks approval, the item moves to ready
+for review exactly as a reviewer's correction would leave it; otherwise it stays
+in needs information. Remembered payable and receivable lines carry the entry's
+counterparty, as a correction writes them.
+
+A correction away from a memory's answer before approval — or a reversal or void
+of the posted entry — counts as an undo; an answer approved as-is resets the
+count. Two undos in a row turn the memory off. Everyone who can see the Inbox can
+list memories (uses, undos, whether one turned itself off, and why it would be
+skipped today); owners and admins can turn them on or off or delete them. Every
+save also writes an `ai_eval_cases` row (`authored`, task `inbox_memory`);
+replaying it must reproduce the answer exactly. CI's recorded evals replay every
+authored case in `tests/evals/fixtures/inbox-memory-locks.json`
+(`tests/evals/memory-lock.eval.ts`).
 
 Event classes inferred from email text, OCR, or document extraction are
 reviewer-editable and every change is audited. Provider-owned payment, payroll,

@@ -50,6 +50,12 @@ const COUNTERPARTY_ROLE: Partial<Record<EconomicEvent, MatchableEntityType>> = {
   invoice_payment: "customer",
 };
 
+/** The counterparty's role for an economic event, or null when it has none. */
+export function counterpartyRoleFor(event: string | null | undefined): MatchableEntityType | null {
+  if (!event || !Object.hasOwn(COUNTERPARTY_ROLE, event)) return null;
+  return COUNTERPARTY_ROLE[event as EconomicEvent] ?? null;
+}
+
 /** Roles we pay, so a changed payee bank account is the fraud path. */
 export const PAYEE_ROLES: ReadonlySet<MatchableEntityType> = new Set(["vendor", "employee"]);
 

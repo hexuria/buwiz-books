@@ -32,6 +32,15 @@ vi.mock("../../src/routes/api/-rule-snapshots", () => ({
   unpinRoutineRuleSnapshot: vi.fn(),
 }));
 vi.mock("../../src/routes/api/-routines", () => ({ listRoutines: vi.fn(async () => []) }));
+// …and then with the Inbox's classification memories.
+vi.mock("../../src/routes/api/-inbox-memory", () => ({
+  listMemories: vi.fn(async () => []),
+  enableMemory: vi.fn(),
+  disableMemory: vi.fn(),
+  deleteMemory: vi.fn(),
+  rememberCorrection: vi.fn(),
+  previewMemoryScope: vi.fn(),
+}));
 
 vi.mock("../../src/routes/api/-org-settings", () => ({
   getOrgSettings: vi.fn(async () => ({ id: "org-1", name: "Acme Books", slug: "acme" })),
