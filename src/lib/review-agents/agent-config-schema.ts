@@ -390,6 +390,16 @@ export const REVIEW_AGENT_SCHEMAS: Record<string, AgentConfigSchema> = {
     ],
     fields: [],
   },
+  memory_conflict: {
+    key: "memory_conflict",
+    cadence: "system",
+    usesLookback: false,
+    method: [
+      "Raised when two remembered answers of the same specificity match one paper and disagree. Neither is applied, and no model guesses in their place.",
+      "Turn off the memory that is wrong in Settings → Memories, then choose the answer for this paper.",
+    ],
+    fields: [],
+  },
 };
 
 export function getAgentSchema(key: string): AgentConfigSchema | undefined {

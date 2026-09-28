@@ -43,6 +43,11 @@ export const keys = {
     v2List: () => ["inbox", "v2", "list"] as const,
     /** Inbox v2: the per-org rollout flag that picks the /inbox screen. */
     v2Enabled: () => ["inbox", "v2", "enabled"] as const,
+    // Classification memories (Inbox v2 §7). Under the Inbox prefix, so an Inbox-wide
+    // invalidation also refreshes the memory list and the scope previews.
+    memories: () => ["inbox", "memories"] as const,
+    memoryPreview: (candidateId: string, scope: string, docKind: string | null = null) =>
+      ["inbox", "memories", "preview", candidateId, scope, docKind] as const,
   },
   reviewAgents: {
     all: () => ["review-agents"] as const,

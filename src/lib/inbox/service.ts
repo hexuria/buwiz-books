@@ -48,6 +48,7 @@ import {
 } from "./duplicate-matcher";
 import { loadDuplicateEngineConfig, runDuplicateMatchingForSource } from "./duplicate-engine";
 import { preserveAuthoritativeEconomicEvent } from "./economic-event";
+import { noteApprovalOfMemoryAnswer } from "./memory/tracking";
 import type { BookRuleAccount } from "./rules";
 import { evaluateCandidateRules, withRuleSetProvenance, type AppliedRuleSet } from "./rule-set";
 import { LIVE_RULE_SET_PROVENANCE, loadLiveRuleConfigs } from "./rule-snapshots";
@@ -1345,6 +1346,26 @@ export async function approveInboxItem(
     },
     db,
   );
+
+  // A memory's answer approved as-is is an accepted hit; approved with a
+  // different answer, an undo (src/lib/inbox/memory/tracking.ts).
+  await noteApprovalOfMemoryAnswer(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    actorType: "user",
+    actorId: userId,
+    settled: {
+      docKind:
+        candidateSources.find(({ id }) => id === row.candidate.sourceRecordId)
+          ?.economicEventClass ?? originEconomicEventClass,
+      partyId: row.candidate.partyId,
+      lines: lines.map((line) => ({
+        side: line.originalDebit !== null ? ("debit" as const) : ("credit" as const),
+        accountId: line.accountId,
+      })),
+    },
+  });
 
   return {
     approvalOutcome: "approved",

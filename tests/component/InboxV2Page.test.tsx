@@ -52,6 +52,15 @@ vi.mock("../../src/routes/api/-category-mappings", () => ({
 vi.mock("../../src/routes/api/-documents", () => ({
   getDocumentViewerData: api.getDocumentViewerData,
 }));
+const memoryApi = vi.hoisted(() => ({
+  rememberCorrection: vi.fn(),
+  previewMemoryScope: vi.fn(),
+  listMemories: vi.fn(),
+  enableMemory: vi.fn(),
+  disableMemory: vi.fn(),
+  deleteMemory: vi.fn(),
+}));
+vi.mock("../../src/routes/api/-inbox-memory", () => memoryApi);
 
 const access = vi.hoisted(() => ({ approve: true, reject: true, update: true, resolve: true }));
 vi.mock("../../src/lib/use-permission", () => ({
@@ -72,7 +81,12 @@ vi.mock("../../src/lib/auth-client", () => ({
   authClient: { useSession: () => ({ data: { user: { id: "reviewer-1" } } }) },
 }));
 
-const editor = vi.hoisted(() => ({ dirty: false, rendered: [] as string[] }));
+const editor = vi.hoisted(() => ({
+  dirty: false,
+  rendered: [] as string[],
+  /** What the reviewer changed, applied to the draft the editor hands back. */
+  edit: null as null | ((draft: any) => any),
+}));
 vi.mock("../../src/components/bills/BillEditor", async () => {
   const { useImperativeHandle, useRef } = await import("react");
   function BillEditor({ draft, ref }: { draft: unknown; ref?: React.Ref<unknown> }) {
@@ -93,11 +107,20 @@ vi.mock("../../src/components/bills/BillEditor", async () => {
 });
 vi.mock("../../src/components/transactions/editor/TransactionEditor", async () => {
   const { useImperativeHandle, useRef } = await import("react");
-  function TransactionEditor({ draft, ref }: { draft: unknown; ref?: React.Ref<unknown> }) {
+  function TransactionEditor({
+    draft,
+    onSubmit,
+    ref,
+  }: {
+    draft: unknown;
+    onSubmit?: (draft: unknown) => void;
+    ref?: React.Ref<unknown>;
+  }) {
     const input = useRef<HTMLInputElement>(null);
     editor.rendered.push("transaction");
+    const current = () => (editor.edit ? editor.edit(draft) : draft);
     useImperativeHandle(ref, () => ({
-      getDraft: () => draft,
+      getDraft: current,
       validate: () => true,
       isDirty: () => editor.dirty,
       focus: () => input.current?.focus(),
@@ -105,6 +128,9 @@ vi.mock("../../src/components/transactions/editor/TransactionEditor", async () =
     return (
       <div data-testid="transaction-editor">
         <input ref={input} aria-label="Transaction memo" />
+        <button type="button" onClick={() => onSubmit?.(current())}>
+          Save & run checks
+        </button>
       </div>
     );
   }
@@ -311,6 +337,20 @@ beforeEach(() => {
   selections.length = 0;
   editor.dirty = false;
   editor.rendered = [];
+  editor.edit = null;
+  memoryApi.previewMemoryScope.mockResolvedValue({
+    available: true,
+    scope: "file_hash",
+    keyLabel: "File receipt.pdf",
+    requiresAdmin: false,
+    allowed: true,
+    matched: 2,
+    changed: 1,
+    examined: 12,
+    capped: false,
+    windowMonths: 12,
+    existingMemory: null,
+  });
   Object.assign(access, { approve: true, reject: true, update: true, resolve: true });
   setViewport(true);
   api.listInboxV2.mockResolvedValue({ items: ALL_ITEMS, truncated: false, beingRead: 0 });
@@ -740,5 +780,122 @@ describe("Inbox v2 on a phone", { timeout: 30_000 }, () => {
 
     await user.click(within(drawer).getByRole("button", { name: "Back to Inbox" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Inbox v2 memory", { timeout: 30_000 }, () => {
+  const OTHER_EXPENSE = "55555555-5555-4555-8555-555555555555";
+  /** The reviewer books the paid-for line to another expense account. */
+  const recategorize = (draft: any) => ({
+    ...draft,
+    payForLines: draft.payForLines.map((line: any) => ({ ...line, categoryId: OTHER_EXPENSE })),
+  });
+  const saved = {
+    inboxItem: { id: FIX.id, lockVersion: 2 },
+    candidateId: `candidate-${FIX.id}`,
+    candidateRevision: 2,
+    findingCount: 0,
+    memory: { outcome: "none" },
+  };
+
+  it("offers Remember this? after a save that changed the answer", async () => {
+    const user = userEvent.setup();
+    editor.edit = recategorize;
+    api.updateInboxCandidate.mockResolvedValue(saved);
+    renderInbox();
+    await screen.findByTestId("transaction-editor");
+
+    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    const prompt = await screen.findByRole("region", { name: "Remember this?" });
+    await waitFor(() =>
+      expect(memoryApi.previewMemoryScope).toHaveBeenCalledWith({
+        data: { candidateId: `candidate-${FIX.id}`, scope: "file_hash" },
+      }),
+    );
+    expect(await within(prompt).findByTestId("memory-preview-count")).toHaveTextContent(
+      "Would have changed 1 of 2 past papers",
+    );
+    // Non-blocking: approval stays available while it is open.
+    expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled();
+
+    await user.click(within(prompt).getByRole("button", { name: "Not now" }));
+    expect(screen.queryByRole("region", { name: "Remember this?" })).not.toBeInTheDocument();
+  });
+
+  it("offers nothing after a save that kept the answer", async () => {
+    const user = userEvent.setup();
+    api.updateInboxCandidate.mockResolvedValue(saved);
+    renderInbox();
+    await screen.findByTestId("transaction-editor");
+
+    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    expect(await screen.findByText("Saved. The book checks ran again.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Remember this?" })).not.toBeInTheDocument();
+    expect(memoryApi.previewMemoryScope).not.toHaveBeenCalled();
+  });
+
+  it("offers it once an approval that changed the answer lands, then gets out of the way", async () => {
+    const user = userEvent.setup();
+    editor.dirty = true;
+    editor.edit = recategorize;
+    let revision = 1;
+    api.getInboxItem.mockImplementation(({ data }: { data: { id: string } }) => {
+      const item = ALL_ITEMS.find((entry) => entry.id === data.id)!;
+      return Promise.resolve(
+        detailFor(
+          data.id === FIX.id
+            ? { ...FIX, candidateRevision: revision, lockVersion: revision }
+            : item,
+        ),
+      );
+    });
+    api.updateInboxCandidate.mockImplementation(async () => {
+      revision = 2;
+      return saved;
+    });
+    renderInbox();
+    await screen.findByTestId("transaction-editor");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Approve" })).toBeEnabled());
+
+    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await waitFor(() => expect(api.approveInbox).toHaveBeenCalledTimes(1));
+    // The server never sees the offer.
+    expect(api.approveInbox.mock.calls[0][0].data).not.toHaveProperty("remember");
+
+    const offer = await screen.findByRole("complementary", {
+      name: "Remember your last correction",
+    });
+    expect(
+      within(offer).getByText("You corrected Ace Hardware before approving it."),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(memoryApi.previewMemoryScope).toHaveBeenCalledWith({
+        data: { candidateId: `candidate-${FIX.id}`, scope: "file_hash" },
+      }),
+    );
+    await user.click(within(offer).getByRole("button", { name: "Not now" }));
+    expect(
+      screen.queryByRole("complementary", { name: "Remember your last correction" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not offer it to a reviewer who cannot approve", async () => {
+    const user = userEvent.setup();
+    access.approve = false;
+    editor.edit = recategorize;
+    api.updateInboxCandidate.mockResolvedValue(saved);
+    renderInbox();
+    await screen.findByTestId("transaction-editor");
+
+    await user.click(screen.getByRole("button", { name: "Save & run checks" }));
+    expect(await screen.findByText("Saved. The book checks ran again.")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Remember this?" })).not.toBeInTheDocument();
+  });
+
+  it("marks a memory-answered item Remembered in the strip", async () => {
+    renderInbox(UNSURE_B.id);
+    await screen.findByTestId("transaction-editor");
+    const badge = await screen.findByText("Remembered");
+    expect(badge).toHaveAttribute("title", "Answered from a correction you asked Jev to remember");
   });
 });

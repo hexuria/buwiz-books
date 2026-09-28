@@ -14,8 +14,11 @@ import { retryPolicyFor } from "@/lib/jobs/retry-policy";
 
 export const CLASSIFY_INBOX_CANDIDATE_JOB_TYPE = "classify_inbox_candidate";
 
-/** Bump when the classification contract changes, so a re-run is not deduped away. */
-export const CANDIDATE_CLASSIFICATION_VERSION = 1;
+/**
+ * Bump when the classification contract changes, so a re-run is not deduped away.
+ * 2: the memory layer answers before any model (inbox v2 step 10).
+ */
+export const CANDIDATE_CLASSIFICATION_VERSION = 2;
 
 export interface ClassifyInboxCandidatePayload {
   candidateId: string;

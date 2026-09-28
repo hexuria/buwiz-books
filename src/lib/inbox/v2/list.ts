@@ -252,6 +252,7 @@ export async function listInboxV2Items(
       entry: entryShapeOf(lines),
       modelUnsureSignals: modelUnsureSignalsFor({ lines, unresolvedParty: row.unresolvedParty }),
       spotCheck: isSpotCheckSample(row.id),
+      remembered: row.remembered === true,
     });
     return {
       id: row.id,

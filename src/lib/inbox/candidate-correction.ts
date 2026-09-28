@@ -45,6 +45,7 @@ import { recordShadowRuleEvaluation, resolveCandidateRuleSets } from "./rule-sna
 import type { CandidateLineInput, InboxServiceContext } from "./types";
 import { enqueueCandidateClassification } from "./candidate-classification-job";
 import { collectDocumentFacts, loadCandidateDocuments } from "./candidate-document-facts";
+import { noteCorrectionOfMemoryAnswer, supersedeMemoryApplication } from "./memory/tracking";
 import {
   PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
   raisePaymentDetailsFindingIfChanged,
@@ -53,15 +54,22 @@ import {
 /**
  * Lines the system wrote and a reviewer never touched: the unselected
  * placeholders enrichment creates, and the lines stage 2 classified from them
- * (src/lib/inbox/candidate-classification.ts). New facts may replace these;
- * any other line is a reviewer's and is never overwritten.
+ * (src/lib/inbox/candidate-classification.ts) — by a model or by a memory.
+ * New facts may replace these; any other line is a reviewer's and is never
+ * overwritten.
  */
 function isSystemGeneratedLine(line: {
   accountId: string | null;
   predictionEvidence: Record<string, unknown> | null;
 }): boolean {
-  if (line.predictionEvidence?.source === "inbox_classification") return true;
+  const source = line.predictionEvidence?.source;
+  if (source === "inbox_classification" || source === "memory") return true;
   return line.accountId === null && line.predictionEvidence?.accountSelection === "not_inferred";
+}
+
+/** How a person's correction settles the draft, for the memory undo check. */
+function settledSide(line: { originalDebit: string | null }): "debit" | "credit" {
+  return line.originalDebit !== null ? "debit" : "credit";
 }
 
 export interface CandidateCorrectionLineInput {
@@ -145,9 +153,10 @@ export function resolveCorrectionLinePartyIds(
 
 /**
  * Payable and receivable accounts, by the aging reports' definition: the mapped A/P and A/R
- * accounts with everything under them, plus any account with either subtype.
+ * accounts with everything under them, plus any account with either subtype. Shared with inbox
+ * stage 2, which writes a remembered answer's lines the way a correction writes them.
  */
-async function counterpartyAccountIds(
+export async function counterpartyAccountIds(
   db: DbExecutor,
   orgId: string,
   orgAccounts: ReadonlyArray<{ id: string; subtype: string | null }>,
@@ -378,6 +387,16 @@ export async function enrichCandidateFromExtractedFacts(
           eq(transactionCandidateLines.candidateId, row.candidate.id),
         ),
       );
+    // New facts replace a memory's answer before anyone judged it: that
+    // application ends without counting for or against the memory.
+    if (existingLines.some((line) => line.predictionEvidence?.source === "memory")) {
+      await supersedeMemoryApplication(ctx.db, {
+        orgId: ctx.orgId,
+        candidateId: row.candidate.id,
+        inboxItemId: row.item.id,
+        reason: "source_facts_reenriched",
+      });
+    }
   }
   if (existingLines.length === 0 || hasSystemPlaceholderLines) {
     const functionalAmount =
@@ -1028,6 +1047,23 @@ export async function correctInboxCandidate(
     db,
   );
 
+  // A correction that departs from what a memory answered this draft is an
+  // undo for that memory (src/lib/inbox/memory/tracking.ts).
+  const memory = await noteCorrectionOfMemoryAnswer(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    userId,
+    settled: {
+      docKind: classification.economicEventClass,
+      partyId: input.partyId ?? null,
+      lines: normalizedLines.map((line) => ({
+        side: settledSide(line),
+        accountId: line.accountId,
+      })),
+    },
+  });
+
   for (const sourceRecordId of sourceRecordIds) {
     await runDuplicateMatchingForSource(ctx, sourceRecordId, "source_updated");
   }
@@ -1036,5 +1072,6 @@ export async function correctInboxCandidate(
     candidateId: row.candidate.id,
     candidateRevision: nextRevision,
     findingCount: findings.length,
+    memory,
   };
 }

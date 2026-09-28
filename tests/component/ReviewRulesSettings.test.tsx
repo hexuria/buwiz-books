@@ -45,6 +45,15 @@ const snapshotsApi = vi.hoisted(() => ({
 vi.mock("../../src/routes/api/-rule-snapshots", () => snapshotsApi);
 const routinesApi = vi.hoisted(() => ({ listRoutines: vi.fn() }));
 vi.mock("../../src/routes/api/-routines", () => routinesApi);
+const memoryApi = vi.hoisted(() => ({
+  listMemories: vi.fn(),
+  enableMemory: vi.fn(),
+  disableMemory: vi.fn(),
+  deleteMemory: vi.fn(),
+  rememberCorrection: vi.fn(),
+  previewMemoryScope: vi.fn(),
+}));
+vi.mock("../../src/routes/api/-inbox-memory", () => memoryApi);
 
 const permission = vi.hoisted(() => ({
   configure: true,
@@ -308,6 +317,7 @@ beforeEach(() => {
   snapshotsApi.pinRoutineRuleSnapshot.mockReset().mockResolvedValue(EMAIL_ROUTINE);
   snapshotsApi.unpinRoutineRuleSnapshot.mockReset().mockResolvedValue(EMAIL_ROUTINE);
   routinesApi.listRoutines.mockReset().mockResolvedValue([EMAIL_ROUTINE]);
+  memoryApi.listMemories.mockReset().mockResolvedValue([]);
   blocker.calls = [];
   blocker.resolver = { status: "idle" };
   permission.configure = true;
@@ -884,5 +894,41 @@ describe("ReviewRulesSettings — rule snapshots", () => {
     const card = await screen.findByRole("region", { name: "Rule snapshots" });
     expect(within(card).getByRole("button", { name: "Snapshot current rules" })).toBeDisabled();
     expect(await within(card).findByLabelText("Rules for Inbound email")).toBeDisabled();
+  });
+});
+
+describe("ReviewRulesSettings — memories", () => {
+  it("closes the section with the Inbox's memories, after the snapshots", async () => {
+    memoryApi.listMemories.mockResolvedValue([
+      {
+        id: "00000000-0000-4000-8000-00000000me01",
+        matchKind: "party",
+        keyLabel: "Staples",
+        enabled: true,
+        autoDisabled: false,
+        uses: 4,
+        undos: 0,
+        consecutiveUndos: 0,
+        answer: {
+          docKind: "purchase",
+          party: { id: "00000000-0000-4000-8000-00000000pa01", name: "Staples" },
+          lines: [
+            { side: "debit", accountId: "a1", accountLabel: "67200 · Office Supplies" },
+            { side: "credit", accountId: "a2", accountLabel: "11000 · Bank Accounts" },
+          ],
+        },
+        problem: null,
+        createdBy: { id: "u1", name: "Maria Santos" },
+        createdAt: "2026-09-01T10:00:00.000Z",
+        updatedAt: "2026-09-01T10:00:00.000Z",
+      },
+    ]);
+    renderSection();
+
+    const card = await screen.findByRole("region", { name: "Memories" });
+    expect(await within(card).findByText("Paid expense · Staples")).toBeVisible();
+    expect(memoryApi.listMemories).toHaveBeenCalled();
+    const snapshots = screen.getByRole("region", { name: "Rule snapshots" });
+    expect(snapshots.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 });

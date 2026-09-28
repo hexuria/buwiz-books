@@ -56,6 +56,12 @@ export async function processClassifyInboxCandidateJob(
     candidateRevision: result.candidateRevision,
     categoryLines: result.categoryLines,
     party: result.party,
+    memory: {
+      outcome: result.memory.outcome,
+      matchKind: result.memory.matchKind,
+      memoryIds: result.memory.memoryIds,
+    },
+    readyForReview: result.readyForReview,
     paymentDetailsChanged: result.paymentDetailsChanged,
     findingCount: result.findingCount,
   };

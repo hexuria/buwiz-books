@@ -11,6 +11,7 @@ import { z } from "zod";
 import { isDateInLockedPeriod } from "../../../lib/period-close";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { createTransactionCandidate } from "../../../lib/inbox/service";
+import { noteReversedMemoryEntries } from "../../../lib/inbox/memory/tracking";
 import {
   createTransactionSchema,
   updateTransactionSchema,
@@ -359,6 +360,13 @@ export const voidTransaction = createServerFn({ method: "POST" }).handler(
           },
           db,
         );
+        // Voiding an entry an Inbox memory answered is an undo for that memory.
+        await noteReversedMemoryEntries(db, {
+          orgId,
+          journalHeaderIds: [parsed.id],
+          reason: "posted_entry_voided",
+          actorId: userId,
+        });
 
         return voided;
       },
