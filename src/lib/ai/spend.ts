@@ -39,7 +39,10 @@ export function invalidateSpendCache(orgId: string): void {
   cache.delete(orgId);
 }
 
-/** Month-to-date spend in USD (0 when nothing is priced yet). */
+/**
+ * Month-to-date spend in USD (0 when nothing has been metered yet). Calls to
+ * models without a price entry count at pricing.ts's fallback rate.
+ */
 export async function monthToDateSpendUsd(executor: DbExecutor, orgId: string): Promise<number> {
   const cached = cache.get(orgId);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.spent;

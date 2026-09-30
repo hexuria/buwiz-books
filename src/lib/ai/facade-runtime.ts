@@ -9,6 +9,7 @@ import { getOrgCredentials, type ResolvedCredential } from "./credentials";
 import { AiProviderError, classifyGeminiError, toAiProviderError } from "./errors";
 import type { AiCompletionRuntime, AiHopInvocation } from "./facade-core";
 import { logProviderInvocation, recordValidationOutcome } from "./invoke";
+import { meteredUsage } from "./pricing";
 import * as health from "./provider-health";
 import { resolveChain } from "./router";
 import { getOrgAiSettings, isTaskAllowed } from "./settings";
@@ -117,6 +118,8 @@ async function invokeHop<TOut>(
     const result = await callTextProvider(args, credential);
 
     await health.recordSuccess(ctx.orgId, credential.fingerprint);
+    // A gateway that reports no usage must still count toward the spend cap.
+    const usage = meteredUsage(result.usage, String(args.prompt), result.text);
     const invocationId = await logProviderInvocation({
       orgId: ctx.orgId,
       task: args.task,
@@ -127,14 +130,16 @@ async function invokeHop<TOut>(
       promptName: entry.prompt.id,
       promptVersion: entry.prompt.version,
       schemaHash: entry.schemaHash,
-      tokensIn: result.usage.tokensIn,
-      tokensOut: result.usage.tokensOut,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
       latencyMs: Date.now() - started,
       requestId: ctx.requestId,
       configSnapshot: {
         redactionHits: args.redactionHits,
-        // Token counts were estimated because the provider omitted usage.
-        ...(result.usageEstimated ? { usageEstimated: true } : {}),
+        // Jev fills estimated counts itself and flags them; other gateways
+        // leave usage empty and meteredUsage estimates it. Either signal means
+        // the logged counts are not what the provider reported.
+        ...(result.usageEstimated || usage.estimated ? { usageEstimated: true } : {}),
       },
     });
     return { text: result.text, invocationId, model: hop.model };

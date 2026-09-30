@@ -230,7 +230,6 @@ export async function logProviderInvocation(input: ProviderInvocationLog): Promi
         costUsd: (() => {
           const cost = estimateCostUsd({
             model: input.model,
-            provider: input.provider,
             tokensIn: input.tokensIn,
             tokensOut: input.tokensOut,
           });
