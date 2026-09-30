@@ -8,25 +8,18 @@ import type { DbExecutor } from "../../db";
 import { bills, billLineItems } from "../../db/schema/bills";
 import { parties } from "../../db/schema/parties";
 import { accounts } from "../../db/schema/accounts";
-import { journalHeaders, journalLines } from "../../db/schema/journals";
+import { journalHeaders } from "../../db/schema/journals";
 import { activityLogs } from "../../db/schema/activity-logs";
-import { eq, desc, and, asc } from "drizzle-orm";
+import { eq, and, asc } from "drizzle-orm";
 import { z } from "zod";
 import { createLogger } from "../../lib/logger";
-import { insertActivityLog } from "../../lib/insert-activity-log";
 import { getClosedThrough, isDateLocked } from "../../lib/period-close";
 import { postBillAccrualJournal } from "../../lib/bill-journal";
 import { sumMoney } from "../../lib/inbox/money";
-import { statementLines, reconciliations } from "../../db/schema/reconciliations";
-import { inArray } from "drizzle-orm";
 import { isR2Configured, getPresignedDownloadUrl } from "../../lib/storage";
 import { documents, documentAttachments } from "../../db/schema/documents";
+import { deleteBillCore } from "../../lib/posting/bill-delete";
 import { ensureDocument } from "../../lib/documents/ensure-document";
-import {
-  assertIdempotencyPayloadMatches,
-  idempotencyPayloadHash,
-  scopedIdempotencyUuid,
-} from "../../lib/idempotency";
 import { centsToMoney, moneyToCents } from "../../lib/money";
 import {
   assertBillReferences,
@@ -49,8 +42,11 @@ import {
 } from "../../lib/server-context";
 import { extractBoundingBoxes } from "./-ai-bill-ocr";
 import { generateThumbnail } from "@/services/thumbnail-generator";
-import { createTransactionCandidate } from "@/lib/inbox/service";
-import { requireMappedAccountId } from "../../lib/coa/resolve-mapped-account";
+import { submitBillForReviewCore } from "@/lib/posting/bill-submission";
+import { BillInInboxError, findPendingInboxReviewForBill } from "@/lib/posting/bill-inbox-link";
+import { rejectInboxItem } from "@/lib/inbox/service";
+import { listOrganizationBills } from "@/lib/bill-list";
+import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import {
   inboxItems,
   integrationSources,
@@ -58,7 +54,6 @@ import {
   sourceRecordDocuments,
   sourceRecords,
   transactionCandidates,
-  workflowEvents,
 } from "@/db/schema/inbox";
 
 const logger = createLogger("api.bills");
@@ -104,6 +99,14 @@ const VALID_TRANSITIONS: Record<string, string[]> = {
 };
 
 const JOURNAL_PRODUCING_BILL_STATUSES = new Set(["awaiting_payment", "scheduled"]);
+/** Transitions that approve, book or pay a bill: the Inbox decides these while it reviews one. */
+const INBOX_REVIEWED_BILL_STATUSES = new Set([
+  "pending_approval",
+  "awaiting_payment",
+  "scheduled",
+  "paid",
+  "partial",
+]);
 
 // ============================================================================
 // Schemas
@@ -209,6 +212,8 @@ export type BillListItem = typeof bills.$inferSelect & {
 };
 
 export type BillDetail = typeof bills.$inferSelect & {
+  /** The Inbox item still reviewing this bill; approving it there books the bill. */
+  pendingInboxItemId?: string | null;
   vendorName: string | null;
   vendorEmail: string | null;
   vendorPhone: string | null;
@@ -241,54 +246,7 @@ export const listBills = createServerFn({ method: "GET" }).handler(
   async ({ data: rawData }: { data: unknown }) => {
     return withSessionOrgContext(async ({ orgId, db }) => {
       const parsed = listBillsSchema.parse(rawData ?? {});
-      const { status, vendorId, limit } = parsed;
-
-      const conditions = [eq(bills.organizationId, orgId)];
-      if (status) {
-        conditions.push(eq(bills.status, status));
-      }
-      if (vendorId) {
-        conditions.push(eq(bills.vendorId, vendorId));
-      }
-
-      const rows = await db
-        .select({
-          id: bills.id,
-          organizationId: bills.organizationId,
-          vendorId: bills.vendorId,
-          billNumber: bills.billNumber,
-          billDate: bills.billDate,
-          dueDate: bills.dueDate,
-          status: bills.status,
-          amount: bills.amount,
-          amountPaid: bills.amountPaid,
-          balanceDue: bills.balanceDue,
-          memo: bills.memo,
-          approverId: bills.approverId,
-          approvedAt: bills.approvedAt,
-          scheduledPaymentDate: bills.scheduledPaymentDate,
-          paidAt: bills.paidAt,
-          paymentMethod: bills.paymentMethod,
-          paymentReference: bills.paymentReference,
-          isRecurring: bills.isRecurring,
-          recurringFrequency: bills.recurringFrequency,
-          categoryConfidence: bills.categoryConfidence,
-          classificationStatus: bills.classificationStatus,
-          ocrBoundingBoxes: bills.ocrBoundingBoxes,
-          journalHeaderId: bills.journalHeaderId,
-          documentUrl: bills.documentUrl,
-          documentType: bills.documentType,
-          createdAt: bills.createdAt,
-          updatedAt: bills.updatedAt,
-          vendorName: parties.name,
-        })
-        .from(bills)
-        .leftJoin(parties, eq(bills.vendorId, parties.id))
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .orderBy(desc(bills.dueDate))
-        .limit(limit);
-
-      return rows;
+      return listOrganizationBills(db, orgId, parsed);
     });
   },
 );
@@ -394,7 +352,18 @@ export const getBill = createServerFn({ method: "GET" }).handler(
         .where(eq(billLineItems.billId, parsed.id))
         .orderBy(asc(billLineItems.sortOrder));
 
-      return { ...bill, documentUrl: resolvedDocumentUrl, previewImageUrl, lineItems };
+      // A bill the editor submitted is booked from its Inbox item, not here.
+      const pendingReview =
+        bill.journalHeaderId === null
+          ? await findPendingInboxReviewForBill(db, orgId, bill.id)
+          : null;
+      return {
+        ...bill,
+        documentUrl: resolvedDocumentUrl,
+        previewImageUrl,
+        lineItems,
+        pendingInboxItemId: pendingReview?.inboxItemId ?? null,
+      };
     });
   },
 );
@@ -408,177 +377,11 @@ export const createBill = createServerFn({ method: "POST" }).handler(
       "bill",
       "create",
       { routeKey: "bill:create", limit: 30, windowMs: 60_000 },
-      async ({ orgId, userId, role, db }) => {
+      async ({ orgId, userId, db }) => {
         const parsed = createBillSchema.parse(rawData);
-        // Org-ownership and account-type checks BEFORE anything persists —
-        // the invoice path has had this since assertInvoiceReferences; bills
-        // accepted any UUID.
-        await assertBillReferences(db, orgId, parsed.vendorId, parsed.lineItems);
-
-        // Exact summation. Float `reduce` + `.toFixed(2)` drifted from the
-        // raw line amounts, so a bill whose lines carry more than two decimals
-        // produced an A/P credit that did not equal the debits it offsets —
-        // an unbalanced journal, which the ledger now rejects outright (0038).
-        const totalAmount = sumMoney(parsed.lineItems.map((l) => l.amount));
-        const requestPayloadHash = idempotencyPayloadHash("bill-submission", {
-          vendorId: parsed.vendorId,
-          billNumber: parsed.billNumber,
-          billDate: parsed.billDate,
-          dueDate: parsed.dueDate,
-          memo: parsed.memo,
-          documentUrl: parsed.documentUrl,
-          documentType: parsed.documentType,
-          status: parsed.status,
-          isRecurring: parsed.isRecurring,
-          recurringFrequency: parsed.recurringFrequency,
-          categoryConfidence: parsed.categoryConfidence,
-          classificationStatus: parsed.classificationStatus,
-          ocrBoundingBoxes: parsed.ocrBoundingBoxes,
-          lineItems: parsed.lineItems,
-        });
-        const billId = scopedIdempotencyUuid(`bill:${orgId}`, parsed.idempotencyKey);
-
-        return db.transaction(async (tx) => {
-          const [bill] = await tx
-            .insert(bills)
-            .values({
-              id: billId,
-              organizationId: orgId,
-              vendorId: parsed.vendorId,
-              billNumber: parsed.billNumber,
-              billDate: parsed.billDate,
-              dueDate: parsed.dueDate,
-              memo: parsed.memo,
-              documentUrl: parsed.documentUrl,
-              documentType: parsed.documentType,
-              amount: totalAmount,
-              balanceDue: totalAmount,
-              status: parsed.status ?? "in_review",
-              isRecurring: parsed.isRecurring ?? false,
-              recurringFrequency: parsed.recurringFrequency,
-              categoryConfidence: parsed.categoryConfidence,
-              classificationStatus: parsed.classificationStatus ?? "manual",
-              ocrBoundingBoxes: parsed.ocrBoundingBoxes ?? null,
-            })
-            .onConflictDoNothing()
-            .returning();
-
-          if (!bill) {
-            const [existing] = await tx
-              .select()
-              .from(bills)
-              .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
-              .limit(1);
-            if (!existing) {
-              throw new Error("Unable to persist bill submission");
-            }
-            const [existingRequest] = await tx
-              .select({ sourceRawData: sourceRecords.rawData })
-              .from(transactionCandidates)
-              .leftJoin(sourceRecords, eq(transactionCandidates.sourceRecordId, sourceRecords.id))
-              .where(
-                and(
-                  eq(transactionCandidates.organizationId, orgId),
-                  eq(transactionCandidates.requestIdempotencyKey, parsed.idempotencyKey),
-                ),
-              )
-              .limit(1);
-            assertIdempotencyPayloadMatches(
-              existingRequest?.sourceRawData?.requestPayloadHash,
-              requestPayloadHash,
-              "bill",
-            );
-            await tx
-              .insert(workflowEvents)
-              .values({
-                organizationId: orgId,
-                entityType: "bill",
-                entityId: existing.id,
-                action: "exact_replay_suppressed",
-                actorType: "user",
-                actorId: userId,
-                idempotencyKey: `exact-replay:bill:${existing.id}`,
-                data: {
-                  replayType: "request_idempotency",
-                  sourceChannel: "bills_expenses",
-                },
-              })
-              .onConflictDoNothing();
-            return { ...existing, deduplicated: true };
-          }
-
-          if (parsed.lineItems.length > 0) {
-            await tx.insert(billLineItems).values(
-              parsed.lineItems.map((line, i) => ({
-                billId: bill.id,
-                description: line.description,
-                amount: line.amount,
-                accountId: line.accountId,
-                departmentId: line.departmentId,
-                locationId: line.locationId,
-                sortOrder: i,
-              })),
-            );
-          }
-
-          await insertActivityLog(
-            {
-              orgId,
-              entityType: "bill",
-              entityId: bill.id,
-              action: "created",
-              actorId: userId,
-              changes: {
-                vendorId: parsed.vendorId,
-                billNumber: parsed.billNumber ?? null,
-                billDate: parsed.billDate,
-                dueDate: parsed.dueDate,
-                totalAmount,
-                status: parsed.status ?? "in_review",
-                lineItemCount: parsed.lineItems.length,
-              },
-            },
-            tx,
-          );
-
-          const apAccountId = await resolveApAccount(tx, orgId);
-          const inboxResult = await createTransactionCandidate(
-            { orgId, userId, role, db: tx },
-            {
-              transactionDate: bill.billDate,
-              transactionType: "journal",
-              memo: parsed.memo || `Bill ${bill.billNumber || bill.id}`,
-              referenceNumber: bill.billNumber,
-              partyId: bill.vendorId,
-              sourceChannel: "bills_expenses",
-              sourceProvider: "internal_bills",
-              requestIdempotencyKey: parsed.idempotencyKey,
-              requestPayloadHash,
-              externalId: bill.id,
-              candidateType: "bill",
-              lines: [
-                ...parsed.lineItems.map((line, index) => ({
-                  accountId: line.accountId,
-                  debit: line.amount,
-                  lineDescription: line.description,
-                  departmentId: line.departmentId,
-                  locationId: line.locationId,
-                  categoryConfidence: parsed.categoryConfidence,
-                  sortOrder: index,
-                })),
-                {
-                  accountId: apAccountId,
-                  credit: totalAmount,
-                  lineDescription: `A/P: ${bill.billNumber || "Bill"}`,
-                  partyId: bill.vendorId,
-                  sortOrder: parsed.lineItems.length,
-                },
-              ],
-            },
-          );
-
-          return { ...bill, inboxItemId: inboxResult.inboxItem.id, deduplicated: false };
-        });
+        // Validation, the bill row, and its Inbox submission live in the
+        // session-free core so Inbox approval writes bills the same way.
+        return submitBillForReviewCore(db, orgId, { type: "user", userId }, parsed);
       },
     ) as any;
   },
@@ -637,11 +440,6 @@ export const updateBill = createServerFn({ method: "POST" }).handler(
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/** Resolve the organization's Accounts Payable account via the configured mapping. */
-async function resolveApAccount(db: DbExecutor, orgId: string): Promise<string> {
-  return requireMappedAccountId(db, orgId, "bill", "accounts_payable");
-}
 
 async function linkBillDocumentToCandidate(
   db: DbExecutor,
@@ -748,6 +546,18 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
               throw new PhTaxFilingUnavailableError();
             }
           }
+          // A bill still under Inbox review is not booked yet; paying it here
+          // would post around that review. Locked so an approval cannot slip in.
+          const [unbooked] = await db
+            .select({ id: bills.id, journalHeaderId: bills.journalHeaderId })
+            .from(bills)
+            .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+            .limit(1)
+            .for("update");
+          if (unbooked && unbooked.journalHeaderId === null) {
+            const pending = await findPendingInboxReviewForBill(db, orgId, billId);
+            if (pending) throw new BillInInboxError(pending.inboxItemId);
+          }
           return recordManualBillPayment(db, {
             organizationId: orgId,
             userId,
@@ -773,6 +583,31 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
           throw new Error("Payment amount must be positive");
         }
 
+        const voidingPendingReview = newStatus === "voided";
+        if (voidingPendingReview) {
+          // Voiding a bill still under Inbox review ends that review: the item
+          // is rejected, which voids the unbooked bill (rejectInboxItem). Done
+          // BEFORE locking the bill, in the order approval takes its locks
+          // (Inbox item, then bill), so the two can never deadlock.
+          const pending = await findPendingInboxReviewForBill(db, orgId, billId);
+          if (pending) {
+            await rejectInboxItem(
+              { db, orgId, userId, role },
+              {
+                inboxItemId: pending.inboxItemId,
+                expectedLockVersion: pending.lockVersion,
+                reason: "The bill was voided in Bills.",
+              },
+            );
+            const [voided] = await db
+              .select()
+              .from(bills)
+              .where(and(eq(bills.id, billId), eq(bills.organizationId, orgId)))
+              .limit(1);
+            if (voided?.status === "voided") return voided;
+          }
+        }
+
         const [bill] = await db
           .select()
           .from(bills)
@@ -783,6 +618,17 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
         if (!bill) {
           throw new Error("Bill not found");
         }
+
+        // One booking path per bill (src/lib/posting/bill-inbox-link.ts): a bill
+        // the editor submitted is booked by approving its Inbox item, not here.
+        const pendingReview =
+          bill.journalHeaderId === null
+            ? await findPendingInboxReviewForBill(db, orgId, billId)
+            : null;
+        if (pendingReview && INBOX_REVIEWED_BILL_STATUSES.has(newStatus)) {
+          throw new BillInInboxError(pendingReview.inboxItemId);
+        }
+
         const requiresIdempotency =
           JOURNAL_PRODUCING_BILL_STATUSES.has(newStatus) ||
           (newStatus === "voided" && bill.journalHeaderId !== null);
@@ -921,6 +767,13 @@ export const transitionBillStatus = createServerFn({ method: "POST" }).handler(
               changes: { reason: "bill_voided", billId },
             });
           }
+          // Voiding a bill an Inbox memory answered is an undo for that memory.
+          await noteReversedMemoryEntries(db, {
+            orgId,
+            journalHeaderIds: linkedJournals.map((journal) => journal.id),
+            reason: "bill_voided",
+            actorId: userId,
+          });
         }
 
         await db.insert(activityLogs).values({
@@ -984,100 +837,9 @@ export const deleteBill = createServerFn({ method: "POST" }).handler(
       "bill",
       "delete",
       { routeKey: "bill:delete", limit: 20, windowMs: 60_000 },
-      async ({ orgId, userId, db }) => {
+      async ({ orgId, userId, role, db }) => {
         const parsed = deleteBillSchema.parse(rawData);
-
-        const [existing] = await db
-          .select()
-          .from(bills)
-          .where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)))
-          .limit(1);
-
-        if (!existing) {
-          throw new Error("Bill not found");
-        }
-
-        const linkedJournals = await db
-          .select()
-          .from(journalHeaders)
-          .where(
-            and(
-              eq(journalHeaders.sourceDocumentId, parsed.id),
-              eq(journalHeaders.sourceDocumentType, "bill"),
-              eq(journalHeaders.organizationId, orgId),
-              eq(journalHeaders.status, "posted"),
-            ),
-          )
-          .orderBy(asc(journalHeaders.id))
-          .for("update");
-
-        if (linkedJournals.length > 0) {
-          if (linkedJournals.some((journal) => journal.duplicateOfHeaderId !== null)) {
-            throw new Error(
-              "Cannot delete bill: a linked journal is a suppressed duplicate. Unmatch it first.",
-            );
-          }
-
-          // Voiding these journals changes the books — refuse when any falls in a
-          // closed period or is cleared by a finalized reconciliation.
-          const closedThrough = await getClosedThrough(orgId);
-          const inLocked = linkedJournals.find((j) =>
-            isDateLocked(j.transactionDate, closedThrough),
-          );
-          if (inLocked) {
-            throw new Error(
-              `Cannot delete bill: its journal dated ${inLocked.transactionDate} falls in a period locked through ${closedThrough}. Open the period first.`,
-            );
-          }
-
-          const journalIds = linkedJournals.map((j) => j.id);
-          const reconciled = await db
-            .select({ id: statementLines.id })
-            .from(statementLines)
-            .innerJoin(reconciliations, eq(statementLines.reconciliationId, reconciliations.id))
-            .innerJoin(journalLines, eq(statementLines.matchedJournalLineId, journalLines.id))
-            .where(
-              and(
-                inArray(journalLines.journalHeaderId, journalIds),
-                eq(reconciliations.status, "finalized"),
-              ),
-            )
-            .limit(1);
-          if (reconciled.length > 0) {
-            throw new Error(
-              "Cannot delete bill: its journal is locked by a finalized reconciliation.",
-            );
-          }
-        }
-
-        for (const journal of linkedJournals) {
-          await db
-            .update(journalHeaders)
-            .set({ status: "voided", voidedAt: new Date(), updatedAt: new Date() })
-            .where(eq(journalHeaders.id, journal.id));
-
-          await db.insert(activityLogs).values({
-            organizationId: orgId,
-            entityType: "transaction",
-            entityId: journal.id,
-            action: "voided",
-            actorId: userId,
-            changes: { reason: "bill_deleted", billId: parsed.id },
-          });
-        }
-
-        await db
-          .delete(documentAttachments)
-          .where(
-            and(
-              eq(documentAttachments.linkableId, parsed.id),
-              eq(documentAttachments.linkableType, "bill"),
-              eq(documentAttachments.organizationId, orgId),
-            ),
-          );
-
-        await db.delete(bills).where(and(eq(bills.id, parsed.id), eq(bills.organizationId, orgId)));
-
+        await deleteBillCore(db, orgId, userId, parsed.id, role);
         return { success: true };
       },
     );
@@ -1529,6 +1291,10 @@ const saveBillLineItemsSchema = z.object({
           .regex(/^\d+(?:\.\d+)?$/, "Line amount must be a non-negative number")
           .refine((v) => Number(v) > 0, "Line amount must be greater than zero"),
         accountId: z.string().uuid(),
+        // Kept as the line had them: replacing the lines must not drop the dimensions the
+        // accrual posts with.
+        departmentId: z.string().uuid().nullable().optional(),
+        locationId: z.string().uuid().nullable().optional(),
         sortOrder: z.number().optional(),
       }),
     )
@@ -1577,6 +1343,8 @@ export const saveBillLineItems = createServerFn({ method: "POST" }).handler(
                 description: line.description,
                 amount: line.amount,
                 accountId: line.accountId,
+                departmentId: line.departmentId ?? null,
+                locationId: line.locationId ?? null,
                 sortOrder: line.sortOrder ?? i,
               })),
             )

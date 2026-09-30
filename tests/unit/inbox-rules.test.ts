@@ -147,3 +147,118 @@ describe("Inbox Book and Review findings", () => {
     expect(findings).toEqual([]);
   });
 });
+
+describe("Missing Receipt across currencies", () => {
+  /** A vendor-paid expense of `amount` in `currency`, converted to USD at `rate`. */
+  function receiptFindings(
+    amount: string,
+    currency: string,
+    rate: string,
+    receiptSettings: Partial<typeof settings> = {},
+  ) {
+    const lines = [
+      {
+        accountId: "expense",
+        debit: amount,
+        departmentId: "department",
+        locationId: "location",
+      },
+      { accountId: "bank", credit: amount, departmentId: "department", locationId: "location" },
+    ];
+    return evaluateBookRules({
+      candidate: {
+        transactionDate: "2026-09-14",
+        transactionType: "pay_out",
+        originalCurrency: currency,
+        functionalCurrency: "USD",
+        exchangeRate: rate,
+        lines,
+      },
+      lines,
+      accounts: new Map([
+        ["expense", account("expense", "expense", "travel")],
+        ["bank", account("bank", "asset", "checking")],
+      ]),
+      party: { id: "vendor", partyType: "vendor" },
+      documents: [],
+      settings: { ...settings, ...receiptSettings },
+    }).filter((finding) => finding.ruleKey === "missing_receipt");
+  }
+
+  it("converts a foreign-currency total before comparing it with the threshold", () => {
+    // EUR 70 at 1.10 is USD 77: over USD 75, though 70 alone is not.
+    expect(receiptFindings("70", "EUR", "1.1000000000")).toEqual([
+      {
+        ruleKey: "missing_receipt",
+        impact: "blocking",
+        message: "Attach a receipt for expenses over USD 75.00.",
+        evidence: {
+          expenseTotal: "77",
+          threshold: "75",
+          thresholdCurrency: "USD",
+          originalExpenseTotal: "70",
+          originalCurrency: "EUR",
+          exchangeRate: "1.1000000000",
+        },
+      },
+    ]);
+    // JPY 10,000 at 0.0067 is USD 67: under USD 75, though 10,000 alone is not.
+    expect(receiptFindings("10000", "JPY", "0.0067")).toEqual([]);
+    expect(receiptFindings("60", "EUR", "1.1")).toEqual([]);
+  });
+
+  it("converts a threshold set in the paper's own currency into the functional currency", () => {
+    const eurThreshold = { missingReceiptCurrency: "EUR", missingReceiptThreshold: "75" };
+    // EUR 75 at 1.10 is a USD 82.50 threshold: EUR 80 (USD 88) is over, EUR 74 (USD 81.40) is not.
+    expect(receiptFindings("80", "EUR", "1.1", eurThreshold)).toMatchObject([
+      { evidence: { expenseTotal: "88", thresholdCurrency: "EUR" } },
+    ]);
+    expect(receiptFindings("74", "EUR", "1.1", eurThreshold)).toEqual([]);
+  });
+
+  it("compares exact decimals at the boundary, in both directions", () => {
+    expect(receiptFindings("75", "USD", "1")).toEqual([]);
+    expect(receiptFindings("75.00000001", "USD", "1")).toMatchObject([
+      { evidence: { expenseTotal: "75.00000001" } },
+    ]);
+    // 68.18181818 × 1.1 = 74.999999998, which rounds to exactly 75 at eight
+    // decimals: at, not over, the threshold. One unit more is over.
+    expect(receiptFindings("68.18181818", "EUR", "1.1")).toEqual([]);
+    expect(receiptFindings("68.18181819", "EUR", "1.1")).toMatchObject([
+      { evidence: { expenseTotal: "75.00000001" } },
+    ]);
+    // Tiny totals never become exponent strings the decimal parser rejects.
+    expect(receiptFindings("0.00000001", "USD", "1")).toEqual([]);
+  });
+});
+
+describe("a vendor bill asks for one document", () => {
+  it("asks for the vendor's bill, not also a receipt, on a payable over the receipt threshold", () => {
+    const lines = [
+      { accountId: "expense", debit: "1050", departmentId: "department", locationId: "location" },
+      { accountId: "ap", credit: "1050", departmentId: "department", locationId: "location" },
+    ];
+    const findings = evaluateBookRules({
+      candidate: {
+        transactionDate: "2026-09-14",
+        transactionType: "journal",
+        originalCurrency: "USD",
+        functionalCurrency: "USD",
+        exchangeRate: "1",
+        lines,
+      },
+      lines,
+      accounts: new Map([
+        ["expense", account("expense", "expense", "office_supplies")],
+        ["ap", account("ap", "liability", "accounts_payable")],
+      ]),
+      party: { id: "vendor", partyType: "vendor" },
+      documents: [],
+      settings,
+    });
+    expect(findings.map((finding) => finding.ruleKey)).toEqual(["missing_invoice"]);
+    expect(findings[0].message).toBe(
+      "Attach the vendor's bill: the invoice the vendor sent you for this payable.",
+    );
+  });
+});

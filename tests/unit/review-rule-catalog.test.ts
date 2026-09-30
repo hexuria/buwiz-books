@@ -30,7 +30,12 @@ const EXPECTED_REVIEW_KEYS = [
   "transaction_in_parent_category",
 ];
 
-const EXPECTED_SYSTEM_KEYS = ["source_processing_failed", "source_evidence_incomplete"];
+const EXPECTED_SYSTEM_KEYS = [
+  "source_processing_failed",
+  "source_evidence_incomplete",
+  "party_payment_details_changed",
+  "memory_conflict",
+];
 
 /** Book rule keys emitted by evaluateBookRules (src/lib/inbox/rules.ts). */
 const BOOK_RULE_KEYS_IN_ENGINE = [
@@ -46,7 +51,14 @@ const BOOK_RULE_KEYS_IN_ENGINE = [
 ];
 
 /** Keys inserted directly by background handlers, with no evaluator behind them. */
-const SYSTEM_RULE_KEYS_IN_HANDLERS = ["source_processing_failed", "source_evidence_incomplete"];
+const SYSTEM_RULE_KEYS_IN_HANDLERS = [
+  "source_processing_failed",
+  "source_evidence_incomplete",
+  // src/lib/inbox/payment-details-check.ts (inbox stage 2 and corrections).
+  "party_payment_details_changed",
+  // src/lib/inbox/memory/conflict.ts (inbox stage 2).
+  "memory_conflict",
+];
 
 describe("review rule catalog", () => {
   it("has unique keys", () => {

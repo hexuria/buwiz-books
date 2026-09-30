@@ -82,6 +82,15 @@ describe("AiProviderError routing decisions", () => {
     expect(err("invalid_key").isCredentialFailure).toBe(true);
     expect(err("rate_limited").isCredentialFailure).toBe(false);
   });
+
+  it("an egress refusal escalates without touching credential health", () => {
+    // Nothing was sent, so neither a cooldown nor an invalid-key lockout is
+    // warranted — but the next hop may still serve the call.
+    const refused = err("egress_refused");
+    expect(refused.escalateChain).toBe(true);
+    expect(refused.retryableSameProvider).toBe(false);
+    expect(refused.isCredentialFailure).toBe(false);
+  });
 });
 
 describe("toAiProviderError", () => {

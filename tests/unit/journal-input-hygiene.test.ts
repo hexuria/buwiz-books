@@ -160,6 +160,7 @@ describe("postedAt stamping ratchet (P3)", () => {
       "src/lib/tax/post-cwt-receivable.ts",
       "src/lib/tax/post-ewt-remittance.ts",
       "src/lib/tax/payroll-journal.ts",
+      "src/lib/posting/transaction-core.ts",
       "src/routes/api/transactions/-_mutations.ts",
     ];
     for (const file of files) {

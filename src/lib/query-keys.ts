@@ -33,12 +33,18 @@ export const keys = {
   },
   inbox: {
     all: () => ["inbox"] as const,
-    list: (params?: Params) => ["inbox", params ?? null] as const,
     detail: (id: string) => ["inbox", "detail", id] as const,
     duplicateCase: (id: string) => ["inbox", "duplicate-case", id] as const,
     // Was a top-level ["inbox-settings"], so it sat outside the `all()` prefix and never
     // invalidated with the rest of the Inbox. One cheap read; folding it in is the right default.
     settings: () => ["inbox", "settings"] as const,
+    /** The needs-a-human list. The sidebar badge reads the same entry. */
+    v2List: () => ["inbox", "v2", "list"] as const,
+    // Classification memories (Inbox v2 §7). Under the Inbox prefix, so an Inbox-wide
+    // invalidation also refreshes the memory list and the scope previews.
+    memories: () => ["inbox", "memories"] as const,
+    memoryPreview: (candidateId: string, scope: string, docKind: string | null = null) =>
+      ["inbox", "memories", "preview", candidateId, scope, docKind] as const,
   },
   reviewAgents: {
     all: () => ["review-agents"] as const,
@@ -46,6 +52,21 @@ export const keys = {
     findings: (ruleKey: string, params?: Params) =>
       ["review-agents", "findings", ruleKey, params ?? null] as const,
     runs: (ruleKey?: string) => ["review-agents", "runs", ruleKey ?? null] as const,
+  },
+  ruleSnapshots: {
+    all: () => ["rule-snapshots"] as const,
+    list: () => ["rule-snapshots", "list"] as const,
+    detail: (id: string) => ["rule-snapshots", "detail", id] as const,
+  },
+  routines: {
+    all: () => ["routines"] as const,
+    list: () => ["routines", "list"] as const,
+  },
+  /** Jev approval lanes (Inbox v2 §8): Settings, and the "by Jev" panel on entries. */
+  jev: {
+    all: () => ["jev"] as const,
+    lanes: () => ["jev", "lanes"] as const,
+    entryApproval: (journalHeaderId: string) => ["jev", "entry-approval", journalHeaderId] as const,
   },
   bills: {
     all: () => ["bills"] as const,
@@ -97,6 +118,7 @@ export const keys = {
     all: () => ["documents"] as const,
     detail: (id: string) => ["documents", "detail", id] as const,
     thumbnail: (id: string) => ["documents", "thumbnail", id] as const,
+    viewer: (id: string) => ["documents", "viewer", id] as const,
   },
   reports: {
     all: () => ["reports"] as const,

@@ -111,6 +111,15 @@ describe("export/import fold-ins", () => {
     );
     expect(block).toContain("withSessionOrgContext(");
   });
+
+  it("orgSettings parses the metadata JSON string instead of casting it", () => {
+    const block = source.slice(
+      source.indexOf('case "orgSettings"'),
+      source.indexOf("// Fetch org info for meta block"),
+    );
+    expect(block).toContain("orgSettingsExportRow(org)");
+    expect(source).not.toContain("(org.metadata ?? {}) as Record<string, unknown>");
+  });
 });
 
 describe("export/import fidelity wiring (P4)", () => {

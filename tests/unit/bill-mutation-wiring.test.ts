@@ -62,13 +62,83 @@ describe("bill mutation wiring", () => {
   const source = readFileSync(join(__dirname, "../..", "src/routes/api/-bills.ts"), "utf-8");
 
   it("createBill validates references before persisting", () => {
+    // createBill delegates to the session-free bill core (Inbox v2 step 3);
+    // the check it pinned now lives there, still ahead of the insert.
     const createBlock = source.slice(
       source.indexOf("export const createBill"),
       source.indexOf("export const updateBill"),
     );
-    expect(createBlock).toContain(
-      "await assertBillReferences(db, orgId, parsed.vendorId, parsed.lineItems)",
+    expect(createBlock).toContain("submitBillForReviewCore(db, orgId,");
+    const core = readFileSync(join(__dirname, "../..", "src/lib/posting/bill-core.ts"), "utf-8");
+    for (const [start, end] of [
+      ["async function createBillForReview", "async function createPostedBill"],
+      ["async function createPostedBill", "export const BILL_ALREADY_ACCRUED_MESSAGE"],
+    ]) {
+      const block = core.slice(core.indexOf(start), core.indexOf(end));
+      const check = block.indexOf(
+        "await assertBillReferences(db, orgId, draft.vendorId, lineItems)",
+      );
+      expect(check, start).toBeGreaterThan(-1);
+      expect(check, start).toBeLessThan(block.indexOf(".insert(bills)"));
+    }
+  });
+
+  it("accruing an editor bill on approval refuses what the Bills editor refuses, before posting", () => {
+    // Inbox approval of a Bills-editor bill rewrites its amount and lines to match the posted
+    // accrual; it must run the same editability, shape/cent and reference checks first.
+    const core = readFileSync(join(__dirname, "../..", "src/lib/posting/bill-core.ts"), "utf-8");
+    const block = core.slice(
+      core.indexOf("export async function accrueReviewedBillCore"),
+      core.indexOf("export async function touchesAccountsPayable"),
     );
+    const posting = block.indexOf("await postTransactionCore(");
+    const rewrite = block.indexOf(".update(bills)");
+    expect(posting).toBeGreaterThan(-1);
+    expect(posting).toBeLessThan(rewrite);
+    for (const guard of [
+      "await lockAccruableEditorBill(db, orgId, input.billId)",
+      "billLinesFromAccrual(input.journal.lines, apAccountId)",
+      "await assertBillReferences(db, orgId, input.vendorId, lineItems)",
+    ]) {
+      const at = block.indexOf(guard);
+      expect(at, guard).toBeGreaterThan(-1);
+      expect(at, guard).toBeLessThan(posting);
+    }
+    expect(block).toContain("deriveBillBalanceDue(total, bill.amountPaid)");
+
+    // The one set of refusals: the row lock, then deleted, already accrued, voided, paid, and the
+    // Bills editor's own financial-edit guard.
+    const lock = core.slice(
+      core.indexOf("export async function lockAccruableEditorBill"),
+      core.indexOf("export async function accrueReviewedBillCore"),
+    );
+    let previous = -1;
+    for (const refusal of [
+      '.for("update")',
+      "throw new Error(BILL_DELETED_MESSAGE)",
+      // Voided before accrued: a voided bill keeps its journal id, and
+      // "voided" is the reason a person needs to see.
+      "throw new Error(BILL_VOIDED_MESSAGE)",
+      "throw new Error(BILL_ALREADY_ACCRUED_MESSAGE)",
+      "throw new Error(BILL_PAID_MESSAGE)",
+      "assertBillFinanciallyEditable(bill)",
+    ]) {
+      const at = lock.indexOf(refusal);
+      expect(at, refusal).toBeGreaterThan(previous);
+      previous = at;
+    }
+  });
+
+  it("Inbox approval refuses a settled editor bill before anything else runs", () => {
+    // Approval takes the bill's row lock and runs the same refusals up front, so a refused item
+    // writes nothing (no decision, no journal) and stays open for a person to reject.
+    const service = readFileSync(join(__dirname, "../..", "src/lib/inbox/service.ts"), "utf-8");
+    const lockAt = service.indexOf(
+      "await lockAccruableEditorBill(db, orgId, row.sourceRecordExternalId)",
+    );
+    expect(lockAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeLessThan(service.indexOf("await accrueReviewedBillCore("));
+    expect(lockAt).toBeLessThan(service.indexOf("await postTransactionCore("));
   });
 
   it("updateBill guards amount edits and derives balanceDue in cents", () => {
@@ -88,6 +158,18 @@ describe("bill mutation wiring", () => {
       "await assertBillReferences(db, orgId, undefined, parsed.lineItems)",
     );
     expect(saveBlock).toContain("deriveBillBalanceDue(totalAmount, bill.amountPaid)");
+  });
+
+  it("saveBillLineItems keeps each line's department and location instead of dropping them", () => {
+    const saveBlock = source.slice(source.indexOf("export const saveBillLineItems"));
+    expect(saveBlock).toContain("departmentId: line.departmentId ?? null");
+    expect(saveBlock).toContain("locationId: line.locationId ?? null");
+    const panel = readFileSync(
+      join(__dirname, "../..", "src/components/bills/EditLineItemsPanel.tsx"),
+      "utf-8",
+    );
+    expect(panel).toContain("departmentId: item.departmentId ?? null");
+    expect(panel).toContain("locationId: item.locationId ?? null");
   });
 
   it("the AI upload resolves suggestions only against the expense-filtered list", () => {

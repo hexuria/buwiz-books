@@ -1,12 +1,13 @@
 /**
  * Organization Settings — /organization/$orgId/settings
  * Linear-style full-page settings with sidebar navigation.
- * Sections: General, AI Credentials, Members
+ * Sections: General, Business Profile, Email, Review Rules, AI Credentials, Jev approval, Members,
+ * Export / Import
  */
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { keys } from "../lib/query-keys";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useSession } from "@/lib/auth-client";
 import {
@@ -38,6 +39,10 @@ import type {
   OrgAiCredentialView,
 } from "./api/-org-settings";
 import { ExportImportSection } from "../components/settings/ExportImportSection";
+import { ReviewRulesSettings } from "../components/settings/ReviewRulesSettings";
+import { UnsavedChangesBar } from "../components/settings/UnsavedChangesBar";
+import { InboundEmailSettings } from "../components/settings/InboundEmailSettings";
+import { JevLanesSettings } from "../components/settings/JevLanesSettings";
 import { CURRENCIES } from "@/lib/constants";
 import Combobox from "@/components/ui/Combobox";
 import { AI_MODEL_OPTIONS, AI_MODEL_DEFAULTS, AI_TASK_LABELS } from "@/lib/ai-models";
@@ -47,7 +52,20 @@ import type { AITaskCategory } from "@/lib/ai-models";
 // Route
 // ============================================================================
 
+type SettingsSearch = {
+  /** Opens the page on this section — e.g. the Inbox links a finding to `review-rules`. */
+  section?: SettingsSection;
+  /** With `section=review-rules`: the rule to open and scroll to. */
+  rule?: string;
+};
+
 export const Route = createFileRoute("/organization/$orgId/settings")({
+  validateSearch: (search: Record<string, unknown>): SettingsSearch => ({
+    section: SECTIONS.some((entry) => entry.key === search.section)
+      ? (search.section as SettingsSection)
+      : undefined,
+    rule: typeof search.rule === "string" && search.rule.length <= 64 ? search.rule : undefined,
+  }),
   component: SettingsPage,
 });
 
@@ -59,7 +77,9 @@ type SettingsSection =
   | "general"
   | "business"
   | "email"
+  | "review-rules"
   | "ai-credentials"
+  | "jev-approval"
   | "members"
   | "export-import";
 
@@ -122,6 +142,25 @@ const SECTIONS: { key: SettingsSection; label: string; icon: React.ReactNode }[]
     ),
   },
   {
+    key: "review-rules",
+    label: "Review Rules",
+    icon: (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </svg>
+    ),
+  },
+  {
     key: "ai-credentials",
     label: "AI Credentials",
     icon: (
@@ -137,6 +176,25 @@ const SECTIONS: { key: SettingsSection; label: string; icon: React.ReactNode }[]
       >
         <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </svg>
+    ),
+  },
+  {
+    key: "jev-approval",
+    label: "Jev approval",
+    icon: (
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+        <polyline points="9 12 11 14 15 10" />
       </svg>
     ),
   },
@@ -190,8 +248,33 @@ const SECTIONS: { key: SettingsSection; label: string; icon: React.ReactNode }[]
 function SettingsPage() {
   const { data: session } = useSession();
   const { orgId } = Route.useParams();
+  const search = Route.useSearch();
   const queryClient = useQueryClient();
-  const [section, setSection] = useState<SettingsSection>("general");
+  const [section, setSection] = useState<SettingsSection>(search.section ?? "general");
+  // Sections are local state, not routes, so leaving one unmounts it and no router blocker sees
+  // it. Review Rules reports unsaved drafts here, and the switch is confirmed before it happens.
+  const [reviewRulesUnsaved, setReviewRulesUnsaved] = useState(false);
+  const [pendingSection, setPendingSection] = useState<SettingsSection | null>(null);
+
+  const selectSection = (next: SettingsSection) => {
+    if (next === section) return;
+    if (section === "review-rules" && reviewRulesUnsaved) {
+      setPendingSection(next);
+      return;
+    }
+    setPendingSection(null);
+    setSection(next);
+  };
+
+  // A link into a section while this page is already mounted changes only the search. It goes
+  // through the same unsaved-draft check as a click.
+  const selectSectionRef = useRef(selectSection);
+  useEffect(() => {
+    selectSectionRef.current = selectSection;
+  });
+  useEffect(() => {
+    if (search.section) selectSectionRef.current(search.section);
+  }, [search.section]);
 
   // Fetch settings
   const { data: settings, isLoading } = useQuery({
@@ -248,7 +331,8 @@ function SettingsPage() {
               <button
                 key={s.key}
                 type="button"
-                onClick={() => setSection(s.key)}
+                aria-current={section === s.key ? "page" : undefined}
+                onClick={() => selectSection(s.key)}
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                   section === s.key
                     ? "bg-[#0d9488]/10 dark:bg-teal-900/30 text-[#0d9488] dark:text-teal-400"
@@ -261,6 +345,21 @@ function SettingsPage() {
             ))}
           </nav>
         </aside>
+
+        {pendingSection && (
+          <UnsavedChangesBar
+            message={`You have unsaved review rule changes. Discard them and open ${
+              SECTIONS.find((entry) => entry.key === pendingSection)?.label ?? "that section"
+            }?`}
+            confirmLabel="Discard changes"
+            onConfirm={() => {
+              setPendingSection(null);
+              setReviewRulesUnsaved(false);
+              setSection(pendingSection);
+            }}
+            onCancel={() => setPendingSection(null)}
+          />
+        )}
 
         {/* Main Content */}
         <main className="flex-1 min-w-0">
@@ -281,9 +380,16 @@ function SettingsPage() {
               {section === "email" && (
                 <EmailSection settings={settings} orgId={orgId} queryClient={queryClient} />
               )}
+              {section === "review-rules" && (
+                <ReviewRulesSettings
+                  focusRuleKey={search.rule}
+                  onUnsavedChange={setReviewRulesUnsaved}
+                />
+              )}
               {section === "ai-credentials" && (
                 <AICredentialsSection settings={settings} orgId={orgId} queryClient={queryClient} />
               )}
+              {section === "jev-approval" && <JevLanesSettings />}
               {section === "members" && (
                 <MembersSection
                   members={members}
@@ -891,7 +997,8 @@ function EmailSection({
     <div>
       <h2 className="text-xl font-semibold text-[#1e293b] dark:text-white mb-1">Email</h2>
       <p className="text-sm text-[#64748b] dark:text-white/50 mb-6">
-        Configure sender identity and email delivery for invoices and notifications.
+        Configure sender identity and email delivery for invoices and notifications, and the address
+        papers are emailed to for the Inbox.
       </p>
 
       {/* Sender Identity */}
@@ -1077,6 +1184,9 @@ function EmailSection({
           </span>
         )}
       </div>
+
+      {/* Inbound email — saves on its own; not part of the sender settings above. */}
+      <InboundEmailSettings />
     </div>
   );
 }
@@ -1468,11 +1578,17 @@ function AICredentialsSection({
 // Multi-provider AI credentials + governance
 //
 // Gemini keeps the multi-key editor above (it is still stored in
-// organization_secrets). Anthropic / OpenAI / OpenAI-compatible are row-based
-// BYOK credentials: add + revoke, masked display only.
+// organization_secrets). Anthropic / OpenAI / OpenAI-compatible / Jev are
+// row-based BYOK credentials: add + revoke, masked display only.
 // ============================================================================
 
-type AiProviderId = "gemini" | "anthropic" | "openai" | "openai_compatible";
+type AiProviderId = "gemini" | "anthropic" | "openai" | "openai_compatible" | "jev";
+
+// Jev is a new data processor, so turning it on is confirmed like the kill
+// switch. The server enforces the rest: admin-only, redacted text only,
+// classification tasks only.
+const JEV_OPT_IN_CONFIRM =
+  "Allow Jev (TypeSafe AI) to classify this organization's documents? Jev will run first for inbox triage, document classification, line categories, and vendor and customer matching, with Gemini as the fallback. It receives redacted text only (filenames, text previews, document descriptions, your account names, and the names of similar parties), never document images.";
 
 const AI_PROVIDER_META: {
   id: AiProviderId;
@@ -1506,6 +1622,13 @@ const AI_PROVIDER_META: {
     needsBaseUrl: true,
     keyPlaceholder: "token or sk-...",
   },
+  {
+    id: "jev",
+    name: "Jev (TypeSafe AI)",
+    blurb:
+      "Opt-in first pass for inbox triage, document classification, line categories, and vendor matching, with Gemini as the fallback. Receives redacted text only.",
+    keyPlaceholder: "Jev API key",
+  },
 ];
 
 const AI_TASK_TITLES: Record<string, string> = {
@@ -1521,6 +1644,8 @@ const AI_TASK_TITLES: Record<string, string> = {
   transaction_parse: "Transaction parsing",
   txn_prefill: "Transaction prefill",
   match_assist: "Match assist",
+  categorize_lines: "Inbox line categories",
+  match_party: "Vendor and customer matching",
 };
 
 // Curated ISO 3166-1 alpha-2 list for the organization country select. The
@@ -1565,6 +1690,7 @@ const PROVIDER_SHORT: Record<string, string> = {
   anthropic: "Anthropic",
   openai: "OpenAI",
   openai_compatible: "Compatible",
+  jev: "Jev",
 };
 
 function formatMaybeDate(value: unknown): string | null {
@@ -1650,7 +1776,7 @@ function OtherProvidersSection({ orgId, queryClient }: { orgId: string; queryCli
           Other AI Providers
         </h3>
         <p className="text-xs text-[#64748b] dark:text-white/50">
-          Optional fallbacks for text-only tasks. Keys are encrypted at rest and are never shown
+          Optional providers for text-only tasks. Keys are encrypted at rest and are never shown
           again after they are saved.
         </p>
       </div>
@@ -1840,7 +1966,10 @@ function AiGovernanceSection({ orgId, queryClient }: { orgId: string; queryClien
     if (id === "gemini") return; // Gemini is required for document/OCR work.
     const next = new Set(allowed);
     if (next.has(id)) next.delete(id);
-    else next.add(id);
+    else {
+      if (id === "jev" && !window.confirm(JEV_OPT_IN_CONFIRM)) return;
+      next.add(id);
+    }
     mutation.mutate({ providerAllowlist: [...next] });
   };
 

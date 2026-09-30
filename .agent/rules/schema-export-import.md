@@ -318,7 +318,11 @@ const PARTY_TYPE_MAP: Record<string, string> = {
 | `tests/unit/lib/export-import-schemas.test.ts` | Unit tests for Zod validation schemas                       |
 | `tests/e2e/settings/export-import.spec.ts`     | E2E tests for full export/import UI flow                    |
 | `tests/fixtures/export-v1-sample.json`         | Legacy v1 format fixture                                    |
-| `tests/fixtures/export-v2-sample.json`         | Current v2 format fixture                                   |
+| `tests/fixtures/export-v2-sample.json`         | v2 format fixture                                           |
+| `tests/fixtures/export-v5-sample.json`         | v5 fixture (Inbox configuration rows)                       |
+| `src/lib/export-ph.ts`                         | v3 PH tax entities: schema-driven export/import registry    |
+| `src/lib/export-inbox.ts`                      | v5 Inbox configuration: export/import/list (database half)  |
+| `src/lib/export-inbox-rows.ts`                 | v5 Inbox configuration: row schemas + pure import decisions |
 
 ---
 

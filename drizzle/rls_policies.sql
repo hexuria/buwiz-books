@@ -600,6 +600,103 @@ BEGIN
 END $$;
 
 -- ============================================================================
+-- Inbox v2 routines (routines, routine_secrets)
+-- Standard tenant isolation. Both are read and written inside org context:
+-- request code through the server-context wrappers, the webhook route and the
+-- worker through withOrgContext(routine.organization_id, ...). routine_secrets
+-- holds only enc:v1 ciphertext and is still tenant-scoped like every other
+-- secrets table.
+-- ============================================================================
+DO $$
+DECLARE
+  routine_table text;
+BEGIN
+  FOREACH routine_table IN ARRAY ARRAY['routines', 'routine_secrets']
+  LOOP
+    IF EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = routine_table
+    ) THEN
+      EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', routine_table);
+      EXECUTE format('DROP POLICY IF EXISTS org_isolation_%I ON %I', routine_table, routine_table);
+      EXECUTE format(
+        'CREATE POLICY org_isolation_%I ON %I FOR ALL USING (current_organization_id() IS NULL OR organization_id = current_organization_id()) WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id())',
+        routine_table,
+        routine_table
+      );
+      RAISE NOTICE 'RLS configured for %', routine_table;
+    END IF;
+  END LOOP;
+END $$;
+
+-- ============================================================================
+-- Inbox v2 rule snapshots (rule_snapshots)
+-- Standard tenant isolation. Snapshots are org configuration: created, listed,
+-- and pinned through the server-context wrappers, and read by the candidate
+-- path inside the organization's own context. A routine may only pin a
+-- snapshot its organization can see.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'rule_snapshots'
+  ) THEN
+    ALTER TABLE rule_snapshots ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_rule_snapshots ON rule_snapshots;
+    CREATE POLICY org_isolation_rule_snapshots ON rule_snapshots FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for rule_snapshots';
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Inbox v2 classification memories (classification_memories) — standard tenant
+-- isolation. Written by request code through the server-context wrappers
+-- ("Remember this?", Settings) and read and counted by inbox stage 2 in
+-- withOrgContext(candidate.organization_id, ...). A memory from one
+-- organization must never answer another organization's paper.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'classification_memories'
+  ) THEN
+    ALTER TABLE classification_memories ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_classification_memories ON classification_memories;
+    CREATE POLICY org_isolation_classification_memories ON classification_memories FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for classification_memories';
+  END IF;
+END $$;
+
+-- ============================================================================
+-- Jev approval lanes (ai_autonomy_lanes)
+-- Standard tenant isolation. Lanes are org configuration and earned authority:
+-- created by the Inbox inside the organization's context, listed and promoted
+-- through the server-context wrappers, and read by the auto-approval job in
+-- withOrgContext(job.organization_id, ...). One organization's lane can never
+-- approve, or be promoted from, another organization's papers.
+-- ============================================================================
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'ai_autonomy_lanes'
+  ) THEN
+    ALTER TABLE ai_autonomy_lanes ENABLE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS org_isolation_ai_autonomy_lanes ON ai_autonomy_lanes;
+    CREATE POLICY org_isolation_ai_autonomy_lanes ON ai_autonomy_lanes FOR ALL
+      USING (current_organization_id() IS NULL OR organization_id = current_organization_id())
+      WITH CHECK (current_organization_id() IS NULL OR organization_id = current_organization_id());
+    RAISE NOTICE 'RLS configured for ai_autonomy_lanes';
+  END IF;
+END $$;
+
+-- ============================================================================
 -- AI telemetry (ai_invocations)
 -- Append-only telemetry written OUTSIDE org context on the raw pool connection
 -- (see src/lib/ai/invoke.ts) so rows survive caller-transaction rollback.

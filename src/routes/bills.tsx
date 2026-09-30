@@ -13,6 +13,7 @@ import { useBillUploadJobs } from "../lib/bill-upload-store";
 import { BILL_MAPPING_CONFIG } from "../lib/bill-mapping-config";
 export { BILL_MAPPING_CONFIG };
 import { BillListView } from "../components/bills/BillListView";
+import { ByJevTagFor } from "../components/jev/ByJevTag";
 import { formatCurrency } from "@/utils/format";
 
 // ============================================================================
@@ -546,8 +547,9 @@ function BillCard({ bill }: { bill: BillListItem }) {
             {initial}
           </div>
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-[#1e293b] dark:text-white truncate">
-              {bill.vendorName ?? "Unknown Vendor"}
+            <div className="flex items-center gap-1.5 text-sm font-medium text-[#1e293b] dark:text-white">
+              <span className="truncate">{bill.vendorName ?? "Unknown Vendor"}</span>
+              <ByJevTagFor actorId={bill.approverId} />
             </div>
             {bill.billNumber && (
               <div className="truncate text-xs text-[#94a3b8] dark:text-white/40">

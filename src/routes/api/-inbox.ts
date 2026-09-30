@@ -29,121 +29,12 @@ import {
   previewDuplicateResolution as previewDuplicateResolutionService,
   resolveDuplicateCase as resolveDuplicateCaseService,
 } from "@/lib/inbox/duplicate-service";
-import { DUPLICATE_MATCHER_VERSION } from "@/lib/inbox/duplicate-matcher";
 import { loadDuplicateEngineConfig } from "@/lib/inbox/duplicate-engine";
 import { isReviewerEditableEconomicEventSource } from "@/lib/inbox/economic-event";
 import { approveInboxItem, rejectInboxItem } from "@/lib/inbox/service";
 import { requeueFailedInboundEmailJob } from "@/lib/inbox/inbound-email-job";
 import { withMutationPermissionOrgContext, withPermissionOrgContext } from "@/lib/server-context";
 import { toSerializableRecord } from "@/lib/serializable-json";
-
-const listInboxSchema = z.object({
-  state: z
-    .enum([
-      "open",
-      "received",
-      "processing",
-      "needs_information",
-      "ready_for_review",
-      "approved",
-      "rejected",
-      "dismissed",
-      "failed",
-      "all",
-    ])
-    .optional()
-    .default("open"),
-  search: z.string().max(120).optional(),
-  limit: z.number().int().min(1).max(250).optional().default(100),
-});
-
-export const listInboxItems = createServerFn({ method: "GET" })
-  .inputValidator((input: unknown) => listInboxSchema.parse(input ?? {}))
-  .handler(async ({ data }) =>
-    withPermissionOrgContext("inbox", "view", async ({ orgId, db }) => {
-      const duplicateConfig = await loadDuplicateEngineConfig(db, orgId);
-      const duplicatesBlockNow =
-        duplicateConfig.enabled &&
-        duplicateConfig.mode === "enforce" &&
-        duplicateConfig.impact === "blocking";
-      const exactDuplicatesBlockNow = duplicateConfig.enabled && duplicateConfig.mode !== "off";
-      const duplicateAlgorithmVersion =
-        duplicateConfig.algorithmVersion ?? DUPLICATE_MATCHER_VERSION;
-      const filters = [eq(inboxItems.organizationId, orgId)];
-      if (data.state === "open") {
-        filters.push(
-          inArray(inboxItems.state, [
-            "received",
-            "processing",
-            "needs_information",
-            "ready_for_review",
-          ]),
-        );
-      } else if (data.state !== "all") {
-        filters.push(eq(inboxItems.state, data.state));
-      }
-      if (data.search?.trim()) {
-        filters.push(sql`${inboxItems.title} ilike ${`%${data.search.trim()}%`}`);
-      }
-
-      return db
-        .select({
-          id: inboxItems.id,
-          title: inboxItems.title,
-          state: inboxItems.state,
-          priority: inboxItems.priority,
-          assigneeId: inboxItems.assigneeId,
-          submittedBy: inboxItems.submittedBy,
-          submittedByName: user.name,
-          candidateRevision: inboxItems.candidateRevision,
-          lockVersion: inboxItems.lockVersion,
-          createdAt: inboxItems.createdAt,
-          transactionDate: transactionCandidates.transactionDate,
-          transactionType: transactionCandidates.transactionType,
-          originalTotal: transactionCandidates.originalTotal,
-          originalCurrency: transactionCandidates.originalCurrency,
-          functionalTotal: transactionCandidates.functionalTotal,
-          functionalCurrency: transactionCandidates.functionalCurrency,
-          sourceProvider: integrationSources.provider,
-          sourceChannel: integrationSources.channel,
-          openFindingCount: sql<number>`(
-            select count(*)::int from review_findings rf
-            where rf.inbox_item_id = ${inboxItems.id} and rf.state = 'open'
-          )`,
-          blockingFindingCount: sql<number>`(
-            select count(*)::int from review_findings rf
-            where rf.inbox_item_id = ${inboxItems.id}
-              and rf.state = 'open' and rf.impact = 'blocking'
-              and (
-                rf.rule_key <> 'possible_duplicate'
-                or ${duplicatesBlockNow}
-                or (
-                  ${exactDuplicatesBlockNow}
-                  and exists (
-                    select 1
-                    from source_match_candidates smc
-                    where smc.organization_id = ${inboxItems.organizationId}
-                      and smc.id::text = rf.evidence->>'caseId'
-                      and smc.state = 'open'
-                      and smc.match_type = 'exact'
-                      and smc.match_class = 'duplicate'
-                      and smc.disposition = 'blocking'
-                      and smc.algorithm_version = ${duplicateAlgorithmVersion}
-                  )
-                )
-              )
-          )`,
-        })
-        .from(inboxItems)
-        .innerJoin(transactionCandidates, eq(inboxItems.candidateId, transactionCandidates.id))
-        .leftJoin(sourceRecords, eq(inboxItems.sourceRecordId, sourceRecords.id))
-        .leftJoin(integrationSources, eq(sourceRecords.sourceId, integrationSources.id))
-        .leftJoin(user, eq(inboxItems.submittedBy, user.id))
-        .where(and(...filters))
-        .orderBy(desc(inboxItems.createdAt))
-        .limit(data.limit);
-    }),
-  );
 
 const getInboxSchema = z.object({ id: z.string().uuid() });
 
@@ -531,6 +422,8 @@ const updateCandidateSchema = z.object({
         lineDescription: z.string().trim().max(500).nullable().optional(),
         departmentId: z.string().uuid().nullable().optional(),
         locationId: z.string().uuid().nullable().optional(),
+        // Omitted keeps the line's party (see resolveCorrectionLinePartyIds); null clears it.
+        partyId: z.string().uuid().nullable().optional(),
       }),
     )
     .min(2)

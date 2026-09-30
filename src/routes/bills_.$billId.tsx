@@ -25,6 +25,7 @@ import { EditLineItemsPanel } from "../components/bills/EditLineItemsPanel";
 import { listOrgMembers, createInvitation } from "./api/-org-settings";
 import { ICON_PATHS } from "../components/accounts/icons";
 import { ConfirmModal } from "../components/shared/ConfirmModal";
+import { JevApprovalPanel } from "../components/jev/JevApprovalPanel";
 import { Modal } from "../components/ui/Modal";
 import { CommentThread } from "../components/comments/CommentThread";
 import { BillUploadProgress } from "../components/bills/BillUploadProgress";
@@ -316,7 +317,9 @@ function BillDetailPage() {
     onSuccess: (_result, variables) => {
       clearStableIdempotencyKey(transitionIntentRef, variables.idempotencyKey);
       queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
+      // Voiding a bill under review rejects its Inbox item.
+      queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
     },
   });
 
@@ -327,7 +330,7 @@ function BillDetailPage() {
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: keys.bills.detail(billId) });
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
     },
   });
 
@@ -337,7 +340,9 @@ function BillDetailPage() {
         data: { id: billId },
       }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["bills"] });
+      queryClient.invalidateQueries({ queryKey: keys.bills.all() });
+      // Deleting a bill under review rejects its Inbox item.
+      queryClient.invalidateQueries({ queryKey: keys.inbox.all() });
       navigate({ to: "/bills" });
     },
   });
@@ -382,7 +387,11 @@ function BillDetailPage() {
   const daysOverdue = getDaysOverdue(bill.dueDate);
   const statusColor = STATUS_COLORS[bill.status] ?? STATUS_COLORS.in_review;
   const effectiveApproverId = localApproverId || bill.approverId || null;
-  const primaryAction = getPrimaryAction(bill.status, effectiveApproverId, currentUserId);
+  // A bill still under Inbox review is approved (and booked) there, not here.
+  const pendingInboxItemId = bill.pendingInboxItemId ?? null;
+  const primaryAction = pendingInboxItemId
+    ? null
+    : getPrimaryAction(bill.status, effectiveApproverId, currentUserId);
   const canEdit = isEditable(bill.status);
   const vendorIncomplete = !bill.vendorBankRouting && !bill.vendorBankAccount && canEdit;
 
@@ -442,6 +451,17 @@ function BillDetailPage() {
               >
                 {STATUS_LABELS[bill.status] ?? bill.status}
               </span>
+
+              {pendingInboxItemId && (
+                <Link
+                  to="/inbox"
+                  search={{ selected: pendingInboxItemId }}
+                  className="touch-target flex items-center justify-center gap-2 h-9 px-3 sm:px-4 rounded-lg bg-gradient-to-r from-[#0d9488] to-[#0f766e] text-white text-sm font-medium shadow-sm hover:shadow-md transition-all"
+                  title="This bill is approved in the Inbox. Approving there books it."
+                >
+                  Review in Inbox
+                </Link>
+              )}
 
               {/* Context-aware primary action button — icon-only on mobile */}
               {primaryAction && (
@@ -728,6 +748,30 @@ function BillDetailPage() {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left — Document Preview / Structured Card */}
         <div className="flex-1 overflow-y-auto p-8">
+          {/* Approved by Jev: which lane, how sure, and Undo */}
+          {bill.journalHeaderId && (
+            <div className="max-w-3xl mx-auto mb-4 empty:hidden">
+              <JevApprovalPanel journalHeaderId={bill.journalHeaderId} />
+            </div>
+          )}
+          {pendingInboxItemId && (
+            <div
+              role="status"
+              className="max-w-3xl mx-auto flex flex-wrap items-center gap-2 px-4 py-2.5 mb-4 rounded-lg bg-[#f0fdfa] dark:bg-teal-900/20 border border-[#99f6e4] dark:border-teal-800/40"
+            >
+              <span className="text-sm text-[#115e59] dark:text-teal-200">
+                Waiting for review in the Inbox. Approving it there books this bill; rejecting it
+                voids the bill.
+              </span>
+              <Link
+                to="/inbox"
+                search={{ selected: pendingInboxItemId }}
+                className="ml-auto text-sm font-semibold text-[#0d9488] dark:text-teal-300 hover:underline"
+              >
+                Open in Inbox
+              </Link>
+            </div>
+          )}
           {/* Overdue / Duplicate banner — above document viewer */}
           {isOverdue && (
             <div className="max-w-3xl mx-auto flex items-center gap-2 px-4 py-2.5 mb-4 rounded-lg bg-[#fff7ed] dark:bg-orange-900/20 border border-[#fed7aa] dark:border-orange-800/40">

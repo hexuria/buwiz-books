@@ -24,6 +24,8 @@ import { matchAssistOutputSchema } from "../schemas/match-assist";
 import { reflectionOutputSchema } from "../schemas/reflection";
 import { coaDraftOutputSchema } from "../schemas/coa-draft";
 import { categoryMappingSuggestOutputSchema } from "../schemas/category-mapping-suggest";
+import { categorizeLinesOutputSchema } from "../schemas/categorize-lines";
+import { matchPartyOutputSchema } from "../schemas/match-party";
 import { transactionParsePrompt } from "./transaction-parse";
 import { dateParsePrompt } from "./date-parse";
 import { classifyDocumentPrompt } from "./classify-document";
@@ -38,6 +40,8 @@ import { txnPrefillPrompt } from "./txn-prefill";
 import { reflectionPrompt } from "./reflection";
 import { coaDraftPrompt } from "./coa-draft";
 import { categoryMappingSuggestPrompt } from "./category-mapping-suggest";
+import { categorizeLinesPrompt } from "./categorize-lines";
+import { matchPartyPrompt } from "./match-party";
 
 export interface PromptModule<TInput = never> {
   id: string;
@@ -152,6 +156,18 @@ const RAW_REGISTRY: Partial<Record<AiTaskName, TaskRegistryEntry>> = {
     prompt: categoryMappingSuggestPrompt as PromptModule<any>,
     schema: categoryMappingSuggestOutputSchema,
     generation: { temperature: 0.2, maxOutputTokens: 8192, thinkingBudget: 2048 },
+  },
+  // Callers pass a per-request schema whose code/ref fields are enums of the
+  // supplied list; these static twins fix the shape for the registry.
+  categorize_lines: {
+    prompt: categorizeLinesPrompt as PromptModule<any>,
+    schema: categorizeLinesOutputSchema,
+    generation: { temperature: 0 },
+  },
+  match_party: {
+    prompt: matchPartyPrompt as PromptModule<any>,
+    schema: matchPartyOutputSchema,
+    generation: { temperature: 0 },
   },
 };
 /* eslint-enable @typescript-eslint/no-explicit-any */

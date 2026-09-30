@@ -76,8 +76,8 @@ so is never run by `drizzle-kit`; its only invoker back then was the since-remov
 `db:dedup:migrate`, which the deploy pipeline did not call. (The ordered manifest now applies
 0019 on every path, but the catalog's home has already moved.) Every environment therefore
 created the table from the Drizzle schema and
-left it empty, and the failure was silent: `/review-agents` simply reported that no agents were
-configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from the
+left it empty, and the failure was silent: the review-rule screen (then `/review-agents`, now
+Settings → Review Rules) simply reported that no agents were configured. The catalog now lives in `src/lib/inbox/review-rule-catalog.ts` and is seeded from the
 local `db:fresh` and `db:test:fresh` rebuilds, with `tests/unit/review-rules-wiring.test.ts`
 asserting those links still exist. The unattached canonical deployment repository must own the
 equivalent production seeding step. Use

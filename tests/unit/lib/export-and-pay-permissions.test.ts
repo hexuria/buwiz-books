@@ -74,7 +74,12 @@ describe("export and payment permissions", () => {
       const payIndex = src.indexOf("recordManualBillPayment(db, {");
       expect(payIndex).toBeGreaterThan(-1);
       // The assertion must precede the call, inside the same branch.
-      const before = src.slice(Math.max(0, payIndex - 800), payIndex);
+      const branch = src.lastIndexOf(
+        'if (newStatus === "paid" || newStatus === "partial") {',
+        payIndex,
+      );
+      expect(branch).toBeGreaterThan(-1);
+      const before = src.slice(branch, payIndex);
       expect(before).toContain('assertRolePermission(role, "bill", "pay")');
     });
   });

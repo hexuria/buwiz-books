@@ -1,9 +1,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { DOCUMENT_TASKS } from "../../../src/lib/ai/chains";
+import { DOCUMENT_TASKS, JEV_TASKS } from "../../../src/lib/ai/chains";
+import { normalizeConfidence } from "../../../src/lib/ai/confidence";
 import { createAiComplete, type AiHopInvocation } from "../../../src/lib/ai/facade-core";
-import { MOCK_RESPONSES } from "../../../src/lib/ai/fixtures/mock-responses";
-import { mockAiCompletionRuntime } from "../../../src/lib/ai/mock-runtime";
+import { JEV_MOCK_RESPONSES, MOCK_RESPONSES } from "../../../src/lib/ai/fixtures/mock-responses";
+import {
+  createMockAiCompletionRuntime,
+  mockAiCompletionRuntime,
+} from "../../../src/lib/ai/mock-runtime";
 import { parseModelJson } from "../../../src/lib/ai/parse-model-json";
 import { getTaskEntry, TASK_REGISTRY } from "../../../src/lib/ai/prompts";
 import { toRedactedPrompt } from "../../../src/lib/ai/redact";
@@ -51,7 +55,40 @@ const MINIMAL_TASK_INPUTS: Record<AiTaskName, unknown> = {
     maxAccounts: 10,
   },
   category_mapping_suggest: { rows: [], accounts: [] },
+  categorize_lines: {
+    document: {
+      kind: "receipt",
+      event: "purchase",
+      counterparty: "Staples",
+      description: "Office supplies",
+      currency: "USD",
+    },
+    lines: [],
+    lineItems: [],
+    accounts: [],
+  },
+  match_party: {
+    counterparty: { name: "Staples", role: "vendor", description: "" },
+    candidates: [],
+  },
 };
+
+/**
+ * Closed-list tasks ground their answer against a per-request set (see
+ * TASK_GROUNDING). The canned answers pick the one value that is always in
+ * it, so a caller supplying just that value gets them back unchanged.
+ */
+const ALLOWED_IDS: Partial<Record<AiTaskName, Record<string, Set<string>>>> = {
+  categorize_lines: { accountCodes: new Set(["none"]) },
+  match_party: { partyRefs: new Set(["new"]) },
+};
+
+/** Every confidence in a parsed answer: top-level, or one per line. */
+function confidencesOf(data: unknown): number[] {
+  const record = data as { confidence?: unknown; lines?: Array<{ confidence?: unknown }> };
+  const values = [record.confidence, ...(record.lines ?? []).map((line) => line.confidence)];
+  return values.filter((value): value is number => typeof value === "number");
+}
 
 function hopInvocation(task: AiTaskName): AiHopInvocation<unknown> {
   const entry = getTaskEntry(task);
@@ -147,5 +184,101 @@ describe("createAiComplete(mockAiCompletionRuntime)", () => {
     }
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+});
+
+describe("mock Jev responses (AI_MODE=mock)", () => {
+  const optedIn = createMockAiCompletionRuntime({ isJevOptedIn: async () => true });
+
+  it("exist exactly for the tasks Jev serves, parse, and pin confidence to 0..1", () => {
+    expect(Object.keys(JEV_MOCK_RESPONSES).sort()).toEqual([...JEV_TASKS].sort());
+    for (const task of JEV_TASKS) {
+      const parsed = parseModelJson(getTaskEntry(task).schema, JEV_MOCK_RESPONSES[task]!);
+      expect(parsed.ok, task).toBe(true);
+      if (!parsed.ok) continue;
+      const confidences = confidencesOf(parsed.data);
+      expect(confidences.length, task).toBeGreaterThan(0);
+      for (const confidence of confidences) {
+        expect(confidence).toBeGreaterThanOrEqual(0);
+        expect(confidence).toBeLessThanOrEqual(1);
+        expect(normalizeConfidence(confidence, { scaleHint: "unit" })).toBe(confidence);
+      }
+    }
+  });
+
+  it("an opted-in org gets the Jev mock hop first on JEV_TASKS, the Gemini mock hop after", async () => {
+    for (const task of JEV_TASKS) {
+      await expect(optedIn.prepare({ task, orgId: "org-mock" })).resolves.toEqual({
+        kind: "ready",
+        hops: [
+          { provider: "jev", model: "jev-mock" },
+          { provider: "gemini", model: "mock" },
+        ],
+      });
+    }
+  });
+
+  it("never puts Jev on any other task, OCR included, even when opted in", async () => {
+    for (const task of ALL_TASKS.filter((t) => !JEV_TASKS.has(t))) {
+      await expect(optedIn.prepare({ task, orgId: "org-mock" })).resolves.toEqual({
+        kind: "ready",
+        hops: [{ provider: "gemini", model: "mock" }],
+      });
+    }
+    for (const task of DOCUMENT_TASKS) {
+      const preparation = await optedIn.prepare({ task, orgId: "org-mock" });
+      expect(
+        preparation.kind === "ready" && preparation.hops.some((h) => h.provider === "jev"),
+      ).toBe(false);
+    }
+  });
+
+  it("a failing opt-in read falls back to the shared mock hop", async () => {
+    const broken = createMockAiCompletionRuntime({
+      isJevOptedIn: async () => {
+        throw new Error("settings unavailable");
+      },
+    });
+    await expect(broken.prepare({ task: "ingest_triage", orgId: "org-mock" })).resolves.toEqual({
+      kind: "ready",
+      hops: [{ provider: "gemini", model: "mock" }],
+    });
+  });
+
+  it("answers an opted-in org from the Jev fixtures, with zero HTTP", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const aiComplete = createAiComplete(optedIn);
+    for (const task of JEV_TASKS) {
+      const result = await aiComplete({
+        task,
+        input: MINIMAL_TASK_INPUTS[task],
+        ctx: CTX,
+        allowedIds: ALLOWED_IDS[task],
+      });
+      expect(result).toMatchObject({
+        ok: true,
+        model: "jev-mock",
+        invocationId: `mock:jev:${task}`,
+      });
+      if (result.ok) {
+        expect(result.data).toEqual(JSON.parse(JEV_MOCK_RESPONSES[task]!));
+      }
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
+  it("the default runtime (never opted in) keeps answering JEV_TASKS from the shared fixtures", async () => {
+    const aiComplete = createAiComplete(mockAiCompletionRuntime);
+    for (const task of JEV_TASKS) {
+      const result = await aiComplete({
+        task,
+        input: MINIMAL_TASK_INPUTS[task],
+        ctx: CTX,
+        allowedIds: ALLOWED_IDS[task],
+      });
+      expect(result).toMatchObject({ ok: true, model: "mock" });
+      if (result.ok) expect(result.data).toEqual(JSON.parse(MOCK_RESPONSES[task]));
+    }
   });
 });

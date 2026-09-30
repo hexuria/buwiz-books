@@ -3,15 +3,18 @@ import { withOrgContext, type DbExecutor } from "../../db";
 import { organization } from "../../db/schema/auth";
 import { generateStructuredAnthropic } from "./adapters/anthropic";
 import { generateStructured } from "./adapters/gemini";
+import { generateStructuredJev } from "./adapters/jev";
 import { generateStructuredOpenAi } from "./adapters/openai";
-import { getOrgCredentials } from "./credentials";
+import { getOrgCredentials, type ResolvedCredential } from "./credentials";
 import { AiProviderError, classifyGeminiError, toAiProviderError } from "./errors";
 import type { AiCompletionRuntime, AiHopInvocation } from "./facade-core";
 import { logProviderInvocation, recordValidationOutcome } from "./invoke";
+import { meteredUsage } from "./pricing";
 import * as health from "./provider-health";
 import { resolveChain } from "./router";
 import { getOrgAiSettings, isTaskAllowed } from "./settings";
 import { assertWithinSpendCap } from "./spend";
+import { zodToGeminiSchema } from "./zod-to-gemini-schema";
 
 async function loadOrgMetadata(executor: DbExecutor, orgId: string): Promise<string | null> {
   try {
@@ -26,6 +29,36 @@ async function loadOrgMetadata(executor: DbExecutor, orgId: string): Promise<str
   }
 }
 
+/** One non-Gemini text hop. Every adapter receives the RedactedPrompt only. */
+async function callTextProvider<TOut>(
+  args: AiHopInvocation<TOut>,
+  credential: ResolvedCredential,
+): Promise<{
+  text: string;
+  usage: { tokensIn: number | null; tokensOut: number | null };
+  usageEstimated?: boolean;
+}> {
+  const common = {
+    apiKey: credential.apiKey,
+    model: args.hop.model,
+    prompt: args.prompt,
+    schema: args.schema,
+    temperature: args.generation?.temperature,
+    maxOutputTokens: args.generation?.maxOutputTokens,
+  };
+  const schemaName = args.entry.prompt.id.replace(/-/g, "_");
+  switch (args.hop.provider) {
+    case "anthropic":
+      return generateStructuredAnthropic(common);
+    case "jev":
+      // The Jev adapter has no media parameter: document bytes attached to
+      // this call never reach Jev, whatever the caller passed.
+      return generateStructuredJev({ ...common, baseURL: credential.baseUrl, schemaName });
+    default:
+      return generateStructuredOpenAi({ ...common, baseURL: credential.baseUrl, schemaName });
+  }
+}
+
 async function invokeHop<TOut>(
   args: AiHopInvocation<TOut>,
 ): Promise<{ text: string; invocationId: string | null; model: string | null }> {
@@ -36,7 +69,12 @@ async function invokeHop<TOut>(
       return await generateStructured({
         task: args.task,
         promptText: String(args.prompt),
-        geminiSchema: entry.geminiSchema,
+        // A caller-supplied schema (the closed per-request enums of
+        // categorize_lines / match_party) must constrain Gemini's decoding
+        // too, not only the app-side parse — the other adapters already send
+        // args.schema. Without an override this is the precomputed schema.
+        geminiSchema:
+          args.schema === entry.schema ? entry.geminiSchema : zodToGeminiSchema(args.schema),
         ctx,
         media: args.media,
         modelOverride: hop.model,
@@ -77,28 +115,11 @@ async function invokeHop<TOut>(
 
   const started = Date.now();
   try {
-    const result =
-      hop.provider === "anthropic"
-        ? await generateStructuredAnthropic({
-            apiKey: credential.apiKey,
-            model: hop.model,
-            prompt: args.prompt,
-            schema: args.schema,
-            temperature: args.generation?.temperature,
-            maxOutputTokens: args.generation?.maxOutputTokens,
-          })
-        : await generateStructuredOpenAi({
-            apiKey: credential.apiKey,
-            model: hop.model,
-            baseURL: credential.baseUrl,
-            prompt: args.prompt,
-            schema: args.schema,
-            schemaName: entry.prompt.id.replace(/-/g, "_"),
-            temperature: args.generation?.temperature,
-            maxOutputTokens: args.generation?.maxOutputTokens,
-          });
+    const result = await callTextProvider(args, credential);
 
     await health.recordSuccess(ctx.orgId, credential.fingerprint);
+    // A gateway that reports no usage must still count toward the spend cap.
+    const usage = meteredUsage(result.usage, String(args.prompt), result.text);
     const invocationId = await logProviderInvocation({
       orgId: ctx.orgId,
       task: args.task,
@@ -109,11 +130,17 @@ async function invokeHop<TOut>(
       promptName: entry.prompt.id,
       promptVersion: entry.prompt.version,
       schemaHash: entry.schemaHash,
-      tokensIn: result.usage.tokensIn,
-      tokensOut: result.usage.tokensOut,
+      tokensIn: usage.tokensIn,
+      tokensOut: usage.tokensOut,
       latencyMs: Date.now() - started,
       requestId: ctx.requestId,
-      configSnapshot: { redactionHits: args.redactionHits },
+      configSnapshot: {
+        redactionHits: args.redactionHits,
+        // Jev fills estimated counts itself and flags them; other gateways
+        // leave usage empty and meteredUsage estimates it. Either signal means
+        // the logged counts are not what the provider reported.
+        ...(result.usageEstimated || usage.estimated ? { usageEstimated: true } : {}),
+      },
     });
     return { text: result.text, invocationId, model: hop.model };
   } catch (error) {

@@ -1,0 +1,139 @@
+{
+  "meta": {
+    "version": 5,
+    "exportedAt": "2026-09-27T10:00:00.000Z",
+    "organizationName": "Test Org",
+    "organizationSlug": "test-org",
+    "entities": [
+      "vendors",
+      "ruleSnapshots",
+      "routines",
+      "classificationMemories",
+      "aiAutonomyLanes"
+    ]
+  },
+  "data": {
+    "vendors": [
+      {
+        "name": "Acme Hosting",
+        "partyType": "vendor",
+        "email": "billing@acme.example",
+        "isActive": true
+      }
+    ],
+    "ruleSnapshots": [
+      {
+        "id": "7a6d3f4e-1111-4c1d-9e0a-1f2e3d4c5b6a",
+        "label": "Baseline",
+        "snapshot": [
+          {
+            "ruleKey": "missing_vendor",
+            "enabled": true,
+            "impact": "blocking",
+            "config": {},
+            "formulaVersion": 1
+          },
+          {
+            "ruleKey": "low_confidence_category",
+            "enabled": true,
+            "impact": "warning",
+            "config": {
+              "threshold": "0.80"
+            },
+            "formulaVersion": 1
+          }
+        ],
+        "createdAt": "2026-09-20T08:30:00.123456Z"
+      }
+    ],
+    "routines": [
+      {
+        "name": "Inbound email",
+        "enabled": true,
+        "triggerKind": "webhook",
+        "triggerConfig": {
+          "provider": "resend",
+          "auth": "svix"
+        },
+        "maxConcurrentRuns": 1,
+        "ruleSnapshot": {
+          "id": "7a6d3f4e-1111-4c1d-9e0a-1f2e3d4c5b6a",
+          "label": "Baseline",
+          "createdAt": "2026-09-20T08:30:00.123456Z"
+        },
+        "shadowRuleSnapshot": null
+      },
+      {
+        "name": "Receipts webhook",
+        "enabled": true,
+        "triggerKind": "webhook",
+        "triggerConfig": {
+          "provider": "buwiz",
+          "auth": "hmac_sha256",
+          "tolerance_s": 300,
+          "max_bytes": 1048576
+        },
+        "maxConcurrentRuns": 1,
+        "ruleSnapshot": null,
+        "shadowRuleSnapshot": null
+      }
+    ],
+    "classificationMemories": [
+      {
+        "matchKind": "sender_party",
+        "matchKey": "billing@acme.example|",
+        "matchPartyName": null,
+        "answerDocKind": "purchase",
+        "answerPartyName": "Acme Hosting",
+        "answerLines": [
+          {
+            "lineMatch": {
+              "side": "debit",
+              "index": 0
+            },
+            "accountNumber": "6100",
+            "accountName": "Software",
+            "accountType": "expense",
+            "amount": "49.99",
+            "currency": "USD",
+            "taxCode": null
+          },
+          {
+            "lineMatch": {
+              "side": "credit",
+              "index": 0
+            },
+            "accountNumber": "1010",
+            "accountName": "Checking",
+            "accountType": "asset",
+            "amount": "49.99",
+            "currency": "USD",
+            "taxCode": null
+          }
+        ],
+        "uses": 3,
+        "undos": 0,
+        "consecutiveUndos": 0,
+        "enabled": true
+      }
+    ],
+    "aiAutonomyLanes": [
+      {
+        "laneKey": "inbox_approve",
+        "docKind": "expense",
+        "partyName": "Acme Hosting",
+        "level": "auto",
+        "amountCap": "500.00000000",
+        "confidenceThreshold": "0.9500"
+      },
+      {
+        "laneKey": "inbox_approve",
+        "docKind": "vendor_bill",
+        "partyName": null,
+        "level": "watch",
+        "amountCap": null,
+        "confidenceThreshold": null
+      }
+    ]
+  }
+}

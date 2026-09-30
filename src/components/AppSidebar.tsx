@@ -25,6 +25,7 @@ import { applyPhTaxGate, effectivePhTaxUiState } from "../lib/tax/nav-gate";
 import type { PhTaxModuleStatus } from "../lib/tax/module-state-types";
 import { getTaxModuleState } from "../routes/api/-tax-module-state";
 import { usePhTaxFilingEnabled } from "../hooks/usePhTaxFilingEnabled";
+import { useInboxV2Badge } from "./inbox-v2/useInboxV2";
 
 // ─── Nav Item Config ─────────────────────────────────────────────────────────
 
@@ -77,28 +78,6 @@ const NAV_ITEMS: NavItem[] = [
     ),
     label: "Inbox",
     href: "/inbox",
-  },
-  {
-    // Sits next to Inbox rather than inside Accounting: this page configures the checks that
-    // produce Inbox findings, and its findings panel links back into the Inbox. Filing it as the
-    // sixth child of a collapsible group put the configuration four clicks from its own output.
-    icon: (
-      <svg
-        width="18"
-        height="18"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M9 11l3 3L22 4" />
-        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-      </svg>
-    ),
-    label: "Review Agents",
-    href: "/review-agents",
   },
   {
     icon: (
@@ -737,7 +716,11 @@ export default function AppSidebar({ collapsed, onToggleCollapse, children }: Ap
     staleTime: 60_000,
     enabled: phTaxFilingEnabled,
   });
-  const navItems = applyPhTaxGate(NAV_ITEMS, effectivePhTaxUiState(phTaxStatus));
+  // How many items need a human; the count is the Inbox list's own length.
+  const inboxBadge = useInboxV2Badge();
+  const navItems = applyPhTaxGate(NAV_ITEMS, effectivePhTaxUiState(phTaxStatus)).map((item) =>
+    item.href === "/inbox" && inboxBadge !== undefined ? { ...item, badge: inboxBadge } : item,
+  );
   const activeOrg = safeActiveOrg
     ? { id: safeActiveOrg.id, name: safeActiveOrg.name, slug: safeActiveOrg.slug ?? "" }
     : null;

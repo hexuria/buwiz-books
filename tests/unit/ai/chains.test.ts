@@ -6,11 +6,18 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_CHAINS,
   DOCUMENT_TASKS,
+  JEV_MODEL,
+  JEV_TASKS,
+  applyJevPolicy,
   assertOcrPolicy,
+  enforceJevTaskScope,
   enforceOcrPolicy,
   OcrEgressPolicyError,
+  type ChainEntry,
 } from "../../../src/lib/ai/chains";
 import { AI_TASK_CATEGORY, type AiTaskName } from "../../../src/lib/ai/types";
+
+const ALL_TASKS = Object.keys(DEFAULT_CHAINS) as AiTaskName[];
 
 describe("default chains", () => {
   it("every task has at least one hop", () => {
@@ -58,6 +65,17 @@ describe("default chains", () => {
     expect(DEFAULT_CHAINS.classify_document).toEqual(cheapThenFlash);
     expect(DEFAULT_CHAINS.ingest_triage.every((h) => h.provider === "gemini")).toBe(true);
     expect(DEFAULT_CHAINS.classify_document.every((h) => h.provider === "gemini")).toBe(true);
+  });
+
+  it("inbox stage 2 and entity matching are cheap Gemini-only picks from a closed list", () => {
+    const cheapThenFlash = [
+      { provider: "gemini", model: "gemini-3.1-flash-lite-preview" },
+      { provider: "gemini", model: "gemini-3-flash-preview" },
+    ];
+    expect(DEFAULT_CHAINS.categorize_lines).toEqual(cheapThenFlash);
+    expect(DEFAULT_CHAINS.match_party).toEqual(cheapThenFlash);
+    expect(DOCUMENT_TASKS.has("categorize_lines")).toBe(false);
+    expect(DOCUMENT_TASKS.has("match_party")).toBe(false);
   });
 
   it("other text tasks still start on gemini-3-flash-preview", () => {
@@ -157,6 +175,91 @@ describe("assertOcrPolicy", () => {
     const tasks = Object.keys(DEFAULT_CHAINS) as AiTaskName[];
     for (const task of tasks) {
       expect(() => assertOcrPolicy(task, DEFAULT_CHAINS[task])).not.toThrow();
+    }
+  });
+});
+
+// ── Jev: opt-in first hop for classification, never anywhere else ──────────
+describe("Jev chain policy", () => {
+  const jevHop: ChainEntry = { provider: "jev", model: JEV_MODEL };
+
+  it("Jev is in no default chain, so an org that has not opted in is unaffected", () => {
+    for (const task of ALL_TASKS) {
+      expect(
+        DEFAULT_CHAINS[task].some((hop) => hop.provider === "jev"),
+        task,
+      ).toBe(false);
+    }
+  });
+
+  it("Jev serves exactly the four redacted-text classification tasks, none of which sends document bytes", () => {
+    expect([...JEV_TASKS].sort()).toEqual([
+      "categorize_lines",
+      "classify_document",
+      "ingest_triage",
+      "match_party",
+    ]);
+    for (const task of JEV_TASKS) {
+      expect(DOCUMENT_TASKS.has(task), `${task} is a document task`).toBe(false);
+      expect(AI_TASK_CATEGORY[task]).toBe("textAnalysis");
+    }
+  });
+
+  it("opted in: Jev is the first hop and the Gemini default chain is the fallback", () => {
+    for (const task of JEV_TASKS) {
+      expect(applyJevPolicy(task, DEFAULT_CHAINS[task], true)).toEqual([
+        jevHop,
+        ...DEFAULT_CHAINS[task],
+      ]);
+    }
+  });
+
+  it("not opted in: every chain comes back as the very same array (byte-identical)", () => {
+    for (const task of ALL_TASKS) {
+      expect(applyJevPolicy(task, DEFAULT_CHAINS[task], false)).toBe(DEFAULT_CHAINS[task]);
+    }
+  });
+
+  it("opted in: tasks outside JEV_TASKS are returned untouched", () => {
+    for (const task of ALL_TASKS.filter((t) => !JEV_TASKS.has(t))) {
+      expect(applyJevPolicy(task, DEFAULT_CHAINS[task], true)).toBe(DEFAULT_CHAINS[task]);
+    }
+  });
+
+  it("an override that already names Jev keeps its own placement (no duplicate hop)", () => {
+    const override: ChainEntry[] = [
+      { provider: "gemini", model: "gemini-3.1-flash-lite-preview" },
+      { provider: "jev", model: "jev-custom" },
+    ];
+    expect(applyJevPolicy("ingest_triage", override, true)).toBe(override);
+  });
+
+  it("strips Jev from every task it does not serve, keeping the other hops by reference", () => {
+    const gemini: ChainEntry = { provider: "gemini", model: "g" };
+    const anthropic: ChainEntry = { provider: "anthropic", model: "c" };
+    const tampered = [jevHop, gemini, anthropic];
+    for (const task of ALL_TASKS.filter((t) => !JEV_TASKS.has(t))) {
+      const scoped = enforceJevTaskScope(task, tampered);
+      expect(scoped).toEqual([gemini, anthropic]);
+      expect(scoped[0]).toBe(gemini);
+      expect(applyJevPolicy(task, tampered, true)).toEqual([gemini, anthropic]);
+    }
+  });
+
+  it("Jev can never appear in an OCR task chain, even when opted in with a Jev override", () => {
+    for (const task of DOCUMENT_TASKS) {
+      const override: ChainEntry[] = [jevHop, ...DEFAULT_CHAINS[task]];
+      for (const chain of [DEFAULT_CHAINS[task], override]) {
+        const resolved = enforceOcrPolicy(task, applyJevPolicy(task, chain, true));
+        expect(
+          resolved.some((hop) => hop.provider === "jev"),
+          task,
+        ).toBe(false);
+        expect(() => assertOcrPolicy(task, resolved)).not.toThrow();
+      }
+      // And the OCR clamp alone would stop Jev even if a future edit put an
+      // OCR task into JEV_TASKS by mistake.
+      expect(() => assertOcrPolicy(task, [jevHop])).toThrow(OcrEgressPolicyError);
     }
   });
 });

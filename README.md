@@ -34,6 +34,12 @@ bun preview          # Preview production build locally
 AI features normally call live providers. `AI_MODE=mock` returns schema-valid
 canned JSON in-process (including OCR). See [docs/ai-mock.md](./docs/ai-mock.md).
 
+Jev (TypeSafe AI) is an opt-in classifier, off for every org by default. It
+runs only when the deployment sets `JEV_BASE_URL` (https) and an org admin both
+adds a Jev key and allows Jev under Settings → AI Providers & Guardrails. Its
+wire format is unverified; read the header of `src/lib/ai/adapters/jev.ts`
+before enabling it anywhere.
+
 ### Database
 
 ```bash
@@ -56,8 +62,8 @@ pre-schema migrations that exist to keep it non-interactive.
 **Review agents.** The rule catalog (`review_rule_definitions`) is a global table seeded from
 `src/lib/inbox/review-rule-catalog.ts`. It is wired into the local `db:fresh` and
 `db:test:fresh` rebuilds. Production seeding belongs to the unattached canonical deployment
-repository. If `/review-agents` ever renders "No review agents are set up yet", this is the first
-thing to check:
+repository. If Settings → Review Rules ever shows "No review agents are set up yet", this is the
+first thing to check:
 
 ```bash
 bun db:review-rules:status      # read-only: catalog state, drift, unresolved findings

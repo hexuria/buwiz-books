@@ -26,8 +26,9 @@ work), `external` (blocked outside this repo), `schema` (a data-model decision),
 ## Product decisions
 
 - **Per-organization sender allowlists** (`product`) — inbound email accepts any sender
-  (Svix-signed webhook, human-reviewed candidates; trade-off recorded in
-  docs/inbox-workflow.md). An org-configurable allowlist needs UI, settings storage, and a
+  (Svix-signed webhook; a paper from an unverified sender is always reviewed by a person, and
+  only a verified sender its party already uses can reach a Jev lane at auto — trade-off recorded
+  in docs/inbox-workflow.md). An org-configurable allowlist needs UI, settings storage, and a
   reject-vs-quarantine policy call.
 - **`amendPostedJournal` UI wiring** (`product`) — implemented, tested, integrity-guarded
   (duplicate/finalized-reconciliation refusals landed in Program 2 P3), still unreachable:

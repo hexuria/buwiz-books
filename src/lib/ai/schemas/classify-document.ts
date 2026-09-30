@@ -13,7 +13,9 @@ export const classifyDocumentOutputSchema = z.object({
     "tax_form",
     "other",
   ]),
-  confidence: z.number(),
+  // Pinned to the unit scale (like ingest_triage) so readers may pass
+  // normalizeConfidence's `scaleHint: "unit"`: a bare 1 means certain, not 1%.
+  confidence: z.number().describe("Confidence score from 0.0 to 1.0"),
   reasoning: z.string().optional(),
 });
 

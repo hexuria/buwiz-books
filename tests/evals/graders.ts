@@ -302,3 +302,43 @@ export function coverageAtLeast(minimum: number, path = "accounts"): OutputInvar
     },
   };
 }
+
+/**
+ * Confidence sits on the pinned 0..1 scale (inbox v2 review finding 9).
+ * Readers of these tasks pass normalizeConfidence's unit hint, which reads a
+ * bare 1 as certain; that is only sound when the answer is on the pinned
+ * scale, so a 0-100 answer fails here rather than in a threshold later.
+ */
+export function confidenceOnUnitScale(path = "confidence"): OutputInvariant {
+  return {
+    name: `${path} is on the 0..1 scale`,
+    check(output) {
+      const value = get(output, path);
+      if (typeof value !== "number" || !Number.isFinite(value)) return `${path} is not a number`;
+      return value >= 0 && value <= 1 ? null : `${path} = ${value} is outside 0..1`;
+    },
+  };
+}
+
+/**
+ * Every value at `path` (`[]` walks an array) is one the request offered.
+ * The closed-list tasks (categorize_lines, match_party) answer with a code or
+ * ref from a per-request enum; an answer outside it is wrong whatever the
+ * fixture expected, and must never be mapped to an account or a party.
+ */
+export function valueInSet(path: string, allowed: readonly string[]): OutputInvariant {
+  const permitted = new Set(allowed);
+  return {
+    name: `${path} is one of the offered values`,
+    check(output) {
+      const [head, field] = path.split("[].");
+      const values = field ? rows(output, head).map((row) => row[field]) : [get(output, path)];
+      for (const value of values) {
+        if (typeof value !== "string" || !permitted.has(value)) {
+          return `${JSON.stringify(value)} was not offered`;
+        }
+      }
+      return null;
+    },
+  };
+}

@@ -58,9 +58,9 @@ export type AgentCadence = "ingest" | "on_demand" | "ingest_and_on_demand" | "sy
 
 export const CADENCE_COPY: Record<AgentCadence, string> = {
   ingest: "Runs automatically on every transaction that enters the Inbox.",
-  on_demand: "Runs when you press Run review agents. It does not run on its own.",
+  on_demand: "Runs when you press Scan books. It does not run on its own.",
   ingest_and_on_demand:
-    "Runs automatically at ingest, and again over the posted ledger when you press Run review agents.",
+    "Runs automatically at ingest, and again over the posted ledger when you press Scan books.",
   system: "Raised automatically by inbound processing. There is nothing to configure or run.",
 };
 
@@ -145,7 +145,7 @@ export const REVIEW_AGENT_SCHEMAS: Record<string, AgentConfigSchema> = {
     usesLookback: false,
     method: [
       INGEST_ONLY_METHOD,
-      "Converts the transaction total into the threshold currency at the entry's exchange rate.",
+      "Converts the expense total into your books' currency at the entry's exchange rate, and the threshold too when it is set in the entry's currency.",
       "Raises a finding when it exceeds the threshold and no receipt is attached.",
     ],
     fields: [
@@ -377,6 +377,26 @@ export const REVIEW_AGENT_SCHEMAS: Record<string, AgentConfigSchema> = {
     method: [
       "Raised when an inbound email arrives without the attachments needed to book it.",
       "Clear it by supplying the missing evidence, or by documenting an exception.",
+    ],
+    fields: [],
+  },
+  party_payment_details_changed: {
+    key: "party_payment_details_changed",
+    cadence: "system",
+    usesLookback: false,
+    method: [
+      "Raised when a document asks for payment to a bank account other than the one on file for a known vendor or employee.",
+      "Editing the entry never clears it. Confirm the change through a contact you already trust, then resolve it with a note.",
+    ],
+    fields: [],
+  },
+  memory_conflict: {
+    key: "memory_conflict",
+    cadence: "system",
+    usesLookback: false,
+    method: [
+      "Raised when two remembered answers of the same specificity match one paper and disagree. Neither is applied, and no model guesses in their place.",
+      "Turn off the memory that is wrong in Settings → Memories, then choose the answer for this paper.",
     ],
     fields: [],
   },

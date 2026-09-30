@@ -13,7 +13,9 @@ test.describe("Bills Lifecycle", () => {
     await page.waitForLoadState("networkidle");
   });
 
-  test("should create a bill manually, view details, and approve", async ({ page }) => {
+  test("should create a bill manually, view details, and send it to the Inbox for approval", async ({
+    page,
+  }) => {
     // 1. Navigation to Create
     await page.getByRole("link", { name: "Create Bill" }).click();
     await expect(page.getByRole("heading", { name: "New Bill" })).toBeVisible();
@@ -77,28 +79,16 @@ test.describe("Bills Lifecycle", () => {
     await expect(page.getByText("Ergonomic Chairs")).toBeVisible();
     await expect(page.getByText("Standing Desks")).toBeVisible();
 
-    // 6. Assign Approver and Approve
-    // The placeholder is "Search members or enter email…" for new bills (no approver yet).
-    // It only changes to "Change approver…" after an approver is already assigned.
-    const approverInput = page.getByPlaceholder("Search members or enter email…");
-    await approverInput.scrollIntoViewIfNeeded();
-    await approverInput.click();
-    // Press down and enter to select the current user (first in the list)
-    await page.keyboard.press("ArrowDown");
-    await page.keyboard.press("Enter");
+    // 6. A saved bill is approved in the Inbox, where its checks run: the
+    // Bills page no longer books it on its own, it points there instead.
+    await expect(page.getByText(/Waiting for review in the Inbox/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+    await page.getByRole("link", { name: "Review in Inbox" }).click();
 
-    // Now the button should say "Approve" since we assigned ourselves
-    const approveBtn = page.getByRole("button", { name: "Approve", exact: true });
-    await expect(approveBtn).toBeVisible({ timeout: 10000 });
-    await expect(approveBtn).toBeEnabled();
-    await approveBtn.click();
-
-    // Verify it transitioned
-    // If it's approved, the status might change to Awaiting Payment
-    // We can verify that the button changed to "Mark as Paid"
-    await expect(page.getByRole("button", { name: "Mark as Paid" })).toBeVisible({
-      timeout: 10000,
-    });
-    await expect(page.getByText("Awaiting Payment")).toBeVisible();
+    // 7. The Inbox opens on this bill, with what blocks approval up top.
+    await page.waitForURL(/\/inbox\?selected=/);
+    await expect(page.getByRole("heading", { name: /Bill from/ })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/What blocks approval/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeVisible();
   });
 });

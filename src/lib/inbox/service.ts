@@ -3,7 +3,6 @@ import { and, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { organization } from "@/db/schema/auth";
-import { bills } from "@/db/schema/bills";
 import { dimensions } from "@/db/schema/dimensions";
 import { documentAttachments, documents } from "@/db/schema/documents";
 import {
@@ -13,8 +12,6 @@ import {
   organizationAccountingSettings,
   reviewDecisions,
   reviewFindings,
-  reviewRuleConfigs,
-  reviewRuleDefinitions,
   sourceMatchCandidates,
   sourceRecordDocuments,
   sourceRecordVersions,
@@ -24,13 +21,27 @@ import {
   transactionCandidates,
   workflowEvents,
 } from "@/db/schema/inbox";
-import { journalHeaders, journalLines } from "@/db/schema/journals";
+import { journalHeaders } from "@/db/schema/journals";
 import { parties } from "@/db/schema/parties";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { assertIdempotencyPayloadMatches, idempotencyPayloadHash } from "@/lib/idempotency";
 import { parseOrgMetadata } from "@/lib/org-metadata";
 import { isDateInLockedPeriod } from "@/lib/period-close";
-import { allocateJournalTransactionNumber } from "@/lib/sequence";
+import { JEV_AUDIT_ACTOR_ID } from "@/lib/jev-actor";
+import { reviewDecisionActor, type PostingActor } from "@/lib/posting/actor";
+import type { JevApprovalGrant } from "@/lib/posting/system-approval-grant";
+import {
+  accrueReviewedBillCore,
+  createBillCore,
+  lockAccruableEditorBill,
+  touchesAccountsPayable,
+  voidUnbookedEditorBill,
+} from "@/lib/posting/bill-core";
+import {
+  postTransactionCore,
+  type PostTransactionDraft,
+  type PostedTransaction,
+} from "@/lib/posting/transaction-core";
 import {
   DUPLICATE_MATCHER_VERSION,
   normalizeAmountForCurrency,
@@ -38,9 +49,16 @@ import {
   type EconomicEventClass,
   type TransactionDirection,
 } from "./duplicate-matcher";
-import { loadDuplicateEngineConfig, runDuplicateMatchingForSource } from "./duplicate-engine";
+import {
+  findOpenDuplicateCase,
+  loadDuplicateEngineConfig,
+  runDuplicateMatchingForSource,
+} from "./duplicate-engine";
 import { preserveAuthoritativeEconomicEvent } from "./economic-event";
-import { evaluateBookRules, type BookRuleAccount } from "./rules";
+import { noteApprovalOfMemoryAnswer } from "./memory/tracking";
+import type { BookRuleAccount } from "./rules";
+import { evaluateCandidateRules, withRuleSetProvenance, type AppliedRuleSet } from "./rule-set";
+import { LIVE_RULE_SET_PROVENANCE, loadLiveRuleConfigs } from "./rule-snapshots";
 import {
   compareMoney,
   convertBalancedLines,
@@ -48,9 +66,16 @@ import {
   normalizeCurrency,
   sumMoney,
 } from "./money";
-import type { CreateCandidateInput, InboxServiceContext } from "./types";
+import type {
+  CandidateSubmissionContext,
+  CreateCandidateInput,
+  InboxServiceContext,
+} from "./types";
 import { resolveFxRate } from "./fx";
 import { lockInboxCandidateLifecycle } from "./lifecycle-lock";
+import { isVendorBillCandidate } from "./vendor-bill";
+import { recordJevLaneFeedback } from "./jev-approval/feedback";
+import { entrySnapshotOf } from "./jev-approval/proposal";
 
 type AccountingSettings = typeof organizationAccountingSettings.$inferSelect;
 
@@ -88,15 +113,15 @@ const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 function sourceDocumentStampFor(
   candidateType: string,
   externalId: string | null,
-): { sourceDocumentId: string | null; sourceDocumentType: string | null } {
+): { id: string; type: string } | null {
   if (
     (candidateType === "bill" || candidateType === "invoice") &&
     externalId &&
     UUID_SHAPE.test(externalId)
   ) {
-    return { sourceDocumentId: externalId, sourceDocumentType: candidateType };
+    return { id: externalId, type: candidateType };
   }
-  return { sourceDocumentId: null, sourceDocumentType: null };
+  return null;
 }
 
 function sourceProvider(input: CreateCandidateInput): string {
@@ -128,7 +153,7 @@ function sourceClassification(input: CreateCandidateInput): {
   }
 }
 
-function journalSourceFor(channel: string): typeof journalHeaders.$inferInsert.source {
+function journalSourceFor(channel: string): PostTransactionDraft["source"] {
   switch (channel) {
     case "csv":
       return "import";
@@ -335,7 +360,7 @@ async function loadRuleInputs(db: DbExecutor, orgId: string, input: CreateCandid
 }
 
 export async function createTransactionCandidate(
-  ctx: InboxServiceContext,
+  ctx: CandidateSubmissionContext,
   input: CreateCandidateInput,
 ) {
   const { db, orgId, userId } = ctx;
@@ -724,47 +749,29 @@ export async function createTransactionCandidate(
     );
   }
 
-  const configuredRules = await db
-    .select({
-      key: reviewRuleDefinitions.key,
-      enabled: reviewRuleConfigs.enabled,
-      impact: reviewRuleConfigs.impact,
-      config: reviewRuleConfigs.config,
-    })
-    .from(reviewRuleConfigs)
-    .innerJoin(reviewRuleDefinitions, eq(reviewRuleConfigs.definitionId, reviewRuleDefinitions.id))
-    .where(eq(reviewRuleConfigs.organizationId, orgId));
-  const ruleConfigByKey = new Map(configuredRules.map((rule) => [rule.key, rule]));
-  const lowConfidenceConfig = ruleConfigByKey.get("low_confidence_category")?.config as
-    | { threshold?: number }
-    | undefined;
-  const receiptConfig = ruleConfigByKey.get("missing_receipt")?.config as
-    | { threshold?: number; currency?: string }
-    | undefined;
-  const findings = evaluateBookRules({
-    candidate: { ...input, originalCurrency, functionalCurrency, exchangeRate },
-    lines: normalizedLines,
-    accounts: ruleInputs.accountMap,
-    party: ruleInputs.party,
-    documents: ruleInputs.documents,
-    settings: {
-      lowConfidenceThreshold: String(
-        lowConfidenceConfig?.threshold ?? settings.lowConfidenceThreshold,
-      ),
-      missingReceiptThreshold: String(receiptConfig?.threshold ?? settings.missingReceiptThreshold),
-      missingReceiptCurrency: normalizeCurrency(
-        receiptConfig?.currency ?? settings.missingReceiptCurrency,
-      ),
-      functionalCurrency,
+  // No routine brought this paper in — routine intake records its routine on
+  // an ingestion event, and this path creates its source record without one —
+  // so it is evaluated against the organization's live rule configs.
+  const ruleSet: AppliedRuleSet = {
+    provenance: LIVE_RULE_SET_PROVENANCE,
+    configByKey: await loadLiveRuleConfigs(db, orgId),
+    fallbacks: {
+      lowConfidenceThreshold: settings.lowConfidenceThreshold,
+      missingReceiptThreshold: settings.missingReceiptThreshold,
+      missingReceiptCurrency: settings.missingReceiptCurrency,
     },
-  })
-    .filter((finding) => ruleConfigByKey.get(finding.ruleKey)?.enabled !== false)
-    .map((finding) => ({
-      ...finding,
-      impact:
-        (ruleConfigByKey.get(finding.ruleKey)?.impact as "blocking" | "warning" | undefined) ??
-        finding.impact,
-    }));
+  };
+  const findings = withRuleSetProvenance(
+    evaluateCandidateRules(ruleSet, {
+      candidate: { ...input, originalCurrency, functionalCurrency, exchangeRate },
+      lines: normalizedLines,
+      accounts: ruleInputs.accountMap,
+      party: ruleInputs.party,
+      documents: ruleInputs.documents,
+      functionalCurrency,
+    }),
+    ruleSet.provenance,
+  );
   if (findings.length > 0) {
     await db.insert(reviewFindings).values(
       findings.map((finding) => ({
@@ -797,7 +804,11 @@ export async function createTransactionCandidate(
     actorType: "user",
     actorId: userId,
     idempotencyKey: `candidate:${candidate.id}:submitted`,
-    data: { sourceChannel: input.sourceChannel ?? "manual", findingCount },
+    data: {
+      sourceChannel: input.sourceChannel ?? "manual",
+      findingCount,
+      ruleSet: ruleSet.provenance,
+    },
   });
   await insertActivityLog(
     {
@@ -821,14 +832,40 @@ export interface ApproveInboxInput {
   overrideReason?: string | null;
 }
 
+/**
+ * Jev approving through its autonomy lane (Inbox v2 §8). Only the Jev approval
+ * job builds this, after every approval check passed under the candidate's
+ * lifecycle lock, with a grant the posting cores verify. Everything else about
+ * the approval is the same code a person's goes through.
+ */
+export interface JevSystemApproval {
+  grant: JevApprovalGrant;
+  laneId: string;
+  confidence: number;
+  /** The rule snapshot the paper was checked against; null for live rules. */
+  ruleSnapshotId: string | null;
+  /** The admin opt-in the job read; maker-checker is re-read here. */
+  makerCheckerOptIn: boolean;
+}
+
 export const DUPLICATE_APPROVAL_BLOCKED_MESSAGE =
   "Resolve the blocking Possible Duplicate case before approving this transaction.";
+
+// Why a Bills-editor bill's Inbox item cannot be approved: one set of refusals, in the bill core.
+export {
+  BILL_ALREADY_ACCRUED_MESSAGE,
+  BILL_DELETED_MESSAGE,
+  BILL_PAID_MESSAGE,
+  BILL_VOIDED_MESSAGE,
+} from "@/lib/posting/bill-core";
 
 export type ApproveInboxResult =
   | {
       approvalOutcome: "approved";
       journalHeaderId: string;
       transactionNumber?: string;
+      /** The vendor bill this approval created or posted, when it was one. */
+      billId?: string;
       alreadyApproved: boolean;
     }
   | {
@@ -841,8 +878,16 @@ export type ApproveInboxResult =
 export async function approveInboxItem(
   ctx: InboxServiceContext,
   input: ApproveInboxInput,
+  options: { systemApproval?: JevSystemApproval } = {},
 ): Promise<ApproveInboxResult> {
-  const { db, orgId, userId, role } = ctx;
+  const { db, orgId, role } = ctx;
+  const systemApproval = options.systemApproval ?? null;
+  // Jev's rows name it in every free-text audit column; user FK columns
+  // (resolved_by) stay null rather than borrow a person (src/lib/jev-actor.ts).
+  const userId = systemApproval ? JEV_AUDIT_ACTOR_ID : ctx.userId;
+  const actor: PostingActor = systemApproval
+    ? { type: "system", key: "jev", grant: systemApproval.grant }
+    : { type: "user", userId };
   const lifecycle = await lockInboxCandidateLifecycle(db, orgId, input.inboxItemId);
   if (!lifecycle) throw new Error("Inbox item not found.");
   const [sourceRow] = lifecycle.item.sourceRecordId
@@ -873,7 +918,13 @@ export async function approveInboxItem(
       alreadyApproved: true,
     };
   }
-  if (row.item.state !== "ready_for_review") {
+  // A person approves a reviewed draft. Jev approves stage 2's draft as it
+  // stands (needs_information until a person saves it), and only once its
+  // lane checks found it complete.
+  const approvableStates = systemApproval
+    ? ["ready_for_review", "needs_information"]
+    : ["ready_for_review"];
+  if (!approvableStates.includes(row.item.state)) {
     throw new Error(`This item cannot be approved while it is ${row.item.state}.`);
   }
   if (
@@ -882,9 +933,19 @@ export async function approveInboxItem(
   ) {
     throw new Error("This Inbox item changed after you opened it. Refresh and review it again.");
   }
+  if (systemApproval && row.candidate.id !== systemApproval.grant.candidateId) {
+    throw new Error("This Jev approval was granted for a different paper.");
+  }
 
   const settings = await getAccountingSettings(db, orgId);
-  if (settings.requireDifferentApprover && row.item.submittedBy === userId) {
+  // Maker-checker is a human control: Jev approves under it only when an
+  // admin opted Jev in (spec §2). Re-read here, at the posting boundary.
+  if (systemApproval && settings.requireDifferentApprover && !systemApproval.makerCheckerOptIn) {
+    throw new Error(
+      "This organization requires a different approver, and Jev has not been opted in.",
+    );
+  }
+  if (!systemApproval && settings.requireDifferentApprover && row.item.submittedBy === userId) {
     const ownerOverride =
       role === "owner" && settings.allowOwnerOverride && Boolean(input.overrideReason?.trim());
     if (!ownerOverride) {
@@ -895,6 +956,18 @@ export async function approveInboxItem(
       );
     }
   }
+
+  // A Bills-editor bill can be approved, scheduled, paid, voided or deleted on
+  // the Bills page while its Inbox item is still pending. Accruing it here
+  // afterwards would double the payable and repoint the bill's
+  // journal_header_id, revive a voided bill, recreate a deleted one, or change
+  // a paid bill's amounts. All are refused (lockAccruableEditorBill, which the
+  // bill core runs again before it accrues); the item stays open for a person
+  // to reject.
+  const editorBill =
+    row.candidate.candidateType === "bill" && row.sourceRecordExternalId
+      ? await lockAccruableEditorBill(db, orgId, row.sourceRecordExternalId)
+      : null;
 
   const linkedCandidateSources = await db
     .select({
@@ -1049,7 +1122,7 @@ export async function approveInboxItem(
   const duplicateAlgorithmVersion = duplicateConfig.algorithmVersion ?? DUPLICATE_MATCHER_VERSION;
   if (candidateSourceIds.length > 0 && duplicateConfig.enabled && duplicateConfig.mode !== "off") {
     for (const sourceRecordId of candidateSourceIds) {
-      await runDuplicateMatchingForSource(ctx, sourceRecordId, "source_updated");
+      await runDuplicateMatchingForSource({ ...ctx, userId }, sourceRecordId, "source_updated");
     }
     const [unresolvedDuplicateCase] = await db
       .select({ id: sourceMatchCandidates.id })
@@ -1085,61 +1158,31 @@ export async function approveInboxItem(
       };
     }
   }
+  // Jev is held on ANY open duplicate case, as its lane predicate is: the
+  // matcher pass above can open a shadow or warning-impact case that does not
+  // block a person, and must not slip past a system approval either.
+  if (systemApproval) {
+    const openCase = await findOpenDuplicateCase(db, orgId, candidateSourceIds);
+    if (openCase) {
+      return {
+        approvalOutcome: "blocked",
+        reason: "possible_duplicate",
+        caseId: openCase.id,
+        message: DUPLICATE_APPROVAL_BLOCKED_MESSAGE,
+      };
+    }
+  }
 
-  const transactionNumber = await allocateJournalTransactionNumber(orgId, db);
-  const [header] = await db
-    .insert(journalHeaders)
-    .values({
-      organizationId: orgId,
-      transactionNumber,
-      idempotencyKey: `inbox:${row.item.id}:approve:${row.candidate.revision}`,
-      transactionDate: row.candidate.transactionDate,
-      transactionType: row.candidate
-        .transactionType as typeof journalHeaders.$inferInsert.transactionType,
-      source: journalSourceFor(row.source?.channel ?? "manual"),
-      memo: row.candidate.memo,
-      partyId: row.candidate.partyId,
-      referenceNumber: row.candidate.referenceNumber,
-      totalAmount: debits,
-      functionalCurrency: row.candidate.functionalCurrency,
-      transactionCurrency: row.candidate.originalCurrency,
-      exchangeRateId: row.candidate.exchangeRateId,
-      status: "posted",
-      postedAt: new Date(),
-      // The bill/invoice void paths and the AP/AR aging reports find journals
-      // EXCLUSIVELY through this pair. Without it, a bill approved here
-      // flipped to voided while its journal stayed posted forever, and never
-      // appeared in aging at all. Stamped only when the external id is
-      // uuid-shaped: source_document_id is a uuid column, and for bill
-      // candidates the id-as-externalId convention is already load-bearing at
-      // the bills.journalHeaderId update below.
-      ...sourceDocumentStampFor(row.candidate.candidateType, row.sourceRecordExternalId),
-      createdBy: userId,
-    })
-    .returning();
-  await db.insert(journalLines).values(
-    lines.map((line) => ({
-      journalHeaderId: header.id,
-      accountId: line.accountId!,
-      debit: line.functionalDebit,
-      credit: line.functionalCredit,
-      originalDebit: line.originalDebit,
-      originalCredit: line.originalCredit,
-      originalCurrency: line.originalCurrency,
-      exchangeRate: line.exchangeRate,
-      exchangeRateId: row.candidate.exchangeRateId,
-      lineDescription: line.lineDescription,
-      partyId: line.partyId,
-      departmentId: line.departmentId,
-      locationId: line.locationId,
-      sortOrder: line.sortOrder,
-    })),
-  );
-
+  // Evidence is read before posting because a new vendor bill carries it too.
+  // The origin source's own documents come first: the first document becomes
+  // the bill's viewer document.
   const sourceDocuments =
     candidateSourceIds.length > 0
       ? await db
-          .select({ documentId: sourceRecordDocuments.documentId })
+          .select({
+            documentId: sourceRecordDocuments.documentId,
+            sourceRecordId: sourceRecordDocuments.sourceRecordId,
+          })
           .from(sourceRecordDocuments)
           .where(
             and(
@@ -1147,6 +1190,7 @@ export async function approveInboxItem(
               inArray(sourceRecordDocuments.sourceRecordId, candidateSourceIds),
             ),
           )
+          .orderBy(sourceRecordDocuments.createdAt, sourceRecordDocuments.documentId)
       : [];
   const candidateDocuments = await db
     .select({ documentId: documentAttachments.documentId })
@@ -1160,17 +1204,126 @@ export async function approveInboxItem(
     );
   const documentIds = [
     ...new Set([
+      ...sourceDocuments
+        .filter(({ sourceRecordId }) => sourceRecordId === originSourceRecordId)
+        .map(({ documentId }) => documentId),
       ...sourceDocuments.map(({ documentId }) => documentId),
       ...candidateDocuments.map(({ documentId }) => documentId),
     ]),
   ];
+
+  const journal: PostTransactionDraft = {
+    idempotencyKey: `inbox:${row.item.id}:approve:${row.candidate.revision}`,
+    transactionDate: row.candidate.transactionDate,
+    transactionType: row.candidate.transactionType as PostTransactionDraft["transactionType"],
+    source: journalSourceFor(row.source?.channel ?? "manual"),
+    memo: row.candidate.memo,
+    partyId: row.candidate.partyId,
+    referenceNumber: row.candidate.referenceNumber,
+    functionalCurrency: row.candidate.functionalCurrency,
+    transactionCurrency: row.candidate.originalCurrency,
+    exchangeRateId: row.candidate.exchangeRateId,
+    lines: lines.map((line) => ({
+      accountId: line.accountId!,
+      debit: line.functionalDebit,
+      credit: line.functionalCredit,
+      originalDebit: line.originalDebit,
+      originalCredit: line.originalCredit,
+      originalCurrency: line.originalCurrency,
+      exchangeRate: line.exchangeRate,
+      lineDescription: line.lineDescription,
+      partyId: line.partyId,
+      departmentId: line.departmentId,
+      locationId: line.locationId,
+      sortOrder: line.sortOrder,
+    })),
+  };
+
+  // A Bills-editor bill already has its row (locked and checked above):
+  // approval accrues it through the bill core, which also brings the bill in line with the entry being posted
+  // (a reviewer may have corrected it here). Any other vendor bill whose entry
+  // accrues a payable gets its bill row now, through the same core, so it
+  // appears in Bills and in A/P aging. A vendor bill booked straight against
+  // cash never touched payables, so it posts as an ordinary journal: there is
+  // nothing left to pay.
+  const originEconomicEventClass =
+    candidateSources.find(({ id }) => id === originSourceRecordId)?.economicEventClass ?? null;
+  const createsBill =
+    editorBill === null &&
+    isVendorBillCandidate(row.candidate.candidateType, originEconomicEventClass) &&
+    (await touchesAccountsPayable(
+      db,
+      orgId,
+      journal.lines.map(({ accountId }) => accountId),
+    ));
+
+  let posted: PostedTransaction;
+  let billId: string | undefined;
+  if (editorBill) {
+    if (!row.candidate.partyId) {
+      throw new Error("Choose the vendor for this bill before approving it.");
+    }
+    const { partyId: _entryParty, ...accrual } = journal;
+    const accrued = await accrueReviewedBillCore(db, orgId, actor, {
+      billId: editorBill.id,
+      vendorId: row.candidate.partyId,
+      journal: accrual,
+      activityContext: {
+        source: "inbox",
+        inboxItemId: row.item.id,
+        candidateId: row.candidate.id,
+      },
+    });
+    posted = accrued.posted;
+    billId = accrued.bill.id;
+  } else if (createsBill) {
+    if (!row.candidate.partyId) {
+      throw new Error("Choose the vendor for this bill before approving it.");
+    }
+    // The core dates the accrual on billDate and parties it to vendorId, so
+    // the bill and its journal cannot disagree.
+    const created = await createBillCore(db, orgId, actor, {
+      vendorId: row.candidate.partyId,
+      billNumber: row.candidate.referenceNumber,
+      billDate: row.candidate.transactionDate,
+      // Nothing extracts a due date from the paper yet, so the bill is due on
+      // receipt until someone sets its terms on the bill.
+      dueDate: row.candidate.transactionDate,
+      memo: row.candidate.memo,
+      documentIds,
+      activityContext: {
+        source: "inbox",
+        inboxItemId: row.item.id,
+        candidateId: row.candidate.id,
+      },
+      accrual: { kind: "post", journal },
+    });
+    posted = created.posted!;
+    billId = created.bill.id;
+  } else {
+    // The bill/invoice void paths and the AP/AR aging reports find journals
+    // EXCLUSIVELY through the source-document pair. Without it, a bill
+    // approved here flipped to voided while its journal stayed posted
+    // forever, and never appeared in aging at all. Stamped only when the
+    // external id is uuid-shaped: source_document_id is a uuid column. (A
+    // Bills-editor bill is stamped by the bill core, above.)
+    posted = await postTransactionCore(db, orgId, actor, {
+      ...journal,
+      sourceDocument: sourceDocumentStampFor(
+        row.candidate.candidateType,
+        row.sourceRecordExternalId,
+      ),
+    });
+  }
+  const { journalHeaderId, transactionNumber } = posted;
+
   if (documentIds.length > 0) {
     await db.insert(documentAttachments).values(
       documentIds.map((documentId) => ({
         organizationId: orgId,
         documentId,
         linkableType: "journal_header",
-        linkableId: header.id,
+        linkableId: journalHeaderId,
       })),
     );
   }
@@ -1178,7 +1331,7 @@ export async function approveInboxItem(
     if (originSourceRecordId) {
       await db.insert(ledgerSourceLinks).values({
         organizationId: orgId,
-        journalHeaderId: header.id,
+        journalHeaderId,
         sourceRecordId: originSourceRecordId,
         relationship: "origin",
       });
@@ -1192,7 +1345,7 @@ export async function approveInboxItem(
         .values(
           supportingSourceIds.map((sourceRecordId) => ({
             organizationId: orgId,
-            journalHeaderId: header.id,
+            journalHeaderId,
             sourceRecordId,
             relationship: "supporting",
           })),
@@ -1200,34 +1353,33 @@ export async function approveInboxItem(
         .onConflictDoNothing();
     }
   }
-  if (row.candidate.candidateType === "bill" && row.sourceRecordExternalId) {
-    await db
-      .update(bills)
-      .set({
-        status: "awaiting_payment",
-        journalHeaderId: header.id,
-        approverId: userId,
-        approvedAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(and(eq(bills.id, row.sourceRecordExternalId), eq(bills.organizationId, orgId)));
-  }
 
   await db
     .update(transactionCandidates)
     .set({
       status: "posted",
-      postedJournalHeaderId: header.id,
+      postedJournalHeaderId: journalHeaderId,
       updatedAt: new Date(),
     })
     .where(eq(transactionCandidates.id, row.candidate.id));
+  // What Jev's approval rests on, for every audit row it writes.
+  const jevApproval = systemApproval
+    ? {
+        actor: "jev",
+        laneId: systemApproval.laneId,
+        confidence: systemApproval.confidence,
+        ruleSnapshotId: systemApproval.ruleSnapshotId,
+      }
+    : null;
   await db
     .update(inboxItems)
     .set({
       state: "approved",
-      resolvedBy: userId,
+      resolvedBy: systemApproval ? null : userId,
       resolvedAt: new Date(),
-      resolutionNote: input.overrideReason?.trim() || null,
+      resolutionNote: systemApproval
+        ? `Approved by Jev (lane ${systemApproval.laneId}).`
+        : input.overrideReason?.trim() || null,
       lockVersion: row.item.lockVersion + 1,
       updatedAt: new Date(),
     })
@@ -1236,12 +1388,14 @@ export async function approveInboxItem(
     organizationId: orgId,
     inboxItemId: row.item.id,
     decision: input.overrideReason?.trim() ? "owner_override_approved" : "approved",
-    actorId: userId,
+    ...reviewDecisionActor(actor),
     candidateRevision: row.candidate.revision,
-    reason: input.overrideReason?.trim() || null,
+    reason: systemApproval
+      ? `Jev approval lane ${systemApproval.laneId}`
+      : input.overrideReason?.trim() || null,
     beforeState: row.item.state,
     afterState: "approved",
-    journalHeaderId: header.id,
+    journalHeaderId,
   });
   await db.insert(workflowEvents).values({
     organizationId: orgId,
@@ -1249,27 +1403,70 @@ export async function approveInboxItem(
     entityType: "inbox_item",
     entityId: row.item.id,
     action: "approved",
-    actorType: "user",
+    actorType: systemApproval ? "system" : "user",
     actorId: userId,
     idempotencyKey: `inbox:${row.item.id}:approved:${row.candidate.revision}`,
-    data: { journalHeaderId: header.id },
+    data: {
+      journalHeaderId,
+      ...(billId ? { billId } : {}),
+      ...(jevApproval ? { jevApproval } : {}),
+    },
   });
   await insertActivityLog(
     {
       orgId,
       entityType: "transaction",
-      entityId: header.id,
+      entityId: journalHeaderId,
       action: "approved_from_inbox",
       actorId: userId,
-      changes: { inboxItemId: row.item.id, transactionNumber },
+      changes: {
+        inboxItemId: row.item.id,
+        transactionNumber,
+        ...(billId ? { billId } : {}),
+        ...(jevApproval ? { jevApproval } : {}),
+      },
     },
     db,
   );
+  // A person approving a paper Jev proposed labels that proposal for its lane.
+  // Jev's own approval is not a label: only a person's decision is.
+  if (!systemApproval) {
+    await recordJevLaneFeedback(db, {
+      orgId,
+      candidateId: row.candidate.id,
+      inboxItemId: row.item.id,
+      action: "approve",
+      userId,
+      decided: entrySnapshotOf(row.candidate, lines),
+    });
+  }
+
+  // A memory's answer approved as-is is an accepted hit; approved with a
+  // different answer, an undo (src/lib/inbox/memory/tracking.ts). Jev
+  // approving a remembered answer confirms it as the system actor.
+  await noteApprovalOfMemoryAnswer(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    actorType: systemApproval ? "system" : "user",
+    actorId: userId,
+    settled: {
+      docKind:
+        candidateSources.find(({ id }) => id === row.candidate.sourceRecordId)
+          ?.economicEventClass ?? originEconomicEventClass,
+      partyId: row.candidate.partyId,
+      lines: lines.map((line) => ({
+        side: line.originalDebit !== null ? ("debit" as const) : ("credit" as const),
+        accountId: line.accountId,
+      })),
+    },
+  });
 
   return {
     approvalOutcome: "approved",
-    journalHeaderId: header.id,
+    journalHeaderId,
     transactionNumber,
+    ...(billId ? { billId } : {}),
     alreadyApproved: false,
   };
 }
@@ -1491,7 +1688,7 @@ export async function rejectInboxItem(
     organizationId: ctx.orgId,
     inboxItemId: item.id,
     decision: "rejected",
-    actorId: ctx.userId,
+    ...reviewDecisionActor({ type: "user", userId: ctx.userId }),
     candidateRevision: item.candidateRevision,
     reason,
     beforeState: item.state,
@@ -1530,5 +1727,38 @@ export async function rejectInboxItem(
     },
     ctx.db,
   );
-  return { id: item.id, state: "rejected" as const };
+  await recordJevLaneFeedback(ctx.db, {
+    orgId: ctx.orgId,
+    candidateId: candidate.id,
+    inboxItemId: item.id,
+    action: "reject",
+    userId: ctx.userId,
+    note: reason,
+  });
+  // A bill the Bills editor submitted for this review is rejected with it
+  // (src/lib/posting/bill-inbox-link.ts): voided while still unbooked.
+  let billVoided = false;
+  if (candidate.candidateType === "bill" && item.sourceRecordId) {
+    const [billSource] = await ctx.db
+      .select({ externalId: sourceRecords.externalId })
+      .from(sourceRecords)
+      .innerJoin(integrationSources, eq(sourceRecords.sourceId, integrationSources.id))
+      .where(
+        and(
+          eq(sourceRecords.organizationId, ctx.orgId),
+          eq(sourceRecords.id, item.sourceRecordId),
+          eq(integrationSources.provider, "internal_bills"),
+        ),
+      )
+      .limit(1);
+    if (billSource?.externalId) {
+      billVoided = await voidUnbookedEditorBill(ctx.db, {
+        orgId: ctx.orgId,
+        billId: billSource.externalId,
+        actorId: ctx.userId,
+        reason,
+      });
+    }
+  }
+  return { id: item.id, state: "rejected" as const, billVoided };
 }

@@ -11,7 +11,11 @@
 //   2. A SETTINGS WRITE CANNOT WIDEN OCR EGRESS. Every taskChains entry for a
 //      DOCUMENT_TASK is run through enforceOcrPolicy BEFORE it is persisted,
 //      so a document task cannot be pointed off Gemini even by a direct API
-//      call that bypasses the UI.
+//      call that bypasses the UI. Jev hops are likewise stripped from every
+//      task outside JEV_TASKS before persistence.
+//
+// The Jev opt-in is "jev" on providerAllowlist: the same admin-only write,
+// audited like every other allowlist change. Off by default.
 //
 // Every mutation lands an activity_logs row with a field-level diff.
 // ============================================================================
@@ -30,7 +34,14 @@ import { maskGeminiKeys, maskSecret } from "../mask-secret";
 import { getOrganizationSecrets } from "../org-secrets";
 import { insertActivityLog } from "../insert-activity-log";
 import { createLogger } from "../logger";
-import { DEFAULT_CHAINS, DOCUMENT_TASKS, enforceOcrPolicy, type ChainEntry } from "./chains";
+import {
+  DEFAULT_CHAINS,
+  DOCUMENT_TASKS,
+  applyJevPolicy,
+  enforceJevTaskScope,
+  enforceOcrPolicy,
+  type ChainEntry,
+} from "./chains";
 import { invalidateOrgAiSettings, isProviderAllowed, type OrgAiSettings } from "./settings";
 import {
   AUTONOMY_ALLOWED_KINDS,
@@ -45,7 +56,7 @@ import type { AITaskCategory } from "../ai-models";
 
 const logger = createLogger("ai.org-config");
 
-export const AI_PROVIDERS = ["gemini", "anthropic", "openai", "openai_compatible"] as const;
+export const AI_PROVIDERS = ["gemini", "anthropic", "openai", "openai_compatible", "jev"] as const;
 
 /** Every shipped task, in a stable display order (document tasks first). */
 export const AI_TASK_NAMES = Object.keys(DEFAULT_CHAINS) as AiTaskName[];
@@ -380,7 +391,8 @@ function toOrgAiSettings(row: Awaited<ReturnType<typeof readSettingsRow>>): OrgA
  * show what will actually run rather than only what was overridden.
  *
  * Mirrors router.ts precedence minus the async credential-presence check: the
- * override (already OCR-policy-clean at rest) else DEFAULT_CHAINS, with each
+ * override (already OCR-policy-clean at rest) else DEFAULT_CHAINS, with Jev
+ * placed first on the classification tasks when the org opted in, and each
  * hop flagged against the provider allowlist.
  */
 export async function getOrgAiConfig(db: DbExecutor, orgId: string): Promise<OrgAiConfigView> {
@@ -396,9 +408,14 @@ export async function getOrgAiConfig(db: DbExecutor, orgId: string): Promise<Org
     });
   }
 
+  const jevOptedIn = isProviderAllowed(settings, "jev");
   const effectiveChains: EffectiveChainView[] = AI_TASK_NAMES.map((task) => {
     const override = parseChain(settings.taskChains?.[task]);
-    const chain = enforceOcrPolicy(task, override ?? DEFAULT_CHAINS[task]);
+    // Same order as the router: Jev placement, then the OCR clamp.
+    const chain = enforceOcrPolicy(
+      task,
+      applyJevPolicy(task, override ?? DEFAULT_CHAINS[task], jevOptedIn),
+    );
     return {
       task,
       category: AI_TASK_CATEGORY[task],
@@ -468,8 +485,9 @@ function sanitizeTaskChains(value: unknown): Record<string, ChainEntry[]> | null
     const parsed = parseChain(raw);
     if (!parsed) continue;
     // THE choke point: a document task's chain is filtered to Gemini here, at
-    // rest, so no later read can resurrect a non-Gemini hop.
-    const policed = enforceOcrPolicy(task, parsed);
+    // rest, so no later read can resurrect a non-Gemini hop. Jev hops outside
+    // the classification tasks are dropped here too.
+    const policed = enforceOcrPolicy(task, enforceJevTaskScope(task, parsed));
     if (policed.length === 0) {
       // Every hop was stripped (e.g. an all-Anthropic OCR chain). Fall back to
       // the Gemini default rather than persisting an unusable empty chain.

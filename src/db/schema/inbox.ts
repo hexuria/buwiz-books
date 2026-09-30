@@ -28,6 +28,7 @@ import { parties } from "./parties";
 import { dimensions } from "./dimensions";
 import { documents } from "./documents";
 import { journalHeaders } from "./journals";
+import { routines } from "./routines";
 
 export const organizationAccountingSettings = pgTable(
   "organization_accounting_settings",
@@ -289,11 +290,19 @@ export const ingestionEvents = pgTable(
     occurredAt: timestamp("occurred_at", { withTimezone: true }),
     receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
     processedAt: timestamp("processed_at", { withTimezone: true }),
+    // The routine that received this event (Inbox v2 §3). Null for events
+    // recorded before routines existed and for non-routine intake paths.
+    routineId: uuid("routine_id").references(() => routines.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("ingestion_events_org_provider_event_unique")
       .on(table.organizationId, table.provider, table.providerEventId)
       .where(sql`${table.providerEventId} is not null`),
+    // Routine-level delivery dedupe: one event id per routine. A suppressed
+    // duplicate is logged as a workflow event, never dropped silently.
+    uniqueIndex("ingestion_events_org_routine_event_unique")
+      .on(table.organizationId, table.routineId, table.providerEventId)
+      .where(sql`${table.routineId} is not null and ${table.providerEventId} is not null`),
     index("ingestion_events_org_status_received_idx").on(
       table.organizationId,
       table.status,
@@ -326,6 +335,10 @@ export const processingJobs = pgTable(
     completedAt: timestamp("completed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    // The routine whose run produced this job (Inbox v2 §3). Handlers load
+    // the routine inside the job's org context and require it to belong
+    // there; the payload alone never decides which books a job touches.
+    routineId: uuid("routine_id").references(() => routines.id, { onDelete: "set null" }),
   },
   (table) => [
     uniqueIndex("processing_jobs_org_dedupe_unique")
@@ -333,6 +346,7 @@ export const processingJobs = pgTable(
       .where(sql`${table.dedupeKey} is not null and ${table.status} in ('queued', 'running')`),
     index("processing_jobs_claim_idx").on(table.status, table.runAt, table.lockedUntil),
     index("processing_jobs_org_status_idx").on(table.organizationId, table.status),
+    index("processing_jobs_routine_idx").on(table.routineId),
   ],
 );
 
@@ -758,9 +772,12 @@ export const reviewDecisions = pgTable(
       .references(() => inboxItems.id, { onDelete: "cascade" })
       .notNull(),
     decision: varchar("decision", { length: 32 }).notNull(),
-    actorId: text("actor_id")
-      .references(() => user.id)
-      .notNull(),
+    // Who decided (migration 0053). A person is `user` + actor_id; a system
+    // actor (Jev, through an autonomy lane) is `system` + actor_key and has no
+    // user id to borrow. The CHECKs below keep each kind attributable.
+    actorType: varchar("actor_type", { length: 16 }).default("user").notNull(),
+    actorId: text("actor_id").references(() => user.id),
+    actorKey: varchar("actor_key", { length: 64 }),
     candidateRevision: integer("candidate_revision").notNull(),
     reason: text("reason"),
     beforeState: varchar("before_state", { length: 32 }).notNull(),
@@ -768,7 +785,20 @@ export const reviewDecisions = pgTable(
     journalHeaderId: uuid("journal_header_id").references(() => journalHeaders.id),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   },
-  (table) => [index("review_decisions_inbox_created_idx").on(table.inboxItemId, table.createdAt)],
+  (table) => [
+    index("review_decisions_inbox_created_idx").on(table.inboxItemId, table.createdAt),
+    // Declared here as well as in 0053: drizzle-kit push drops CHECKs the
+    // schema does not declare, so a migration-only CHECK would not survive it.
+    check("review_decisions_actor_type_check", sql`${table.actorType} in ('user', 'system')`),
+    check(
+      "review_decisions_user_actor_check",
+      sql`${table.actorType} <> 'user' or ${table.actorId} is not null`,
+    ),
+    check(
+      "review_decisions_system_actor_check",
+      sql`${table.actorType} <> 'system' or ${table.actorKey} is not null`,
+    ),
+  ],
 );
 
 export const workflowEvents = pgTable(

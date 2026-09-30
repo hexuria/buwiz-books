@@ -13,8 +13,9 @@ import type { DbExecutor } from "@/db";
  * from every RLS policy list. Its rows were historically inserted only by the raw SQL in
  * drizzle/0019_inbox_review_foundation.sql, which `drizzle-kit` never runs (0019 is not in
  * drizzle/meta/_journal.json) and which only the since-removed `db:dedup:migrate` applied.
- * Every other path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so
- * `/review-agents` rendered "No review agents are configured." on a healthy database.
+ * Every other path — `db:fresh`, `make migrate`, CI deploy — created the table empty, so the
+ * review-rule screen (then `/review-agents`, now Settings → Review Rules) rendered "No review
+ * agents are configured." on a healthy database.
  *
  * This module is what the seeder, the engine, and the server functions all read.
  *
@@ -219,6 +220,29 @@ export const REVIEW_RULE_CATALOG: readonly ReviewRuleSeed[] = [
     defaultConfig: {},
     description:
       "Raised when an inbound email arrives without the attachments needed to book it. Supply the missing evidence or document an exception.",
+  },
+  {
+    // Raised by inbox stage 2 and by corrections (src/lib/inbox/payment-details-check.ts).
+    key: "party_payment_details_changed",
+    name: "Party Payment Details Changed",
+    group: "system",
+    evaluatorKey: "party_payment_details_changed",
+    formulaVersion: 1,
+    defaultConfig: {},
+    description:
+      "Raised when a document asks for payment to bank details that differ from the ones on file for a known payee. Confirm the change through a trusted contact, then resolve it with a note.",
+  },
+  {
+    // Raised by inbox stage 2 (src/lib/inbox/memory/select.ts): two remembered
+    // answers of the same specificity match one paper and disagree.
+    key: "memory_conflict",
+    name: "Memory Conflict",
+    group: "system",
+    evaluatorKey: "memory_conflict",
+    formulaVersion: 1,
+    defaultConfig: {},
+    description:
+      "Raised when two remembered answers of the same specificity match a paper but disagree, so neither is applied. Turn one of them off in Settings, then choose the answer for this paper.",
   },
 ];
 

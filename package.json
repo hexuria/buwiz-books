@@ -60,6 +60,7 @@
     "prepare": "husky",
     "test:evals": "AI_EVALS_MODE=recorded bun run vitest run --config vitest.evals.config.ts",
     "test:evals:live": "AI_EVALS_MODE=live bun run vitest run --config vitest.evals.config.ts",
+    "eval:scorecard": "bun run scripts/eval-scorecard.ts",
     "db:tax:foundation": "bun run scripts/apply-tax-foundation.ts",
     "db:enterprise:test-sql": "bun run scripts/apply-enterprise-test-sql.ts",
     "db:seed:tax-reference": "bun run scripts/seed-tax-reference.ts",

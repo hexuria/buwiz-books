@@ -6,8 +6,19 @@
 // tests/evals/fixtures/recorded.ts; tasks with no recorded case get a minimal
 // valid object. Keep this file in src/ — the mock runtime is a serving path,
 // not a test helper, and must not import from tests/.
+//
+// Jev answers the tasks it serves (JEV_TASKS) from its own bodies, copied
+// from the Jev cases in the recorded corpus, so a mock run shows which hop
+// answered. Every other provider label gets the shared bodies.
+//
+// categorize_lines and match_party are answered against a CLOSED list built
+// per request, so a canned body can only be valid for every request if it
+// picks the one value always in the enum: "none" and "new". Mock mode
+// therefore never categorizes a line or links a party — the item lands in
+// "Needs you", which is the deterministic outcome E2E runs want.
 // ============================================================================
 
+import type { AiProvider } from "../errors";
 import type { AiTaskName } from "../types";
 
 const TRANSACTION_PARSE_BODY = {
@@ -136,6 +147,10 @@ const MOCK_RESPONSE_BODIES = {
     party: "Staples",
     reference: "R-1001",
     description: "Office supplies",
+    partyEmail: "",
+    partyTaxId: "",
+    payeeBankAccountNumber: "",
+    payeeBankRoutingNumber: "",
   },
   ingest_triage: {
     docKind: "statement",
@@ -219,6 +234,22 @@ const MOCK_RESPONSE_BODIES = {
     ],
     summary: "Pointed both defaults at the existing catch-all accounts.",
   },
+  categorize_lines: {
+    lines: [
+      {
+        lineIndex: 0,
+        accountCode: "none",
+        confidence: 0,
+        reason: "Mock mode never picks an account.",
+        suggestedNewCategory: "",
+      },
+    ],
+  },
+  match_party: {
+    choice: "new",
+    confidence: 0,
+    reason: "Mock mode never links a party.",
+  },
 } as const satisfies Record<AiTaskName, unknown>;
 
 export const MOCK_RESPONSES: Record<AiTaskName, string> = {
@@ -237,10 +268,49 @@ export const MOCK_RESPONSES: Record<AiTaskName, string> = {
   reflection: JSON.stringify(MOCK_RESPONSE_BODIES.reflection),
   coa_draft: JSON.stringify(MOCK_RESPONSE_BODIES.coa_draft),
   category_mapping_suggest: JSON.stringify(MOCK_RESPONSE_BODIES.category_mapping_suggest),
+  categorize_lines: JSON.stringify(MOCK_RESPONSE_BODIES.categorize_lines),
+  match_party: JSON.stringify(MOCK_RESPONSE_BODIES.match_party),
 };
 
-export function getMockResponseText(task: AiTaskName): string {
-  const text = MOCK_RESPONSES[task];
+/** Confidence stays on the pinned 0..1 scale, as every Jev schema requires. */
+const JEV_MOCK_RESPONSE_BODIES = {
+  ingest_triage: {
+    docKind: "bill",
+    confidence: 0.93,
+    reasoning: "Filename carries a vendor bill number",
+  },
+  classify_document: {
+    documentType: "invoice",
+    confidence: 0.95,
+    reasoning: "INVOICE header with invoice number and amount due",
+  },
+  categorize_lines: {
+    lines: [
+      {
+        lineIndex: 0,
+        accountCode: "none",
+        confidence: 0.9,
+        reason: "No listed account covers green coffee beans",
+        suggestedNewCategory: "Green Coffee Purchases",
+      },
+    ],
+  },
+  match_party: {
+    choice: "new",
+    confidence: 0.88,
+    reason: "Blue Bottle Roasters is a different business from Blue Ridge Supply",
+  },
+} as const;
+
+export const JEV_MOCK_RESPONSES: Partial<Record<AiTaskName, string>> = {
+  ingest_triage: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.ingest_triage),
+  classify_document: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.classify_document),
+  categorize_lines: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.categorize_lines),
+  match_party: JSON.stringify(JEV_MOCK_RESPONSE_BODIES.match_party),
+};
+
+export function getMockResponseText(task: AiTaskName, provider?: AiProvider): string {
+  const text = (provider === "jev" ? JEV_MOCK_RESPONSES[task] : undefined) ?? MOCK_RESPONSES[task];
   if (!text) {
     throw new Error(`No mock fixture for AI task "${task}"`);
   }

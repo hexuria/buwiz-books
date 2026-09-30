@@ -43,6 +43,23 @@ try {
     "0050_year_state_opening_balance.sql",
     "0051_void_rewrite_guard.sql",
     "0052_posted_journal_needs_lines.sql",
+    "0053_review_decision_actor.sql",
+    // Inbox v2 routines. Alters processing_jobs and ingestion_events, which
+    // exist long before this runs, and creates `routines` itself so push
+    // finds nothing left to prompt about.
+    "0054_routines.sql",
+    // Inbox v2 rule snapshots. Creates `rule_snapshots` before push can
+    // prompt about it, adds the routine pin foreign keys and shadow column,
+    // and installs the immutability trigger (the part push cannot create).
+    "0055_rule_snapshots.sql",
+    "0058_party_name_trigram.sql",
+    // Inbox v2 memory (step 10). Creates classification_memories itself, so
+    // push finds nothing left to prompt about.
+    "0059_classification_memories.sql",
+    // Inbox v2 Jev approval lanes. Creates `ai_autonomy_lanes` before push can
+    // prompt about it and adds the lane columns to ai_run_feedback and
+    // organization_ai_settings, which exist long before this runs.
+    "0060_ai_autonomy_lanes.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

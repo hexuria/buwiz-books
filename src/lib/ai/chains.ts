@@ -15,6 +15,11 @@
 //     financial documents to a new vendor. Text tasks — which ARE redactable
 //     — may escalate to Anthropic/OpenAI. `ocrOnlyGemini` is asserted by a
 //     test, not just documented.
+//
+// Jev (TypeSafe AI) is NOT in DEFAULT_CHAINS. It is an opt-in data processor
+// that applyJevPolicy places first for the redacted-text classification tasks
+// in JEV_TASKS only, so an org that has not opted in resolves exactly these
+// chains.
 // ============================================================================
 
 import type { AiTaskName } from "./types";
@@ -116,6 +121,18 @@ export const DEFAULT_CHAINS: Record<AiTaskName, ChainEntry[]> = {
     { provider: "gemini", model: GEMINI_TEXT },
     { provider: "anthropic", model: CLAUDE_TEXT },
   ],
+  // Inbox stage 2 and entity matching: a pick from a CLOSED list the caller
+  // builds per request (the org's own leaf accounts; five look-alike parties).
+  // Cheap classification like the two tasks above, and every answer is
+  // re-checked server-side, so it stays on Gemini with no new egress.
+  categorize_lines: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
+  match_party: [
+    { provider: "gemini", model: GEMINI_TEXT_LITE },
+    { provider: "gemini", model: GEMINI_TEXT },
+  ],
 };
 
 export class OcrEgressPolicyError extends Error {
@@ -142,4 +159,63 @@ export function assertOcrPolicy(task: AiTaskName, chain: ChainEntry[]): void {
   if (!DOCUMENT_TASKS.has(task)) return;
   const offender = chain.find((hop) => hop.provider !== "gemini");
   if (offender) throw new OcrEgressPolicyError(task, offender.provider);
+}
+
+// ── Jev (TypeSafe AI) ────────────────────────────────────────────────────────
+//
+// Jev is a cheap "system one" classifier and a NEW data processor. An org
+// opts in by putting "jev" on organization_ai_settings.provider_allowlist
+// (absent ⇒ Gemini only, so the default is off). Jev reads redacted text and
+// never document bytes: no DOCUMENT_TASK is in JEV_TASKS, and the OCR policy
+// runs after Jev placement in both the router and the settings view.
+
+/**
+ * The only tasks Jev may serve: redacted-text classification. Stage 1 picks
+ * the document kind (ingest_triage, classify_document); stage 2 picks each
+ * line's account from the org's closed code list (categorize_lines) and the
+ * counterparty from five look-alikes or "new" (match_party). None of them
+ * sends document bytes.
+ */
+export const JEV_TASKS: ReadonlySet<AiTaskName> = new Set<AiTaskName>([
+  "ingest_triage",
+  "classify_document",
+  "categorize_lines",
+  "match_party",
+]);
+
+/** ASSUMPTION A7 in adapters/jev.ts: model id unverified with TypeSafe AI. */
+export const JEV_MODEL = "jev-1";
+
+/**
+ * Drop every Jev hop from a task Jev does not serve. Jev is never a fallback
+ * for other text tasks, whatever an org chain override says. Returns the
+ * input array untouched when there is nothing to drop.
+ */
+export function enforceJevTaskScope(task: AiTaskName, chain: ChainEntry[]): ChainEntry[] {
+  if (JEV_TASKS.has(task) || !chain.some((hop) => hop.provider === "jev")) return chain;
+  return chain.filter((hop) => hop.provider !== "jev");
+}
+
+/**
+ * Place Jev in a resolved chain.
+ *
+ *  • Outside JEV_TASKS every jev hop is dropped (enforceJevTaskScope).
+ *  • Opted in, on a JEV_TASK: Jev becomes the FIRST hop and the configured
+ *    chain (Gemini by default) is the fallback, unless the chain already
+ *    names a jev hop, in which case an explicit override keeps its placement.
+ *  • Not opted in: the chain is returned as is. The allowlist filter then
+ *    drops any jev hop an override named, so no Jev egress happens without
+ *    the opt-in, and a chain without Jev hops is returned unchanged.
+ *
+ * Hop objects pass through by reference so callers can report what dropped.
+ */
+export function applyJevPolicy(
+  task: AiTaskName,
+  chain: ChainEntry[],
+  jevOptedIn: boolean,
+): ChainEntry[] {
+  const scoped = enforceJevTaskScope(task, chain);
+  if (!jevOptedIn || !JEV_TASKS.has(task)) return scoped;
+  if (scoped.some((hop) => hop.provider === "jev")) return scoped;
+  return [{ provider: "jev", model: JEV_MODEL }, ...scoped];
 }

@@ -76,8 +76,9 @@ export const classifyDocument = createServerFn({ method: "POST" })
           // documentType directly anymore. A confident, non-"other" guess
           // becomes a document_type proposal a human approves (the applier
           // keeps the only-if-still-"other" race guard); below threshold,
-          // nothing happens at all.
-          const confidence01 = normalizeConfidence(result.confidence);
+          // nothing happens at all. The output schema pins confidence to 0..1
+          // (Jev and Gemini alike), so a bare 1 reads as certain, not 1%.
+          const confidence01 = normalizeConfidence(result.confidence, { scaleHint: "unit" });
           const CONFIDENCE_THRESHOLD = 0.7;
           const proposable =
             result.documentType !== "other" && confidence01 >= CONFIDENCE_THRESHOLD;

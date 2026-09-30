@@ -1,0 +1,120 @@
+{
+  "label": "Golden pile rules: catalog defaults; department and location rules off",
+  "snapshot": [
+    {
+      "ruleKey": "low_confidence_category",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {
+        "threshold": 0.8
+      },
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "material_asset",
+      "enabled": true,
+      "impact": "warning",
+      "config": {
+        "totalAssetPercent": 0.5
+      },
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "material_expense",
+      "enabled": true,
+      "impact": "warning",
+      "config": {
+        "annualizedExpensePercent": 1
+      },
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_customer",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_department",
+      "enabled": false,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_invoice",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_location",
+      "enabled": false,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_receipt",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {
+        "threshold": 75,
+        "currency": "USD"
+      },
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "missing_vendor",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "non_zero_clearing",
+      "enabled": true,
+      "impact": "warning",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "possible_duplicate",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {
+        "mode": "enforce",
+        "matchWindowDays": 3,
+        "blockingScore": 70,
+        "shadowScore": 50,
+        "algorithmVersion": 1
+      },
+      "formulaVersion": 2
+    },
+    {
+      "ruleKey": "transaction_in_parent_category",
+      "enabled": true,
+      "impact": "warning",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "uncategorized",
+      "enabled": true,
+      "impact": "blocking",
+      "config": {},
+      "formulaVersion": 1
+    },
+    {
+      "ruleKey": "unusual_spend",
+      "enabled": true,
+      "impact": "warning",
+      "config": {
+        "standardDeviations": 3
+      },
+      "formulaVersion": 1
+    }
+  ]
+}

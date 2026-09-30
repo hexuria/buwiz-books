@@ -1,4 +1,4 @@
-import { and, eq, inArray, ne } from "drizzle-orm";
+import { and, asc, eq, inArray, notInArray } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { accounts } from "@/db/schema/accounts";
 import { dimensions } from "@/db/schema/dimensions";
@@ -7,8 +7,6 @@ import {
   inboxItems,
   organizationAccountingSettings,
   reviewFindings,
-  reviewRuleConfigs,
-  reviewRuleDefinitions,
   sourceRecordDocuments,
   sourceRecords,
   transactionCandidateLines,
@@ -17,6 +15,7 @@ import {
   workflowEvents,
 } from "@/db/schema/inbox";
 import { parties } from "@/db/schema/parties";
+import { mappedAccountFamilyIds } from "@/lib/coa/resolve-mapped-account";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import {
   DUPLICATE_MATCHER_VERSION,
@@ -40,8 +39,39 @@ import {
   parseMoneyToScaled,
   sumMoney,
 } from "./money";
-import { evaluateBookRules, type BookRuleAccount } from "./rules";
+import type { BookRuleAccount } from "./rules";
+import { evaluateCandidateRules, withRuleSetProvenance, type CandidateRuleInput } from "./rule-set";
+import { recordShadowRuleEvaluation, resolveCandidateRuleSets } from "./rule-snapshots";
 import type { CandidateLineInput, InboxServiceContext } from "./types";
+import { enqueueCandidateClassification } from "./candidate-classification-job";
+import { collectDocumentFacts, loadCandidateDocuments } from "./candidate-document-facts";
+import { noteCorrectionOfMemoryAnswer, supersedeMemoryApplication } from "./memory/tracking";
+import {
+  PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
+  raisePaymentDetailsFindingIfChanged,
+} from "./payment-details-check";
+import { recordJevLaneFeedback } from "./jev-approval/feedback";
+
+/**
+ * Lines the system wrote and a reviewer never touched: the unselected
+ * placeholders enrichment creates, and the lines stage 2 classified from them
+ * (src/lib/inbox/candidate-classification.ts) — by a model or by a memory.
+ * New facts may replace these; any other line is a reviewer's and is never
+ * overwritten.
+ */
+function isSystemGeneratedLine(line: {
+  accountId: string | null;
+  predictionEvidence: Record<string, unknown> | null;
+}): boolean {
+  const source = line.predictionEvidence?.source;
+  if (source === "inbox_classification" || source === "memory") return true;
+  return line.accountId === null && line.predictionEvidence?.accountSelection === "not_inferred";
+}
+
+/** How a person's correction settles the draft, for the memory undo check. */
+function settledSide(line: { originalDebit: string | null }): "debit" | "credit" {
+  return line.originalDebit !== null ? "debit" : "credit";
+}
 
 export interface CandidateCorrectionLineInput {
   accountId: string;
@@ -50,6 +80,11 @@ export interface CandidateCorrectionLineInput {
   lineDescription?: string | null;
   departmentId?: string | null;
   locationId?: string | null;
+  /**
+   * The line's counterparty. `null` clears it. Omitted, the line keeps the party it should have:
+   * see resolveCorrectionLinePartyIds.
+   */
+  partyId?: string | null;
 }
 
 export interface CorrectInboxCandidateInput {
@@ -75,6 +110,72 @@ export function isCandidateEnrichmentFactComplete(fact: DocumentSourceFacts): bo
     fact.direction !== "unknown" &&
     fact.economicEventClass !== "other"
   );
+}
+
+/**
+ * The counterparty each corrected line carries. A correction replaces every line, and until now
+ * wrote none of their parties back, so the vendor fell off a bill's payable line (and any per-line
+ * party off a journal) the moment a reviewer saved an edit.
+ *
+ * An explicit `partyId` (null included) wins. Otherwise a payable or receivable line takes the
+ * entry's party — a payable is owed to the bill's vendor, which is how the Bills editor writes it —
+ * and any other line keeps the party of the line it replaces: the unused previous line on the same
+ * account and side. A line with no such predecessor has no party.
+ */
+export function resolveCorrectionLinePartyIds(
+  lines: ReadonlyArray<{
+    accountId: string;
+    originalDebit: string | null;
+    partyId?: string | null;
+  }>,
+  previousLines: ReadonlyArray<{
+    accountId: string | null;
+    originalDebit: string | null;
+    partyId: string | null;
+  }>,
+  context: { entryPartyId: string | null; counterpartyAccountIds: ReadonlySet<string> },
+): Array<string | null> {
+  const unused = previousLines.map((line) => ({ line, used: false }));
+  return lines.map((line) => {
+    if (line.partyId !== undefined) return line.partyId;
+    if (context.counterpartyAccountIds.has(line.accountId)) return context.entryPartyId;
+    const isDebit = line.originalDebit !== null;
+    const predecessor = unused.find(
+      (entry) =>
+        !entry.used &&
+        entry.line.accountId === line.accountId &&
+        (entry.line.originalDebit !== null) === isDebit,
+    );
+    if (!predecessor) return null;
+    predecessor.used = true;
+    return predecessor.line.partyId;
+  });
+}
+
+/**
+ * Payable and receivable accounts, by the aging reports' definition: the mapped A/P and A/R
+ * accounts with everything under them, plus any account with either subtype. Shared with inbox
+ * stage 2, which writes a remembered answer's lines the way a correction writes them.
+ */
+export async function counterpartyAccountIds(
+  db: DbExecutor,
+  orgId: string,
+  orgAccounts: ReadonlyArray<{ id: string; subtype: string | null }>,
+): Promise<Set<string>> {
+  const [payables, receivables] = await Promise.all([
+    mappedAccountFamilyIds(db, orgId, "bill", "accounts_payable"),
+    mappedAccountFamilyIds(db, orgId, "invoice", "accounts_receivable"),
+  ]);
+  return new Set([
+    ...payables,
+    ...receivables,
+    ...orgAccounts
+      .filter(
+        (account) =>
+          account.subtype === "accounts_payable" || account.subtype === "account_receivable",
+      )
+      .map((account) => account.id),
+  ]);
 }
 
 type NormalizedCorrectionLine = CandidateCorrectionLineInput & {
@@ -239,11 +340,7 @@ export async function enrichCandidateFromExtractedFacts(
   const referenceNumber = facts.normalizedReference ?? row.candidate.referenceNumber;
   const memo = facts.description.trim() || row.candidate.memo || "Extracted transaction";
   const hasSystemPlaceholderLines =
-    existingLines.length === 2 &&
-    existingLines.every(
-      (line) =>
-        line.accountId === null && line.predictionEvidence?.accountSelection === "not_inferred",
-    );
+    existingLines.length === 2 && existingLines.every(isSystemGeneratedLine);
   if (existingLines.length > 0 && !hasSystemPlaceholderLines) {
     return { enriched: false, reason: "reviewer_lines_present" as const };
   }
@@ -274,6 +371,12 @@ export async function enrichCandidateFromExtractedFacts(
       originalTotal,
       functionalTotal,
       revision: nextRevision,
+      // Replacing system-written lines also drops the system's party link, so
+      // the next classification pass matches the party on these facts instead
+      // of keeping the previous pass's payee (and checking payment details
+      // against it). A reviewer's party never gets here: a reviewer's
+      // correction makes the lines non-system, and this branch is refused.
+      ...(hasSystemPlaceholderLines ? { partyId: null } : {}),
       updatedAt: new Date(),
     })
     .where(
@@ -291,6 +394,16 @@ export async function enrichCandidateFromExtractedFacts(
           eq(transactionCandidateLines.candidateId, row.candidate.id),
         ),
       );
+    // New facts replace a memory's answer before anyone judged it: that
+    // application ends without counting for or against the memory.
+    if (existingLines.some((line) => line.predictionEvidence?.source === "memory")) {
+      await supersedeMemoryApplication(ctx.db, {
+        orgId: ctx.orgId,
+        candidateId: row.candidate.id,
+        inboxItemId: row.item.id,
+        reason: "source_facts_reenriched",
+      });
+    }
   }
   if (existingLines.length === 0 || hasSystemPlaceholderLines) {
     const functionalAmount =
@@ -344,6 +457,16 @@ export async function enrichCandidateFromExtractedFacts(
       updatedAt: new Date(),
     })
     .where(and(eq(inboxItems.organizationId, ctx.orgId), eq(inboxItems.id, row.item.id)));
+  // Stage 2 picks the category and the counterparty for the fresh
+  // placeholders, in a background job so no model call runs inside this
+  // transaction. Until it lands, the draft blocks on `uncategorized`.
+  if (existingLines.length === 0 || hasSystemPlaceholderLines) {
+    await enqueueCandidateClassification(ctx.db, {
+      orgId: ctx.orgId,
+      candidateId: row.candidate.id,
+      candidateRevision: nextRevision,
+    });
+  }
   await ctx.db
     .insert(workflowEvents)
     .values({
@@ -584,6 +707,36 @@ export async function correctInboxCandidate(
   if (input.partyId && !party) {
     throw new Error("The selected vendor or customer does not belong to this organization.");
   }
+  const linePartyIdsGiven = [
+    ...new Set(normalizedLines.flatMap(({ partyId }) => (partyId ? [partyId] : []))),
+  ];
+  if (linePartyIdsGiven.length > 0) {
+    const ownedLineParties = await db
+      .select({ id: parties.id })
+      .from(parties)
+      .where(and(eq(parties.organizationId, orgId), inArray(parties.id, linePartyIdsGiven)));
+    if (ownedLineParties.length !== linePartyIdsGiven.length) {
+      throw new Error("Every line's vendor or customer must belong to this organization.");
+    }
+  }
+  const previousLines = await db
+    .select({
+      accountId: transactionCandidateLines.accountId,
+      originalDebit: transactionCandidateLines.originalDebit,
+      partyId: transactionCandidateLines.partyId,
+    })
+    .from(transactionCandidateLines)
+    .where(
+      and(
+        eq(transactionCandidateLines.organizationId, orgId),
+        eq(transactionCandidateLines.candidateId, row.candidate.id),
+      ),
+    )
+    .orderBy(asc(transactionCandidateLines.sortOrder));
+  const linePartyIds = resolveCorrectionLinePartyIds(normalizedLines, previousLines, {
+    entryPartyId: input.partyId ?? null,
+    counterpartyAccountIds: await counterpartyAccountIds(db, orgId, orgAccounts),
+  });
   const [primarySource] = primarySourceRecordId
     ? await db
         .select({
@@ -640,6 +793,7 @@ export async function correctInboxCandidate(
       originalCurrency,
       exchangeRate: resolvedFx.rate,
       lineDescription: line.lineDescription,
+      partyId: linePartyIds[index],
       departmentId: line.departmentId,
       locationId: line.locationId,
       sortOrder: index,
@@ -706,6 +860,8 @@ export async function correctInboxCandidate(
       );
   }
 
+  // A changed payee bank account is never cleared by an edit: a reviewer
+  // resolves it explicitly, with a note, like a possible duplicate.
   await db
     .update(reviewFindings)
     .set({
@@ -719,7 +875,10 @@ export async function correctInboxCandidate(
         eq(reviewFindings.organizationId, orgId),
         eq(reviewFindings.inboxItemId, row.item.id),
         eq(reviewFindings.state, "open"),
-        ne(reviewFindings.ruleKey, "possible_duplicate"),
+        notInArray(reviewFindings.ruleKey, [
+          "possible_duplicate",
+          PARTY_PAYMENT_DETAILS_CHANGED_RULE_KEY,
+        ]),
       ),
     );
 
@@ -745,23 +904,14 @@ export async function correctInboxCandidate(
     .where(eq(organizationAccountingSettings.organizationId, orgId))
     .limit(1);
   if (!settings) throw new Error("Accounting settings are not configured.");
-  const configuredRules = await db
-    .select({
-      key: reviewRuleDefinitions.key,
-      enabled: reviewRuleConfigs.enabled,
-      impact: reviewRuleConfigs.impact,
-      config: reviewRuleConfigs.config,
-    })
-    .from(reviewRuleConfigs)
-    .innerJoin(reviewRuleDefinitions, eq(reviewRuleConfigs.definitionId, reviewRuleDefinitions.id))
-    .where(eq(reviewRuleConfigs.organizationId, orgId));
-  const ruleConfigByKey = new Map(configuredRules.map((rule) => [rule.key, rule]));
-  const lowConfidenceConfig = ruleConfigByKey.get("low_confidence_category")?.config as
-    | { threshold?: number }
-    | undefined;
-  const receiptConfig = ruleConfigByKey.get("missing_receipt")?.config as
-    | { threshold?: number; currency?: string }
-    | undefined;
+  // The paper's routine decides the rules: its pinned snapshot when it has
+  // one, live configs otherwise. A shadow snapshot is evaluated below and only
+  // ever logged.
+  const ruleSets = await resolveCandidateRuleSets(db, orgId, row.candidate.id, {
+    lowConfidenceThreshold: settings.lowConfidenceThreshold,
+    missingReceiptThreshold: settings.missingReceiptThreshold,
+    missingReceiptCurrency: settings.missingReceiptCurrency,
+  });
   const correctionLines: CandidateLineInput[] = normalizedLines.map((line) => ({
     accountId: line.accountId,
     debit: line.originalDebit,
@@ -776,7 +926,7 @@ export async function correctInboxCandidate(
     row.candidate.id,
     sourceRecordIds,
   );
-  const findings = evaluateBookRules({
+  const ruleInput: CandidateRuleInput = {
     candidate: {
       transactionDate: input.transactionDate,
       transactionType: input.transactionType,
@@ -792,24 +942,10 @@ export async function correctInboxCandidate(
     accounts: ruleAccounts,
     party: party ? { id: party.id, partyType: party.partyType } : null,
     documents: candidateDocuments,
-    settings: {
-      lowConfidenceThreshold: String(
-        lowConfidenceConfig?.threshold ?? settings.lowConfidenceThreshold,
-      ),
-      missingReceiptThreshold: String(receiptConfig?.threshold ?? settings.missingReceiptThreshold),
-      missingReceiptCurrency: normalizeCurrency(
-        receiptConfig?.currency ?? settings.missingReceiptCurrency,
-      ),
-      functionalCurrency: row.candidate.functionalCurrency,
-    },
-  })
-    .filter((finding) => ruleConfigByKey.get(finding.ruleKey)?.enabled !== false)
-    .map((finding) => ({
-      ...finding,
-      impact:
-        (ruleConfigByKey.get(finding.ruleKey)?.impact as "blocking" | "warning" | undefined) ??
-        finding.impact,
-    }));
+    functionalCurrency: row.candidate.functionalCurrency,
+  };
+  const enforcedFindings = evaluateCandidateRules(ruleSets.active, ruleInput);
+  const findings = withRuleSetProvenance(enforcedFindings, ruleSets.active.provenance);
   if (findings.length > 0) {
     await db.insert(reviewFindings).values(
       findings.map((finding) => ({
@@ -825,6 +961,37 @@ export async function correctInboxCandidate(
         evidence: finding.evidence,
       })),
     );
+  }
+  // Shadow rules are evaluated on the same draft and only ever logged.
+  if (ruleSets.shadow) {
+    await recordShadowRuleEvaluation(db, {
+      orgId,
+      inboxItemId: row.item.id,
+      candidateId: row.candidate.id,
+      candidateRevision: nextRevision,
+      active: ruleSets.active,
+      activeFindings: enforcedFindings,
+      shadow: ruleSets.shadow,
+      shadowFindings: withRuleSetProvenance(
+        evaluateCandidateRules(ruleSets.shadow, ruleInput),
+        ruleSets.shadow.provenance,
+      ),
+    });
+  }
+  // However the payee got linked, a document asking to be paid somewhere
+  // other than the payee's stored bank account needs a human. A system rule:
+  // no rule set, live or pinned, can switch it off.
+  if (party && ["vendor", "both", "employee"].includes(party.partyType)) {
+    await raisePaymentDetailsFindingIfChanged(db, {
+      orgId,
+      inboxItemId: row.item.id,
+      candidateId: row.candidate.id,
+      partyId: party.id,
+      facts: collectDocumentFacts(
+        await loadCandidateDocuments(db, orgId, row.candidate.id, primarySourceRecordId),
+        { from: null },
+      ),
+    });
   }
 
   const title =
@@ -862,6 +1029,7 @@ export async function correctInboxCandidate(
       economicEventClassBefore: primarySource?.economicEventClass ?? null,
       economicEventClassAfter: classification.economicEventClass,
       economicEventChanged,
+      ruleSet: ruleSets.active.provenance,
     },
   });
   await insertActivityLog(
@@ -886,13 +1054,49 @@ export async function correctInboxCandidate(
     db,
   );
 
+  // A correction that departs from what a memory answered this draft is an
+  // undo for that memory (src/lib/inbox/memory/tracking.ts).
+  const memory = await noteCorrectionOfMemoryAnswer(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    userId,
+    settled: {
+      docKind: classification.economicEventClass,
+      partyId: input.partyId ?? null,
+      lines: normalizedLines.map((line) => ({
+        side: settledSide(line),
+        accountId: line.accountId,
+      })),
+    },
+  });
+
   for (const sourceRecordId of sourceRecordIds) {
     await runDuplicateMatchingForSource(ctx, sourceRecordId, "source_updated");
   }
+  // Changing what Jev proposed labels the proposal for its lane.
+  await recordJevLaneFeedback(db, {
+    orgId,
+    candidateId: row.candidate.id,
+    inboxItemId: row.item.id,
+    action: "correct",
+    userId,
+    decided: {
+      transactionDate: input.transactionDate,
+      currency: originalCurrency,
+      partyId: input.partyId ?? null,
+      lines: normalizedLines.map((line) => ({
+        accountId: line.accountId,
+        debit: line.originalDebit,
+        credit: line.originalCredit,
+      })),
+    },
+  });
   return {
     inboxItem: updatedItem,
     candidateId: row.candidate.id,
     candidateRevision: nextRevision,
     findingCount: findings.length,
+    memory,
   };
 }

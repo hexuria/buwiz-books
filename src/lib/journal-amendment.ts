@@ -29,6 +29,7 @@ import { and, asc, eq, ne } from "drizzle-orm";
 import type { DbExecutor } from "@/db";
 import { journalHeaders, journalLines } from "@/db/schema/journals";
 import { activityLogs } from "@/db/schema/activity-logs";
+import { noteReversedMemoryEntries } from "@/lib/inbox/memory/tracking";
 import { allocateJournalTransactionNumber } from "@/lib/sequence";
 import { isDateInLockedPeriod } from "@/lib/period-close";
 import { journalsClearedByFinalizedReconciliation } from "@/lib/reconciliation-claimed-lines";
@@ -210,6 +211,13 @@ export async function amendPostedJournal(
       accountId: line.accountId,
       debit: line.credit,
       credit: line.debit,
+      // The transaction-currency side swaps too, at the original's own rate:
+      // a foreign-currency entry's reversal nets to zero in both currencies.
+      originalDebit: line.originalCredit,
+      originalCredit: line.originalDebit,
+      originalCurrency: line.originalCurrency,
+      exchangeRate: line.exchangeRate,
+      exchangeRateId: line.exchangeRateId,
       lineDescription: `Reversal: ${line.lineDescription ?? ""}`.trim(),
       partyId: line.partyId,
       departmentId: line.departmentId,
@@ -217,6 +225,20 @@ export async function amendPostedJournal(
       sortOrder: index,
     })),
   );
+
+  // An entry an Inbox memory answered, reversed after it was approved, is an
+  // undo for that memory (Inbox v2 §7) — unless the replacement keeps its
+  // accounts, which only fixes figures.
+  await noteReversedMemoryEntries(db, {
+    orgId: input.organizationId,
+    journalHeaderIds: [original.id],
+    reason: input.lines?.length ? "posted_entry_amended" : "posted_entry_reversed",
+    actorId: input.userId,
+    replacementLines: input.lines?.map((line) => ({
+      side: line.debit != null && line.debit !== "" ? ("debit" as const) : ("credit" as const),
+      accountId: line.accountId,
+    })),
+  });
 
   let replacementId: string | null = null;
 

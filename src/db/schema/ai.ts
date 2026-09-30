@@ -14,11 +14,18 @@
  *
  * ai_run_feedback: ground-truth labels for the self-improvement flywheel —
  * one row per human verdict on a proposal, schema-uniform across features.
+ *
+ * ai_autonomy_lanes: earned autonomy per LANE rather than per proposal kind —
+ * one vendor and one kind of paper (Inbox v2 spec §8). A lane's feedback rows
+ * carry its id, so its eligibility, calibration, and demotion are computed
+ * over that lane alone.
  */
+import { sql } from "drizzle-orm";
 import {
   pgTable,
   uuid,
   text,
+  varchar,
   integer,
   numeric,
   jsonb,
@@ -26,7 +33,10 @@ import {
   index,
   uniqueIndex,
   boolean,
+  check,
 } from "drizzle-orm/pg-core";
+import { organization, user } from "./auth";
+import { parties } from "./parties";
 
 export const aiInvocations = pgTable(
   "ai_invocations",
@@ -162,10 +172,29 @@ export const aiRunFeedback = pgTable(
 
     userId: text("user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+
+    // Earned autonomy per lane (migration 0060). A label on a paper Jev (or a
+    // remembered answer) proposed names the lane it counts toward.
+    laneId: uuid("lane_id").references(() => aiAutonomyLanes.id, { onDelete: "set null" }),
+    // What the lane knew when the paper was proposed — confidence, whether Jev
+    // would have approved it and why not, spot check — so agreement and
+    // calibration can be computed per lane. Never read by the reflection job.
+    laneEvidence: jsonb("lane_evidence").$type<Record<string, unknown>>(),
+    // One label per proposal: a second human action on the same proposal (an
+    // approval after a correction already labeled it) inserts nothing.
+    labelKey: text("label_key"),
   },
   (table) => [
     index("ai_run_feedback_org_created_idx").on(table.organizationId, table.createdAt),
     index("ai_run_feedback_proposal_idx").on(table.proposalId),
+    index("ai_run_feedback_org_lane_created_idx").on(
+      table.organizationId,
+      table.laneId,
+      table.createdAt,
+    ),
+    uniqueIndex("ai_run_feedback_org_label_key_unique")
+      .on(table.organizationId, table.labelKey)
+      .where(sql`${table.labelKey} is not null`),
   ],
 );
 
@@ -216,11 +245,14 @@ export const organizationAiCredentials = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     organizationId: text("organization_id").notNull(),
     provider: text("provider")
-      .$type<"gemini" | "anthropic" | "openai" | "openai_compatible">()
+      .$type<"gemini" | "anthropic" | "openai" | "openai_compatible" | "jev">()
       .notNull(),
     /** crypto.ts AES-256-GCM envelope: enc:v1:<iv>:<tag>:<ct>. Never plaintext. */
     encryptedKey: text("encrypted_key").notNull(),
-    /** openai_compatible only (vLLM/Ollama/OpenRouter/…). */
+    /**
+     * openai_compatible only (vLLM/Ollama/OpenRouter/…). Jev's endpoint is
+     * operator config (JEV_BASE_URL), never a tenant-supplied row value.
+     */
     baseUrl: text("base_url"),
     label: text("label"),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
@@ -245,27 +277,148 @@ export type AiAutonomyLevel = "suggest" | "auto_apply_high_confidence";
  * Orgs parameterize AI behavior here; they never author prompt TEXT — that
  * would put tenant-controlled strings next to instructions.
  */
-export const organizationAiSettings = pgTable("organization_ai_settings", {
-  organizationId: text("organization_id").primaryKey(),
-  /** Per-task chain overrides; OCR tasks are policy-filtered to Gemini. */
-  taskChains: jsonb("task_chains").$type<Record<string, unknown>>(),
-  /** Per-task escalation thresholds, 0–1. */
-  confidenceThresholds: jsonb("confidence_thresholds").$type<Record<string, number>>(),
-  /** Per-task autonomy; absent ⇒ "suggest". Never applies to match kinds. */
-  autonomy: jsonb("autonomy").$type<Record<string, AiAutonomyLevel>>(),
-  /** Tasks this org permits at all; absent ⇒ all shipped tasks. */
-  taskAllowlist: jsonb("task_allowlist").$type<string[]>(),
-  /** Providers this org permits; absent ⇒ Gemini only. */
-  providerAllowlist: jsonb("provider_allowlist").$type<string[]>(),
-  monthlySpendCapUsd: numeric("monthly_spend_cap_usd"),
-  killSwitch: boolean("kill_switch").default(false).notNull(),
-  /** Eval-data sharing consent — anonymization alone is not consent (§8). */
-  evalDataSharing: text("eval_data_sharing").$type<"none" | "global">().default("none").notNull(),
-  evalConsentBy: text("eval_consent_by"),
-  evalConsentAt: timestamp("eval_consent_at", { withTimezone: true }),
-  updatedBy: text("updated_by"),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-});
+export const organizationAiSettings = pgTable(
+  "organization_ai_settings",
+  {
+    organizationId: text("organization_id").primaryKey(),
+    /** Per-task chain overrides; OCR tasks are policy-filtered to Gemini. */
+    taskChains: jsonb("task_chains").$type<Record<string, unknown>>(),
+    /** Per-task escalation thresholds, 0–1. */
+    confidenceThresholds: jsonb("confidence_thresholds").$type<Record<string, number>>(),
+    /** Per-task autonomy; absent ⇒ "suggest". Never applies to match kinds. */
+    autonomy: jsonb("autonomy").$type<Record<string, AiAutonomyLevel>>(),
+    /** Tasks this org permits at all; absent ⇒ all shipped tasks. */
+    taskAllowlist: jsonb("task_allowlist").$type<string[]>(),
+    /**
+     * Providers this org permits; absent ⇒ Gemini only. "jev" here is also the
+     * Jev opt-in: Jev becomes the first hop for the redacted-text
+     * classification tasks in JEV_TASKS (src/lib/ai/chains.ts applyJevPolicy).
+     */
+    providerAllowlist: jsonb("provider_allowlist").$type<string[]>(),
+    monthlySpendCapUsd: numeric("monthly_spend_cap_usd"),
+    killSwitch: boolean("kill_switch").default(false).notNull(),
+    /** Eval-data sharing consent — anonymization alone is not consent (§8). */
+    evalDataSharing: text("eval_data_sharing").$type<"none" | "global">().default("none").notNull(),
+    evalConsentBy: text("eval_consent_by"),
+    evalConsentAt: timestamp("eval_consent_at", { withTimezone: true }),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+
+    // ── Jev approval (Inbox v2 §8, migration 0060). Admin-only, off by default.
+    /**
+     * The organization's switch for Jev approving Inbox papers on its own. Off
+     * means no lane approves anything, whatever its level: lanes keep watching.
+     */
+    inboxAutoapproveEnabled: boolean("inbox_autoapprove_enabled").default(false).notNull(),
+    /**
+     * When the org requires a different approver (maker-checker), Jev approval is
+     * off unless an admin opts in here explicitly (spec §2).
+     */
+    inboxAutoapproveWithMakerChecker: boolean("inbox_autoapprove_with_maker_checker")
+      .default(false)
+      .notNull(),
+    /** Share of would-be Jev approvals held back for a person, 0–1. */
+    inboxSpotCheckRate: numeric("inbox_spot_check_rate", { precision: 5, scale: 4 })
+      .default("0.1000")
+      .notNull(),
+    /** Per-org salt for the spot-check hash, so samples are not predictable from ids. */
+    inboxSpotCheckSalt: uuid("inbox_spot_check_salt").defaultRandom().notNull(),
+  },
+  (table) => [
+    check(
+      "organization_ai_settings_spot_check_rate_check",
+      sql`${table.inboxSpotCheckRate} >= 0 and ${table.inboxSpotCheckRate} <= 1`,
+    ),
+  ],
+);
+
+export const AUTONOMY_LANE_LEVELS = ["watch", "suggest", "auto"] as const;
+export type AutonomyLaneLevel = (typeof AUTONOMY_LANE_LEVELS)[number];
+
+/** Lanes that exist. A new lane key is a reviewed migration (the CHECK below). */
+export const AUTONOMY_LANE_KEYS = ["inbox_approve"] as const;
+export type AutonomyLaneKey = (typeof AUTONOMY_LANE_KEYS)[number];
+
+/**
+ * ai_autonomy_lanes: earned Jev approval, one vendor and one kind of paper at
+ * a time (Inbox v2 spec §8). Per-kind autonomy (organization_ai_settings
+ * .autonomy) cannot express "Jev may approve this vendor's bills but not that
+ * one's", so each lane earns its own authority from its own feedback:
+ *
+ *   watch    created at first sight; Jev's answers are labeled and "would
+ *            approve" is logged, nothing else changes.
+ *   suggest  promoted by an admin; the Inbox says when Jev would approve.
+ *   auto     promoted by an admin; Jev approves papers that pass every check
+ *            (src/lib/inbox/jev-approval/predicate.ts), minus a spot-check
+ *            sample. Demoted to suggest automatically when quality slips.
+ *
+ * An `auto` lane must name its vendor, its amount cap and its calibrated
+ * confidence threshold — the database refuses one that does not.
+ *
+ * Export/import: org configuration, exported since version 5
+ * (src/lib/export-inbox.ts) — lane, kind, party by name, level, cap and
+ * threshold, never the ai_run_feedback it earned its level with. Earned
+ * autonomy is never imported: every lane arrives at `watch`.
+ */
+export const aiAutonomyLanes = pgTable(
+  "ai_autonomy_lanes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    organizationId: text("organization_id")
+      .references(() => organization.id, { onDelete: "cascade" })
+      .notNull(),
+    laneKey: varchar("lane_key", { length: 64 }).$type<AutonomyLaneKey>().notNull(),
+    /** The vendor or customer. Null is the lane for papers with no known party. */
+    partyId: uuid("party_id").references(() => parties.id, { onDelete: "cascade" }),
+    /** The kind of paper (src/lib/inbox/v2/triage.ts INBOX_V2_KINDS). */
+    docKind: varchar("doc_kind", { length: 32 }),
+    level: varchar("level", { length: 16 }).$type<AutonomyLaneLevel>().default("watch").notNull(),
+    /** Largest functional-currency total Jev may approve on this lane. */
+    amountCap: numeric("amount_cap", { precision: 20, scale: 8 }),
+    /** Chosen at promotion; the lane's reliability table must support it. */
+    confidenceThreshold: numeric("confidence_threshold", { precision: 5, scale: 4 }),
+    promotedBy: text("promoted_by").references(() => user.id),
+    promotedAt: timestamp("promoted_at", { withTimezone: true }),
+    demotedAt: timestamp("demoted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("ai_autonomy_lanes_identity_unique").on(
+      table.organizationId,
+      table.laneKey,
+      table.partyId,
+      table.docKind,
+    ),
+    // NULLs are distinct in a unique index (and NULLS NOT DISTINCT needs
+    // Postgres 15), so the no-party lane gets its own guard.
+    uniqueIndex("ai_autonomy_lanes_partyless_unique")
+      .on(table.organizationId, table.laneKey, table.docKind)
+      .where(sql`${table.partyId} is null`),
+    // docKind is nullable too, so the two remaining NULL shapes get guards.
+    uniqueIndex("ai_autonomy_lanes_kindless_unique")
+      .on(table.organizationId, table.laneKey, table.partyId)
+      .where(sql`${table.docKind} is null`),
+    uniqueIndex("ai_autonomy_lanes_partyless_kindless_unique")
+      .on(table.organizationId, table.laneKey)
+      .where(sql`${table.partyId} is null and ${table.docKind} is null`),
+    index("ai_autonomy_lanes_org_level_idx").on(table.organizationId, table.laneKey, table.level),
+    check("ai_autonomy_lanes_level_check", sql`${table.level} in ('watch', 'suggest', 'auto')`),
+    check("ai_autonomy_lanes_lane_key_check", sql`${table.laneKey} in ('inbox_approve')`),
+    check(
+      "ai_autonomy_lanes_threshold_range_check",
+      sql`${table.confidenceThreshold} is null or (${table.confidenceThreshold} > 0 and ${table.confidenceThreshold} <= 1)`,
+    ),
+    check(
+      "ai_autonomy_lanes_amount_cap_check",
+      sql`${table.amountCap} is null or ${table.amountCap} > 0`,
+    ),
+    check(
+      "ai_autonomy_lanes_auto_limits_check",
+      sql`${table.level} <> 'auto' or (${table.partyId} is not null and ${table.amountCap} is not null and ${table.confidenceThreshold} is not null)`,
+    ),
+  ],
+);
 
 /**
  * ai_lessons: per-org memory distilled from recurring corrections.

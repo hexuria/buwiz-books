@@ -1,0 +1,461 @@
+{
+  "_comment": [
+    "Authored inbox_memory test-lock cases (Inbox v2 spec section 7).",
+    "Each case is an ai_eval_cases row: a remembered answer, the paper it replays onto, and the exact",
+    "draft replay must produce. tests/evals/memory-lock.eval.ts and tests/unit/inbox-memory-lock.test.ts",
+    "replay every case through applyMemoryAnswer with no database and no model; any difference fails.",
+    "Rows saved by 'Remember this?' have the same shape (inputRef + expected) and may be appended here."
+  ],
+  "cases": [
+    {
+      "name": "same receipt again: office supplies paid from the bank",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3001",
+          "matchKind": "file_hash",
+          "matchKeyDigest": "df0790f236013511e91fa4532fb7761f62320a51a3868dabf4a13fe5f53e3263",
+          "answer": {
+            "docKind": "purchase",
+            "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+                "accountType": "expense",
+                "amount": "84.25",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+                "accountType": "asset",
+                "amount": "84.25",
+                "currency": "USD",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "outflow",
+          "total": "84.25",
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "docKind": "purchase",
+        "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+            "amount": "84.25"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+            "amount": "84.25"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a vendor's invoice is a bill on account, whatever stage 1 read",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3002",
+          "matchKind": "sender_party",
+          "matchKeyDigest": "d490372cfcee27c0a1597f4d4f0d5f351e98b513b454eb5c5d3fa701c8856ad2",
+          "answer": {
+            "docKind": "bill_accrual",
+            "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+                "accountType": "expense",
+                "amount": "310",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1004",
+                "accountType": "liability",
+                "amount": "310",
+                "currency": "USD",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "outflow",
+          "total": "1250.5",
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "docKind": "bill_accrual",
+        "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+            "amount": "1250.5"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1004",
+            "amount": "1250.5"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a split replays its exact amounts onto the same paper",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3003",
+          "matchKind": "file_hash",
+          "matchKeyDigest": "add5b41fc5a881fc87ef4640581ed5ff7fe5eab39640b3a3e6e8b90f0aa71730",
+          "answer": {
+            "docKind": "purchase",
+            "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+                "accountType": "expense",
+                "amount": "60",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+                "accountType": "liability",
+                "amount": "84.25",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 1
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1002",
+                "accountType": "expense",
+                "amount": "24.25",
+                "currency": "USD",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "outflow",
+          "total": "84.25",
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "docKind": "purchase",
+        "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+            "amount": "60"
+          },
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1002",
+            "amount": "24.25"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+            "amount": "84.25"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a sender's memory takes each new paper's own total",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3004",
+          "matchKind": "sender_party",
+          "matchKeyDigest": "220e53fe1f938c594f7a1b58cbf2b5fd7012eb07e5b743bd60829218e33295cb",
+          "answer": {
+            "docKind": "purchase",
+            "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+                "accountType": "expense",
+                "amount": "50",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+                "accountType": "liability",
+                "amount": "50",
+                "currency": "USD",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "outflow",
+          "total": "120.10",
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "docKind": "purchase",
+        "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2001",
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+            "amount": "120.1"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+            "amount": "120.1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a customer's payment in is a sale to revenue",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3005",
+          "matchKind": "party",
+          "matchKeyDigest": "305bee26ca917d9225c7b23559d6a608e23d2957b137b2097e98e1dd6461b2d8",
+          "answer": {
+            "docKind": "sale",
+            "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2002",
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+                "accountType": "asset",
+                "amount": "980.00000001",
+                "currency": "PHP",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1005",
+                "accountType": "revenue",
+                "amount": "980.00000001",
+                "currency": "PHP",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "inflow",
+          "total": "980.00000001",
+          "currency": "PHP"
+        }
+      },
+      "expected": {
+        "docKind": "sale",
+        "partyId": "2b1d6b63-7a2f-4d54-8b68-4c1a7a1e2002",
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+            "amount": "980.00000001"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1005",
+            "amount": "980.00000001"
+          }
+        ]
+      }
+    },
+    {
+      "name": "a transfer between the org's own accounts names no party",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3006",
+          "matchKind": "line_text",
+          "matchKeyDigest": "43bfc59bb71374db24d78cbfc3a4a47dad39b2fd1e2acf505446a9e087940beb",
+          "answer": {
+            "docKind": "transfer",
+            "partyId": null,
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1006",
+                "accountType": "asset",
+                "amount": "5000",
+                "currency": "USD",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+                "accountType": "asset",
+                "amount": "5000",
+                "currency": "USD",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "neutral",
+          "total": "7500",
+          "currency": "USD"
+        }
+      },
+      "expected": {
+        "docKind": "transfer",
+        "partyId": null,
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1006",
+            "amount": "7500"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1003",
+            "amount": "7500"
+          }
+        ]
+      }
+    },
+    {
+      "name": "these words never pin a party",
+      "task": "inbox_memory",
+      "provenance": "authored",
+      "inputRef": {
+        "version": 1,
+        "memory": {
+          "id": "3c2e7c74-8b30-4e65-9c79-5d2b8b2f3007",
+          "matchKind": "line_text",
+          "matchKeyDigest": "d07e70cb83b9dc2c784c0605af6ae1d4c01634e70593cd3b8edd88ce907159e4",
+          "answer": {
+            "docKind": "purchase",
+            "partyId": null,
+            "lines": [
+              {
+                "lineMatch": {
+                  "side": "debit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+                "accountType": "expense",
+                "amount": "84.25",
+                "currency": "EUR",
+                "taxCode": null
+              },
+              {
+                "lineMatch": {
+                  "side": "credit",
+                  "index": 0
+                },
+                "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+                "accountType": "liability",
+                "amount": "84.25",
+                "currency": "EUR",
+                "taxCode": null
+              }
+            ]
+          }
+        },
+        "paper": {
+          "direction": "outflow",
+          "total": "19.99",
+          "currency": "EUR"
+        }
+      },
+      "expected": {
+        "docKind": "purchase",
+        "partyId": null,
+        "lines": [
+          {
+            "side": "debit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1001",
+            "amount": "19.99"
+          },
+          {
+            "side": "credit",
+            "accountId": "1a0c5a52-6f1e-4c43-9a57-3b0f6f0d1007",
+            "amount": "19.99"
+          }
+        ]
+      }
+    }
+  ]
+}

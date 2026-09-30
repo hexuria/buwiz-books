@@ -3,11 +3,21 @@
 //
 // Every TEXT prompt is redacted before it reaches any provider — including
 // Gemini, not just the new Anthropic/OpenAI hops. Account numbers, card PANs,
-// routing numbers, SSNs and IBANs are masked to their last 4 digits.
+// routing numbers, SSNs, IBANs and Philippine government IDs (TIN, SSS,
+// PhilHealth PIN, Pag-IBIG/HDMF MID) are masked to their last 4 digits.
 //
 // Deliberate posture: OVER-masking is safe, under-masking is not. A masked
 // invoice number costs the model a little context; a leaked account number is
 // a breach. Where a pattern is ambiguous we mask.
+//
+// Money amounts are never a target: the model needs them. No rule accepts a
+// comma-grouped figure or a digit run that continues into a decimal fraction.
+//
+// Redaction runs to a FIXED POINT. One rule's mask can create the boundary
+// another rule needs: in `219-44-2138XXXX-5620-1278` the SSN is glued to the
+// X-run, so `\b` never fires until the masked-account rule has turned
+// `XXXX-5620-1278` into stars. Each pass that changes anything removes digits,
+// so the loop always terminates; MAX_REDACTION_PASSES is only a backstop.
 //
 // HONEST LIMITATION: this cannot touch inline document BYTES (a scanned
 // statement image is the thing OCR exists to read). That is exactly why OCR
@@ -17,8 +27,20 @@
 // ============================================================================
 
 export interface RedactionHit {
-  kind: "ssn" | "card" | "routing" | "account" | "iban";
-  /** Character offset in the ORIGINAL text. */
+  kind:
+    | "ssn"
+    | "card"
+    | "routing"
+    | "account"
+    | "iban"
+    | "ph_tin"
+    | "ph_sss"
+    | "ph_philhealth"
+    | "ph_pagibig";
+  /**
+   * Character offset in the text the rule scanned. Earlier masks (from a
+   * preceding rule or pass) can shift it relative to the original input.
+   */
   index: number;
   length: number;
 }
@@ -74,6 +96,102 @@ interface Rule {
   accept?: (match: RegExpExecArray) => boolean;
 }
 
+// ── Philippine government IDs ───────────────────────────────────────────────
+//
+//   TIN         ###-###-###, plus an optional branch code (###-###-###-000 or
+//               the newer 5-digit ###-###-###-00000)
+//   SSS         ##-#######-#
+//   PhilHealth  ##-#########-#   (the PIN)
+//   Pag-IBIG    ####-####-####   (HDMF Membership ID, "MID")
+//
+// Two tiers, trading coverage against false positives:
+//
+//  • DASHED shapes are masked with or without a label. Payroll registers and
+//    remittance lists print these in table columns, where the label sits in a
+//    header row far from the value, so requiring one would leak them. None of
+//    the shapes collides with a date (2026-01-31), a PH phone number
+//    (0917-123-4567, (02) 8123-4567) or a money amount (1,234,567.89).
+//    Accepted over-masking: a reference or document number that happens to
+//    have exactly one of these dashed shapes is masked to its last 4. The
+//    4-4-4 Pag-IBIG shape is the loosest of the four; it is still masked,
+//    per the posture above, because an MID in a table is unlabeled.
+//
+//  • UNSEPARATED and SPACE-SEPARATED forms are masked only after a label
+//    ("TIN", "SSS No.", "PhilHealth PIN", "Pag-IBIG MID", "HDMF"). Bare digit
+//    runs and space-grouped digits are too often invoice numbers, check
+//    numbers or amounts, so without the label they are left alone.
+//
+// Boundaries are context-aware rather than plain `\b`:
+//  • ID_START refuses a dashed shape glued to a preceding word or dash, so a
+//    prefixed document number such as INV-2026-0001-0042 survives, and the
+//    back half of a longer dashed run is never picked out.
+//  • ID_END refuses a run that continues into another digit, dash-digit group
+//    or decimal fraction. The first 12 digits of a dashed 16-digit card are
+//    therefore never mistaken for an MID (the card rule masks the whole PAN,
+//    where a partial mask would have left 8 digits visible), and the integer
+//    part of an amount is never consumed.
+//  • A branch code attaches with a dash or no separator, never a space, so a
+//    labeled TIN cannot swallow an adjacent space-separated number. A
+//    space-separated branch code survives as-is; it identifies an office of
+//    the taxpayer, not the taxpayer.
+const ID_START = String.raw`(?<![\w-])`;
+const ID_END = String.raw`(?![-.]?\d)`;
+
+/**
+ * Words and punctuation allowed between a label and its number, same line
+ * only: "TIN No.: ", "SSS#", "Pag-IBIG MID No. ", "PhilHealth Identification
+ * Number (PIN): ".
+ */
+const LABEL_TAIL = String.raw`(?:[^\S\r\n]*(?:\(?(?:TIN|PIN|MID|HDMF|FUND|MEMBERSHIP|MEMBER|IDENTIFICATION|ID|NUMBER|NUM|NO)\b\)?\.?|[:#.(\-]))*[^\S\r\n]*`;
+
+/** Label, connecting words, then the number as capture group 1. */
+function labeledId(label: string, digits: string): RegExp {
+  return new RegExp(String.raw`\b(?:${label})${LABEL_TAIL}(${digits})${ID_END}`, "gi");
+}
+
+const PH_ID_RULES: Rule[] = [
+  {
+    kind: "ph_tin",
+    pattern: new RegExp(String.raw`${ID_START}\d{3}-\d{3}-\d{3}(?:-\d{3,5})?${ID_END}`, "g"),
+  },
+  {
+    // 3–5 branch digits: a mistyped 4-digit code must not leave the TIN
+    // itself unmasked.
+    kind: "ph_tin",
+    pattern: labeledId(
+      String.raw`TIN|T\.I\.N|TAX(?:PAYER)?\s+IDENTIFICATION`,
+      String.raw`\d{3}[- ]?\d{3}[- ]?\d{3}(?:-?\d{3,5})?`,
+    ),
+  },
+  {
+    kind: "ph_sss",
+    pattern: new RegExp(String.raw`${ID_START}\d{2}-\d{7}-\d${ID_END}`, "g"),
+  },
+  {
+    kind: "ph_sss",
+    pattern: labeledId(
+      String.raw`SSS|SOCIAL\s+SECURITY\s+SYSTEM`,
+      String.raw`\d{2}[- ]?\d{7}[- ]?\d`,
+    ),
+  },
+  {
+    kind: "ph_philhealth",
+    pattern: new RegExp(String.raw`${ID_START}\d{2}-\d{9}-\d${ID_END}`, "g"),
+  },
+  {
+    kind: "ph_philhealth",
+    pattern: labeledId(String.raw`PHIL[- ]?HEALTH|PHIC|PIN`, String.raw`\d{2}[- ]?\d{9}[- ]?\d`),
+  },
+  {
+    kind: "ph_pagibig",
+    pattern: new RegExp(String.raw`${ID_START}\d{4}-\d{4}-\d{4}${ID_END}`, "g"),
+  },
+  {
+    kind: "ph_pagibig",
+    pattern: labeledId(String.raw`PAG[- ]?IBIG|HDMF|MID`, String.raw`\d{4}[- ]?\d{4}[- ]?\d{4}`),
+  },
+];
+
 // Order matters: the most specific patterns run first so a card number is
 // not first consumed by the generic account rule.
 const RULES: Rule[] = [
@@ -87,6 +205,9 @@ const RULES: Rule[] = [
     kind: "ssn",
     pattern: /\b(?:SSN|SOCIAL SECURITY(?: NUMBER)?)\s*[:#]?\s*(\d{9})\b/gi,
   },
+  // Before the card rule, so a TIN with a 5-digit branch code (14 digits) is
+  // reported as a TIN rather than whatever a Luhn coincidence makes it.
+  ...PH_ID_RULES,
   {
     kind: "iban",
     pattern: /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g,
@@ -110,17 +231,42 @@ const RULES: Rule[] = [
     // Masked-but-partially-revealed forms ("****1234567" / "XXXX-1234-5678").
     // No leading \b: `*` and `#` are non-word chars, so a boundary assertion
     // would never fire after a space.
+    // The run may not stop just short of a decimal fraction: in
+    // "*****6789 1250.00" (an ID masked by an earlier rule, then an amount)
+    // the digits after the space are money, not more of the identifier.
     kind: "account",
-    pattern: /[*X#]{2,}[ -]?(?:\d[ -]?){5,}\d\b/gi,
+    pattern: /[*X#]{2,}[ -]?(?:\d[ -]?){5,}\d\b(?![.,]\d)/gi,
   },
 ];
 
 /**
+ * Backstop for the fixed-point loop. Termination does not depend on it: a
+ * pass that changes the text replaces digits with `*`, so the digit count
+ * strictly falls. Real prompts settle in 2 passes (a change, then a
+ * confirming no-op); adjacency chains in the tests take 3.
+ */
+const MAX_REDACTION_PASSES = 5;
+
+/**
  * Redact PII from a text prompt.
- * Idempotent: running it on already-redacted text is a no-op.
+ * Idempotent: passes repeat until the text stops changing, so running it on
+ * already-redacted text is a no-op.
  */
 export function redactPII(text: string): RedactionResult {
   const hits: RedactionHit[] = [];
+  let output = text;
+
+  for (let pass = 0; pass < MAX_REDACTION_PASSES; pass++) {
+    const next = redactPass(output, hits);
+    if (next === output) break;
+    output = next;
+  }
+
+  return { text: output, hits };
+}
+
+/** One application of every rule, in order. Appends to `hits`. */
+function redactPass(text: string, hits: RedactionHit[]): string {
   let output = text;
 
   for (const rule of RULES) {
@@ -156,7 +302,7 @@ export function redactPII(text: string): RedactionResult {
     }
   }
 
-  return { text: output, hits };
+  return output;
 }
 
 /**
