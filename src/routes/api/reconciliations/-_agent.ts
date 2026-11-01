@@ -4,14 +4,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import {
   reconciliations,
-  statementLines,
   reconciliationFlags,
   reconciliationSuggestions,
-  statementLineMatches,
 } from "../../../db/schema/reconciliations";
 import { financialAccounts } from "../../../db/schema/financial-accounts";
 import { isDateInLockedPeriod } from "../../../lib/period-close";
-import { findClaimedJournalLine } from "../../../lib/reconciliation-claimed-lines";
+import { setStatementLineClearing } from "../../../lib/reconciliation-claimed-lines";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import { insertActivityLog } from "@/lib/insert-activity-log";
@@ -196,31 +194,17 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                     // line has since cleared (either representation). Skip it
                     // and leave it pending for a human — an agent run should
                     // not die on one conflict, and must never double-clear.
-                    const claim = await findClaimedJournalLine(db, orgId, [s.journalLineId], {
-                      excludeStatementLineId: s.statementLineId,
+                    const written = await setStatementLineClearing(db, {
+                      orgId,
+                      reconciliationId,
+                      statementLineId: s.statementLineId,
+                      clearing: {
+                        action: "match",
+                        journalLineId: s.journalLineId,
+                        confidence: s.confidence,
+                      },
                     });
-                    if (claim) continue;
-                    await db
-                      .delete(statementLineMatches)
-                      .where(
-                        and(
-                          eq(statementLineMatches.statementLineId, s.statementLineId),
-                          eq(statementLineMatches.organizationId, orgId),
-                        ),
-                      );
-                    await db
-                      .update(statementLines)
-                      .set({
-                        matchedJournalLineId: s.journalLineId,
-                        matchStatus: "matched",
-                        matchConfidence: s.confidence,
-                      })
-                      .where(
-                        and(
-                          eq(statementLines.id, s.statementLineId),
-                          eq(statementLines.reconciliationId, reconciliationId),
-                        ),
-                      );
+                    if (!written.written) continue;
                     resolutionSummary =
                       "AI Agent: auto-matched statement line to ledger transaction";
                   }
@@ -232,31 +216,17 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                   // applySuggestion path treats them the same way); silently redating a
                   // posted transaction could move it across months or into a closed period.
                   if (s.journalLineId && s.statementLineId) {
-                    const claim = await findClaimedJournalLine(db, orgId, [s.journalLineId], {
-                      excludeStatementLineId: s.statementLineId,
+                    const written = await setStatementLineClearing(db, {
+                      orgId,
+                      reconciliationId,
+                      statementLineId: s.statementLineId,
+                      clearing: {
+                        action: "match",
+                        journalLineId: s.journalLineId,
+                        confidence: s.confidence,
+                      },
                     });
-                    if (claim) continue;
-                    await db
-                      .delete(statementLineMatches)
-                      .where(
-                        and(
-                          eq(statementLineMatches.statementLineId, s.statementLineId),
-                          eq(statementLineMatches.organizationId, orgId),
-                        ),
-                      );
-                    await db
-                      .update(statementLines)
-                      .set({
-                        matchedJournalLineId: s.journalLineId,
-                        matchStatus: "matched",
-                        matchConfidence: s.confidence,
-                      })
-                      .where(
-                        and(
-                          eq(statementLines.id, s.statementLineId),
-                          eq(statementLines.reconciliationId, reconciliationId),
-                        ),
-                      );
+                    if (!written.written) continue;
                     resolutionSummary =
                       "AI Agent: matched despite date difference (ledger date preserved)";
                   }
@@ -264,15 +234,13 @@ export const runAgentOnReconciliation = createServerFn({ method: "POST" }).handl
                 }
                 case "ignore": {
                   if (s.statementLineId) {
-                    await db
-                      .update(statementLines)
-                      .set({ matchStatus: "ignored" })
-                      .where(
-                        and(
-                          eq(statementLines.id, s.statementLineId),
-                          eq(statementLines.reconciliationId, reconciliationId),
-                        ),
-                      );
+                    // Releases the line's clearing, as a manual ignore does.
+                    await setStatementLineClearing(db, {
+                      orgId,
+                      reconciliationId,
+                      statementLineId: s.statementLineId,
+                      clearing: { action: "ignore" },
+                    });
                     resolutionSummary = "AI Agent: statement line marked as ignored";
                   }
                   break;

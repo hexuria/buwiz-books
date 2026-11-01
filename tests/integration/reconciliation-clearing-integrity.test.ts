@@ -13,9 +13,12 @@ import { financialAccounts } from "../../src/db/schema/financial-accounts";
 import { accounts } from "../../src/db/schema/accounts";
 import { journalHeaders, journalLines } from "../../src/db/schema/journals";
 import {
+  claimConflictMessage,
   findClaimedJournalLine,
   getOrgClaimedJournalLineIds,
+  setStatementLineClearing,
 } from "../../src/lib/reconciliation-claimed-lines";
+import { lockRunForOverride, startRun } from "../../src/lib/ai/agent-run";
 
 const describeDb = process.env.TEST_DATABASE_URL ? describe : describe.skip;
 
@@ -44,6 +47,7 @@ describeDb("reconciliation clearing exclusivity", () => {
   let ledgerAccountId: string;
   let contraAccountId: string;
   let reconId: string;
+  let bankAccountId: string;
 
   /** Post one balanced two-line journal; returns the bank-side line id. */
   async function postBankJournal(amount: string): Promise<string> {
@@ -81,11 +85,11 @@ describeDb("reconciliation clearing exclusivity", () => {
     });
   }
 
-  async function insertStatementLine(amount: string): Promise<string> {
+  async function insertStatementLine(amount: string, inRecon = reconId): Promise<string> {
     const [line] = await db
       .insert(statementLines)
       .values({
-        reconciliationId: reconId,
+        reconciliationId: inRecon,
         transactionDate: "2026-02-10",
         description: `LINE ${amount}`,
         amount,
@@ -99,12 +103,13 @@ describeDb("reconciliation clearing exclusivity", () => {
   beforeAll(async () => {
     ({ db, sql } = await createTestDb());
 
-    // The trigger under test — idempotent, the same file CI applies.
-    const migration = readFileSync(
-      resolve(process.cwd(), "drizzle/0048_statement_clearing_exclusivity.sql"),
-      "utf8",
-    );
-    await sql.unsafe(migration);
+    // The triggers under test — idempotent, the same files CI applies, in order.
+    for (const file of [
+      "drizzle/0048_statement_clearing_exclusivity.sql",
+      "drizzle/0053_statement_clearing_commit_state.sql",
+    ]) {
+      await sql.unsafe(readFileSync(resolve(process.cwd(), file), "utf8"));
+    }
 
     ORG = crypto.randomUUID();
     const [ledger] = await db
@@ -151,6 +156,7 @@ describeDb("reconciliation clearing exclusivity", () => {
       })
       .returning();
     reconId = recon.id;
+    bankAccountId = bank.id;
   });
 
   afterAll(async () => {
@@ -252,6 +258,72 @@ describeDb("reconciliation clearing exclusivity", () => {
     expect(row.matched).toBe(journalLineId);
   });
 
+  it("judges each row as it stands at COMMIT, not as one write left it", async () => {
+    // S1 claims A, moves to B, then a split on S2 claims A. The final state
+    // is valid (A by the split only, B by S1 only); 0048 judged the tuple
+    // the FIRST write captured (S1 → A) at COMMIT and refused it.
+    const lineA = await postBankJournal("31.00");
+    const lineB = await postBankJournal("32.00");
+    const s1 = await insertStatementLine("-31.00");
+    const s2 = await insertStatementLine("-31.00");
+
+    await db.transaction(async (tx: any) => {
+      await tx
+        .update(statementLines)
+        .set({ matchedJournalLineId: lineA, matchStatus: "matched" })
+        .where(eq(statementLines.id, s1));
+      await tx
+        .update(statementLines)
+        .set({ matchedJournalLineId: lineB })
+        .where(eq(statementLines.id, s1));
+      await tx.insert(statementLineMatches).values({
+        organizationId: ORG,
+        statementLineId: s2,
+        journalLineId: lineA,
+        allocatedAmount: "-31.00",
+      });
+    });
+
+    const [row] = await db
+      .select({ matched: statementLines.matchedJournalLineId })
+      .from(statementLines)
+      .where(eq(statementLines.id, s1));
+    expect(row.matched).toBe(lineB);
+  });
+
+  it("refuses to install over rows that are already cleared twice", async () => {
+    // Installing the triggers proves nothing about rows written before them:
+    // 0053 must refuse loudly rather than leave a double-counted line in place.
+    const journalLineId = await postBankJournal("33.00");
+    const direct = await insertStatementLine("-33.00");
+    const split = await insertStatementLine("-33.00");
+    const migration = readFileSync(
+      resolve(process.cwd(), "drizzle/0053_statement_clearing_commit_state.sql"),
+      "utf8",
+    );
+
+    let refusal = "";
+    await sql
+      .begin(async (tx) => {
+        // The triggers are deferred, so inside this (rolled-back) transaction
+        // the double claim exists exactly as pre-0048 data would.
+        await tx`UPDATE statement_lines SET matched_journal_line_id = ${journalLineId}, match_status = 'matched' WHERE id = ${direct}`;
+        await tx`INSERT INTO statement_line_matches (organization_id, statement_line_id, journal_line_id, allocated_amount)
+                 VALUES (${ORG}, ${split}, ${journalLineId}, '-33.00')`;
+        try {
+          await tx.unsafe(migration);
+        } catch (error) {
+          refusal = (error as Error).message;
+        }
+        throw new Error("rollback");
+      })
+      .catch((error: Error) => {
+        if (error.message !== "rollback") throw error;
+      });
+
+    expect(refusal).toMatch(/cleared by both representations/);
+  });
+
   // ---- the application-side guard ------------------------------------------
 
   it("findClaimedJournalLine sees claims from either representation", async () => {
@@ -302,5 +374,150 @@ describeDb("reconciliation clearing exclusivity", () => {
     // matching again next period.
     const claimed = await getOrgClaimedJournalLineIds(db, ORG);
     expect(claimed.has(journalLineId)).toBe(true);
+  });
+
+  // ---- where a claim lives, and what to tell the user ----------------------
+
+  async function finalizedReconciliation(): Promise<string> {
+    const [recon] = await db
+      .insert(reconciliations)
+      .values({
+        organizationId: ORG,
+        bankAccountId,
+        periodStart: "2026-01-01",
+        periodEnd: "2026-01-31",
+        statementBeginningBalance: "1000.00",
+        statementEndingBalance: "1000.00",
+        status: "finalized" as const,
+      })
+      .returning();
+    return recon.id as string;
+  }
+
+  it("names the reconciliation holding a claim, and can skip one reconciliation", async () => {
+    const journalLineId = await postBankJournal("14.00");
+    const january = await finalizedReconciliation();
+    const line = await insertStatementLine("-14.00", january);
+    await db
+      .update(statementLines)
+      .set({ matchedJournalLineId: journalLineId, matchStatus: "matched" })
+      .where(eq(statementLines.id, line));
+
+    const claim = await findClaimedJournalLine(db, ORG, [journalLineId]);
+    expect(claim).toMatchObject({
+      via: "direct",
+      reconciliationId: january,
+      reconciliationStatus: "finalized",
+      periodEnd: "2026-01-31",
+    });
+    // A finalized reconciliation refuses edits: the advice is to reopen it.
+    expect(claimConflictMessage(claim!, reconId)).toMatch(
+      /finalized reconciliation.*2026-01-31.*Reopen/,
+    );
+
+    // The PDF regeneration path replaces its own reconciliation's lines.
+    expect(
+      await findClaimedJournalLine(db, ORG, [journalLineId], { excludeReconciliationId: january }),
+    ).toBeNull();
+  });
+
+  it("points at the other open reconciliation by its period", async () => {
+    const journalLineId = await postBankJournal("15.00");
+    const line = await insertStatementLine("-15.00");
+    await db.insert(statementLineMatches).values({
+      organizationId: ORG,
+      statementLineId: line,
+      journalLineId,
+      allocatedAmount: "-15.00",
+    });
+    const claim = await findClaimedJournalLine(db, ORG, [journalLineId]);
+    expect(claim).toMatchObject({ via: "split", reconciliationId: reconId });
+    expect(claimConflictMessage(claim!, crypto.randomUUID())).toMatch(
+      /in the reconciliation for the period ending 2026-02-28\. Unmatch it there first/,
+    );
+    expect(claimConflictMessage(claim!, reconId)).toMatch(/Remove that split/);
+  });
+
+  // ---- the shared clearing writer ------------------------------------------
+
+  it("ignoring a line releases its 1:1 link and its split rows", async () => {
+    const direct = await postBankJournal("16.00");
+    const split = await postBankJournal("17.00");
+    const lineA = await insertStatementLine("-16.00");
+    const lineB = await insertStatementLine("-17.00");
+    await db
+      .update(statementLines)
+      .set({ matchedJournalLineId: direct, matchStatus: "matched" })
+      .where(eq(statementLines.id, lineA));
+    await db.insert(statementLineMatches).values({
+      organizationId: ORG,
+      statementLineId: lineB,
+      journalLineId: split,
+      allocatedAmount: "-17.00",
+    });
+
+    for (const statementLineId of [lineA, lineB]) {
+      const result = await setStatementLineClearing(db, {
+        orgId: ORG,
+        reconciliationId: reconId,
+        statementLineId,
+        clearing: { action: "ignore" },
+      });
+      expect(result.written).toBe(true);
+    }
+
+    for (const id of [lineA, lineB]) {
+      const [row] = await db
+        .select({
+          status: statementLines.matchStatus,
+          matched: statementLines.matchedJournalLineId,
+        })
+        .from(statementLines)
+        .where(eq(statementLines.id, id));
+      expect(row).toMatchObject({ status: "ignored", matched: null });
+    }
+    // Neither journal line is claimed any more.
+    expect(await findClaimedJournalLine(db, ORG, [direct, split])).toBeNull();
+  });
+
+  it("a conflicting match writes nothing and reports the claim", async () => {
+    const journalLineId = await postBankJournal("18.00");
+    const holder = await insertStatementLine("-18.00");
+    const other = await insertStatementLine("-18.00");
+    await db
+      .update(statementLines)
+      .set({ matchedJournalLineId: journalLineId, matchStatus: "matched" })
+      .where(eq(statementLines.id, holder));
+
+    const result = await setStatementLineClearing(db, {
+      orgId: ORG,
+      reconciliationId: reconId,
+      statementLineId: other,
+      clearing: { action: "match", journalLineId },
+    });
+    expect(result).toMatchObject({ written: false, conflict: { statementLineId: holder } });
+    const [row] = await db
+      .select({ status: statementLines.matchStatus, matched: statementLines.matchedJournalLineId })
+      .from(statementLines)
+      .where(eq(statementLines.id, other));
+    expect(row).toMatchObject({ status: "unmatched", matched: null });
+  });
+
+  // ---- the validation override is single-use -------------------------------
+
+  it("reports the run that already overrode a blocked run", async () => {
+    const blocked = await startRun(db, { orgId: ORG, kind: "statement_pipeline" });
+    expect(await db.transaction((tx: any) => lockRunForOverride(tx, ORG, blocked))).toBeNull();
+
+    const override = await startRun(db, {
+      orgId: ORG,
+      kind: "statement_pipeline",
+      configSnapshot: { trigger: "validation_override", overriddenRunId: blocked },
+    });
+    expect(await db.transaction((tx: any) => lockRunForOverride(tx, ORG, blocked))).toBe(override);
+    // Another org's run of the same id space is never reported.
+    expect(
+      await db.transaction((tx: any) => lockRunForOverride(tx, crypto.randomUUID(), blocked)),
+    ).toBeNull();
   });
 });

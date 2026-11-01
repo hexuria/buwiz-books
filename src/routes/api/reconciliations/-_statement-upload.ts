@@ -23,6 +23,10 @@ import { processingJobs, sourceRecordDocuments } from "../../../db/schema/inbox"
 import { eq, and, asc, gte, lte, inArray } from "drizzle-orm";
 import { resolveCandidateAccountIds } from "../../../lib/resolve-candidate-accounts";
 import {
+  claimConflictMessage,
+  findClaimedJournalLine,
+} from "../../../lib/reconciliation-claimed-lines";
+import {
   uploadToR2,
   deleteFromR2,
   generateR2Key,
@@ -41,7 +45,7 @@ import { probePdf } from "../../../lib/pdf-unlock";
 import { getStatementPassword, setStatementPassword } from "../../../lib/financial-account-secrets";
 import type { DbExecutor } from "@/db";
 import { agentRunSteps } from "@/db/schema/ai";
-import { getRunStatus, startRun } from "@/lib/ai/agent-run";
+import { getRunStatus, lockRunForOverride, startRun } from "@/lib/ai/agent-run";
 import { enqueueStatementOcrJob, STATEMENT_OCR_JOB_TYPE } from "@/lib/jobs/handlers/statement-ocr";
 import { triggerWorker } from "@/lib/jobs/trigger";
 import {
@@ -817,10 +821,9 @@ export const getStatementPipelineStatus = createServerFn({ method: "GET" })
     }) as any;
   });
 
+// The run id alone: the targets come from the blocked run's own snapshot.
 const resumeStatementPipelineSchema = z.object({
   runId: z.string().uuid(),
-  reconciliationId: z.string().uuid(),
-  documentId: z.string().uuid(),
 });
 
 /**
@@ -847,6 +850,12 @@ export const resumeStatementPipeline = createServerFn({ method: "POST" })
         const reason = blocked.blockedReason as { kind?: string } | null;
         if (blocked.status !== "blocked" || reason?.kind !== "validation") {
           throw new Error("Only a validation-blocked statement run can be overridden");
+        }
+        // Single use: a second override of the same blocked run would open
+        // another forced run with the validation gate disabled.
+        const priorOverride = await lockRunForOverride(db, orgId, runId);
+        if (priorOverride) {
+          throw new Error("This statement run was already overridden; follow that run instead.");
         }
 
         // The override targets come from the BLOCKED RUN's own snapshot,
@@ -1174,6 +1183,21 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
                 .orderBy(asc(journalHeaders.transactionDate))
             : [];
 
+        // Every generated statement line is written below as a 1:1 claim on
+        // its ledger line. A ledger line already cleared by ANOTHER
+        // reconciliation (either representation) must stop this before
+        // anything is uploaded or deleted: the insert used to die on the
+        // unique index or the 0048 trigger with an opaque database error.
+        // This reconciliation's own claims are excluded — its statement lines
+        // are replaced wholesale.
+        const claim = await findClaimedJournalLine(
+          db,
+          orgId,
+          ledgerTxns.map((txn) => txn.id),
+          { excludeReconciliationId: parsed.reconciliationId },
+        );
+        if (claim) throw new Error(claimConflictMessage(claim, parsed.reconciliationId));
+
         // Integer cents (audit P6): float subtraction drifted the generated
         // statement's amounts and running balances at the 8th decimal.
         const openingCents = moneyToCents(recon.statementBeginningBalance ?? "0", "balance");
@@ -1190,6 +1214,7 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
             date: txn.transactionDate,
             description: txn.partyName ?? txn.description ?? "Transaction",
             detail: txn.headerMemo ?? undefined,
+            amountCents,
             amount: amountCents / 100,
             runningBalance: runningCents / 100,
           };
@@ -1304,7 +1329,7 @@ export const generateBankStatementPdf = createServerFn({ method: "POST" }).handl
             reconciliationId: parsed.reconciliationId,
             transactionDate: t.date,
             description: t.description,
-            amount: centsToMoney(Math.round(t.amount * 100)),
+            amount: centsToMoney(t.amountCents),
             sortOrder: sortIndex++,
             source: "ocr",
             // The column is 0-100; "1.0" recorded a generated line as 1%

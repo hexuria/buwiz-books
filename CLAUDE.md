@@ -58,8 +58,12 @@ an explicit message instead; pass the URL yourself:
 
 A full local rebuild is `db:fresh`, and it is now the complete path: `db:reset` drops the schema,
 `db:migrate` runs one ordered pass over the whole manifest — Drizzle's journal, the pre-schema
-migrations, schema synchronization, then the post-schema migrations — and `db:rls`, `db:seed`,
-`db:seed:coa`, and `db:seed:review-rules` follow. The older warning that `db:fresh` skipped the
+migrations, schema synchronization, then the post-schema migrations — then `db:enterprise:test-sql`
+and `db:tax:foundation`, and `db:rls`, the seeds and `db:seed:tax-reference` follow. The manifest
+stops at `0036`: `db:tax:foundation` (`scripts/apply-tax-foundation.ts`) is the only applier of
+`0037`+, including the reconciliation clearing-exclusivity triggers (`0048`, `0053`), so a
+database that ran `db:migrate` without it has no clearing backstop. Every environment needs both.
+The older warning that `db:fresh` skipped the
 dedup migrations (CHECK constraints, tenant-lineage FKs, `pg_trgm`) no longer holds: those are
 manifest entries `0019`-`0024` and the engine cannot skip them. Do **not** run `drizzle-kit push`
 alongside `db:migrate`; synchronization is a lifecycle step the engine owns, and running it

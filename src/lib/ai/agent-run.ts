@@ -8,7 +8,7 @@
 // database. An auditor can replay every edge from agent_run_steps.
 // ============================================================================
 
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { withOrgContext, type DbExecutor } from "../../db";
 import { agentRuns, agentRunSteps, type AgentRunKind } from "../../db/schema/ai";
 
@@ -29,6 +29,36 @@ export async function startRun(db: DbExecutor, input: StartRunInput): Promise<st
     })
     .returning({ id: agentRuns.id });
   return run.id;
+}
+
+/**
+ * The run that already overrode `runId` (a later run whose configSnapshot
+ * names it as `overriddenRunId`), or null — with `runId`'s row locked for the
+ * rest of the transaction, so two concurrent overrides of one blocked run
+ * cannot both see "none" and both start. An override is single-use: the
+ * blocked run is the record that a person was shown its failures once.
+ */
+export async function lockRunForOverride(
+  db: DbExecutor,
+  orgId: string,
+  runId: string,
+): Promise<string | null> {
+  await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.organizationId, orgId)))
+    .for("update");
+  const [existing] = await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(
+      and(
+        eq(agentRuns.organizationId, orgId),
+        sql`${agentRuns.configSnapshot}->>'overriddenRunId' = ${runId}`,
+      ),
+    )
+    .limit(1);
+  return existing?.id ?? null;
 }
 
 export interface RunStepResult<T> {

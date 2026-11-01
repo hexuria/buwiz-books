@@ -2,8 +2,8 @@
 //
 // NAME IS HISTORICAL: this started as the PH tax foundation applier (0037+)
 // and is now the general home for every post-schema migration the managed
-// manifest does not carry (0048 clearing exclusivity, 0049/0050, and future
-// entries). Renaming the file would churn CI, package scripts, and the
+// manifest does not carry (0048 clearing exclusivity and its 0053 follow-up,
+// 0049/0050, and future entries). Renaming the file would churn CI, package scripts, and the
 // wiring tests for no behavioral gain — recorded in docs/audit-backlog.md.
 //
 // Runs BEFORE `drizzle-kit push --force` in every build path, for the same
@@ -43,6 +43,7 @@ try {
     "0050_year_state_opening_balance.sql",
     "0051_void_rewrite_guard.sql",
     "0052_posted_journal_needs_lines.sql",
+    "0053_statement_clearing_commit_state.sql",
   ];
   for (const file of files) {
     const migration = await readFile(new URL(`../drizzle/${file}`, import.meta.url), "utf8");

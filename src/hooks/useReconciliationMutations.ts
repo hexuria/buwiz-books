@@ -220,7 +220,7 @@ export function useReconciliationMutations(
               );
             if (!proceed) return;
             const resumed = await (resumeStatementPipeline as ServerFnCaller)({
-              data: { runId, reconciliationId, documentId },
+              data: { runId },
             });
             outcome = await pollStatementPipeline(
               resumed.runId,

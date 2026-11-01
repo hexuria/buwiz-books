@@ -3,12 +3,7 @@
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import {
-  reconciliations,
-  statementLines,
-  statementLineMatches,
-  reconciliationFlags,
-} from "../../../db/schema/reconciliations";
+import { reconciliations, reconciliationFlags } from "../../../db/schema/reconciliations";
 import { financialAccounts } from "../../../db/schema/financial-accounts";
 import {
   effectiveJournalPredicate,
@@ -19,7 +14,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { withMutationPermissionOrgContext } from "../../../lib/server-context";
 import {
   claimConflictMessage,
-  findClaimedJournalLine,
+  setStatementLineClearing,
 } from "../../../lib/reconciliation-claimed-lines";
 import { insertActivityLog } from "@/lib/insert-activity-log";
 import { learnAliasFromMatch } from "@/lib/match-assist/learn";
@@ -356,54 +351,28 @@ export const matchTransaction = createServerFn({ method: "POST" })
               "This journal line is not on the reconciliation's bank account. Match statement lines to the bank-side line of a transaction.",
             );
           }
-
-          // The claim check must consider BOTH clearing representations. The
-          // old query read only statement_lines, so a line cleared by a SPLIT
-          // row could be claimed 1:1 as well — each side's unique index is
-          // per-table, and computeFinalizeBalances would then count the same
-          // ledger line twice. The 0048 triggers enforce this at COMMIT; this
-          // check exists so the failure is an actionable message instead.
-          const claim = await findClaimedJournalLine(db, orgId, [parsed.journalLineId], {
-            excludeStatementLineId: parsed.statementLineId,
-          });
-          if (claim) {
-            throw new Error(claimConflictMessage(claim));
-          }
         }
 
-        const updateFields: Record<string, any> = {
-          matchStatus:
-            parsed.action === "match"
-              ? "matched"
-              : parsed.action === "ignore"
-                ? "ignored"
-                : "unmatched",
-          matchedJournalLineId: parsed.action === "match" ? parsed.journalLineId : null,
-        };
-
-        // ANY redefinition of this line's clearing — match, unmatch, or
-        // ignore — clears its split rows. This used to run only on unmatch,
-        // so a 1:1 match placed over an existing split left both
-        // representations live and the finalize math counted the line's
-        // clearing twice.
-        await db
-          .delete(statementLineMatches)
-          .where(
-            and(
-              eq(statementLineMatches.statementLineId, parsed.statementLineId),
-              eq(statementLineMatches.organizationId, orgId),
-            ),
-          );
-
-        await db
-          .update(statementLines)
-          .set(updateFields)
-          .where(
-            and(
-              eq(statementLines.id, parsed.statementLineId),
-              eq(statementLines.reconciliationId, parsed.reconciliationId),
-            ),
-          );
+        // The shared writer claim-checks a match across BOTH clearing
+        // representations org-wide (the 0048/0053 triggers enforce it at
+        // COMMIT; this makes the failure an actionable message) and drops the
+        // line's split rows on any redefinition — match, unmatch or ignore.
+        if (parsed.action === "match" && !parsed.journalLineId) {
+          throw new Error("Choose the ledger transaction to match this statement line to.");
+        }
+        const clearing =
+          parsed.action === "match" && parsed.journalLineId
+            ? ({ action: "match", journalLineId: parsed.journalLineId } as const)
+            : ({ action: parsed.action === "ignore" ? "ignore" : "unmatch" } as const);
+        const written = await setStatementLineClearing(db, {
+          orgId,
+          reconciliationId: parsed.reconciliationId,
+          statementLineId: parsed.statementLineId,
+          clearing,
+        });
+        if (!written.written) {
+          throw new Error(claimConflictMessage(written.conflict, parsed.reconciliationId));
+        }
 
         // A manual match is the strongest signal there is — teach the vendor
         // alias memory so future statements block this payee's candidates.

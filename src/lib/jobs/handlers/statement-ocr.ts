@@ -39,7 +39,7 @@ import {
 } from "@/db/schema/reconciliations";
 import { aiComplete } from "@/lib/ai/facade";
 import { blockRun, completeRun, failRun, runStep } from "@/lib/ai/agent-run";
-import { getClaimedJournalLineIds } from "@/lib/reconciliation-claimed-lines";
+import { getOrgClaimedJournalLineIds } from "@/lib/reconciliation-claimed-lines";
 import { enqueueMatchAssistJob, MATCH_ASSIST_JOB_TYPE } from "./match-assist";
 import { triggerWorker } from "@/lib/jobs/trigger";
 import {
@@ -697,10 +697,14 @@ export async function processStatementOcrJob(
           ),
         );
 
-      // A journal line already claimed by a surviving user-decided line cannot
-      // be matched twice (statement_lines_matched_journal_line_unique).
-      // Both 1:1 and split clearing count as claimed.
-      const claimedIds = await getClaimedJournalLineIds(tx, reconciliationId);
+      // A journal line cleared ANYWHERE in the org — by a surviving
+      // user-decided line here, or by another reconciliation whose period
+      // overlaps this one — cannot be matched again. Both 1:1 and split
+      // clearing count. Reading only this reconciliation's claims let the
+      // matcher pair a line another reconciliation had cleared, and the
+      // whole OCR transaction then died on the unique index or the 0048
+      // trigger at COMMIT.
+      const claimedIds = await getOrgClaimedJournalLineIds(tx, orgId);
 
       const stmtForMatching: StatementLineForMatching[] = pendingLines.map((line) => ({
         id: line.id,
