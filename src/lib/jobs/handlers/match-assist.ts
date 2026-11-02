@@ -21,7 +21,7 @@ import { financialAccounts } from "@/db/schema/financial-accounts";
 import { accounts } from "@/db/schema/accounts";
 import type { LedgerTransactionForMatching } from "@/lib/auto-matcher";
 import { resolveCandidateAccountIds } from "@/lib/resolve-candidate-accounts";
-import { getClaimedJournalLineIds } from "@/lib/reconciliation-claimed-lines";
+import { getOrgClaimedJournalLineIds } from "@/lib/reconciliation-claimed-lines";
 import { runMatchAssist } from "@/lib/match-assist/run";
 import { runTxnPrefill } from "@/lib/match-assist/prefill";
 import { startRun, runStep, completeRun, failRun } from "@/lib/ai/agent-run";
@@ -96,8 +96,9 @@ async function loadResidualContext(tx: DbExecutor, orgId: string, reconciliation
 
   let ledgerTxns: LedgerTransactionForMatching[] = [];
   if (candidateIds.length > 0 && unmatched.length > 0) {
-    // Both 1:1 and split clearing count as claimed.
-    const claimedIds = await getClaimedJournalLineIds(tx, reconciliationId);
+    // A line cleared anywhere in the org (either representation) is never
+    // suggested: applying such a suggestion would only fail its claim check.
+    const claimedIds = await getOrgClaimedJournalLineIds(tx, orgId);
 
     const rows = await tx
       .select({

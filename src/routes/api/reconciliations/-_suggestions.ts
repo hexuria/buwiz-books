@@ -21,6 +21,7 @@ import { isDateInLockedPeriod } from "../../../lib/period-close";
 import {
   claimConflictMessage,
   findClaimedJournalLine,
+  setStatementLineClearing,
 } from "../../../lib/reconciliation-claimed-lines";
 import {
   withSessionOrgContext,
@@ -162,29 +163,21 @@ export const applySuggestion = createServerFn({ method: "POST" })
           case "auto_match": {
             // Link statement line to journal line
             if (suggestion.statementLineId && suggestion.journalLineId) {
-              // Both clearing representations are checked, and any split rows
-              // on the target line are replaced by the 1:1 link — mirroring
-              // matchTransaction. Applying a suggestion is the same mutation.
-              const claim = await findClaimedJournalLine(db, orgId, [suggestion.journalLineId], {
-                excludeStatementLineId: suggestion.statementLineId,
+              // The same write matchTransaction makes: claim-checked across
+              // both clearing representations, split rows replaced by the link.
+              const written = await setStatementLineClearing(db, {
+                orgId,
+                reconciliationId: recon.id,
+                statementLineId: suggestion.statementLineId,
+                clearing: {
+                  action: "match",
+                  journalLineId: suggestion.journalLineId,
+                  confidence: suggestion.confidence,
+                },
               });
-              if (claim) throw new Error(claimConflictMessage(claim));
-              await db
-                .delete(statementLineMatches)
-                .where(
-                  and(
-                    eq(statementLineMatches.statementLineId, suggestion.statementLineId),
-                    eq(statementLineMatches.organizationId, orgId),
-                  ),
-                );
-              await db
-                .update(statementLines)
-                .set({
-                  matchedJournalLineId: suggestion.journalLineId,
-                  matchStatus: "matched",
-                  matchConfidence: suggestion.confidence,
-                })
-                .where(eq(statementLines.id, suggestion.statementLineId));
+              if (!written.written) {
+                throw new Error(claimConflictMessage(written.conflict, recon.id));
+              }
               // A human confirmed this pairing — teach the alias memory.
               await learnAliasFromMatch(db, {
                 orgId,
@@ -201,26 +194,19 @@ export const applySuggestion = createServerFn({ method: "POST" })
             // Match the statement line to the journal line without modifying the ledger date.
             // Date differences between bank clearing and ledger booking are normal.
             if (suggestion.statementLineId && suggestion.journalLineId) {
-              const claim = await findClaimedJournalLine(db, orgId, [suggestion.journalLineId], {
-                excludeStatementLineId: suggestion.statementLineId,
+              const written = await setStatementLineClearing(db, {
+                orgId,
+                reconciliationId: recon.id,
+                statementLineId: suggestion.statementLineId,
+                clearing: {
+                  action: "match",
+                  journalLineId: suggestion.journalLineId,
+                  confidence: suggestion.confidence,
+                },
               });
-              if (claim) throw new Error(claimConflictMessage(claim));
-              await db
-                .delete(statementLineMatches)
-                .where(
-                  and(
-                    eq(statementLineMatches.statementLineId, suggestion.statementLineId),
-                    eq(statementLineMatches.organizationId, orgId),
-                  ),
-                );
-              await db
-                .update(statementLines)
-                .set({
-                  matchedJournalLineId: suggestion.journalLineId,
-                  matchStatus: "matched",
-                  matchConfidence: suggestion.confidence,
-                })
-                .where(eq(statementLines.id, suggestion.statementLineId));
+              if (!written.written) {
+                throw new Error(claimConflictMessage(written.conflict, recon.id));
+              }
               await learnAliasFromMatch(db, {
                 orgId,
                 statementLineId: suggestion.statementLineId,
@@ -235,12 +221,17 @@ export const applySuggestion = createServerFn({ method: "POST" })
           }
 
           case "ignore": {
-            // Mark statement line as ignored
+            // Ignoring releases the line's clearing (1:1 link and split rows),
+            // as a manual ignore does: finalize does not count an ignored
+            // line, so a claim left behind blocked its journal line for every
+            // other statement line in the org.
             if (suggestion.statementLineId) {
-              await db
-                .update(statementLines)
-                .set({ matchStatus: "ignored" })
-                .where(eq(statementLines.id, suggestion.statementLineId));
+              await setStatementLineClearing(db, {
+                orgId,
+                reconciliationId: recon.id,
+                statementLineId: suggestion.statementLineId,
+                clearing: { action: "ignore" },
+              });
               resolutionSummary = "Statement line marked as ignored";
             }
             break;
